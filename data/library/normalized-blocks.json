@@ -1,0 +1,5791 @@
+[
+  {
+    "id": "RULE.READINESS_EXECUTABLE_MISMATCH",
+    "title": "Readiness / Executable State Alignment",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Readiness / Executable State Alignment",
+    "category": "readiness",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.READINESS_EXECUTABLE_MISMATCH",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.READINESS_EXECUTABLE_MISMATCH",
+        "rule_name": "Readiness / Executable State Alignment",
+        "category": "readiness",
+        "severity": "elevated",
+        "trigger_conditions": [
+          "governance_summary.final_preview_readiness differs from executable_state.state semantics"
+        ],
+        "expected_behavior": "Surface mismatch and classify according to documented exception status.",
+        "violation_behavior": "Emit mismatch note or fail consistency if not documented.",
+        "remediation_guidance": "Align readiness summary with executable state or mark as preserved sentinel.",
+        "retry_possible": true,
+        "terminal": false,
+        "governance_layer": "reporting"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.PROVIDER_BINDING_CONTRADICTION",
+    "title": "Provider / Binding Consistency",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Provider / Binding Consistency",
+    "category": "provider",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.PROVIDER_BINDING_CONTRADICTION",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.PROVIDER_BINDING_CONTRADICTION",
+        "rule_name": "Provider / Binding Consistency",
+        "category": "provider",
+        "severity": "critical",
+        "trigger_conditions": [
+          "provider missing or invalid while binding claims validated"
+        ],
+        "expected_behavior": "Binding must not validate without a valid provider chain.",
+        "violation_behavior": "Fail consistency.",
+        "remediation_guidance": "Invalidate binding or restore valid provider chain.",
+        "retry_possible": true,
+        "terminal": true,
+        "governance_layer": "provider"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.TRUST_TERMINAL_VIOLATION",
+    "title": "Trust Block Terminality",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Trust Block Terminality",
+    "category": "trust",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.TRUST_TERMINAL_VIOLATION",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.TRUST_TERMINAL_VIOLATION",
+        "rule_name": "Trust Block Terminality",
+        "category": "trust",
+        "severity": "terminal",
+        "trigger_conditions": [
+          "trust_state contains trust_blocked and final readiness is not blocked"
+        ],
+        "expected_behavior": "Any trust block forces blocked readiness.",
+        "violation_behavior": "Fail consistency and mark terminal violation.",
+        "remediation_guidance": "Set final readiness to blocked whenever trust is blocked.",
+        "retry_possible": false,
+        "terminal": true,
+        "governance_layer": "trust"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.APPROVAL_EXPIRED_EXECUTION_CONTRADICTION",
+    "title": "Expired Approval Cannot Be Execution-Ready",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Expired Approval Cannot Be Execution-Ready",
+    "category": "approval",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.APPROVAL_EXPIRED_EXECUTION_CONTRADICTION",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.APPROVAL_EXPIRED_EXECUTION_CONTRADICTION",
+        "rule_name": "Expired Approval Cannot Be Execution-Ready",
+        "category": "approval",
+        "severity": "critical",
+        "trigger_conditions": [
+          "approval_state is approval_expired while chain remains execution-ready"
+        ],
+        "expected_behavior": "Expired approvals must block execution readiness.",
+        "violation_behavior": "Fail consistency.",
+        "remediation_guidance": "Require a fresh approval before any execution-ready classification.",
+        "retry_possible": true,
+        "terminal": true,
+        "governance_layer": "approval"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.ROLLBACK_INVALID_EXECUTION_CONTRADICTION",
+    "title": "Invalid Rollback Cannot Be Execution-Ready",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Invalid Rollback Cannot Be Execution-Ready",
+    "category": "rollback",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.ROLLBACK_INVALID_EXECUTION_CONTRADICTION",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.ROLLBACK_INVALID_EXECUTION_CONTRADICTION",
+        "rule_name": "Invalid Rollback Cannot Be Execution-Ready",
+        "category": "rollback",
+        "severity": "critical",
+        "trigger_conditions": [
+          "rollback invalid for risky action while chain remains execution-ready"
+        ],
+        "expected_behavior": "Rollback invalidity blocks risky execution readiness.",
+        "violation_behavior": "Fail consistency.",
+        "remediation_guidance": "Provide a valid rollback policy before restoring readiness.",
+        "retry_possible": true,
+        "terminal": true,
+        "governance_layer": "rollback"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.BLOCKED_REASON_ABSENCE",
+    "title": "Blocked Outputs Must Emit Blocked Reasons",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Blocked Outputs Must Emit Blocked Reasons",
+    "category": "reporting",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.BLOCKED_REASON_ABSENCE",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.BLOCKED_REASON_ABSENCE",
+        "rule_name": "Blocked Outputs Must Emit Blocked Reasons",
+        "category": "reporting",
+        "severity": "elevated",
+        "trigger_conditions": [
+          "final readiness blocked but blocked reason tokens/objects absent"
+        ],
+        "expected_behavior": "Blocked outputs emit stable blocked-reason tokens and objects.",
+        "violation_behavior": "Fail consistency or reporting validation.",
+        "remediation_guidance": "Emit matching blocked reason tokens and rich blocked reason objects.",
+        "retry_possible": true,
+        "terminal": false,
+        "governance_layer": "reporting"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.TENANT_BOUNDARY_VIOLATION",
+    "title": "Tenant Boundary Is Terminal",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Tenant Boundary Is Terminal",
+    "category": "tenant",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.TENANT_BOUNDARY_VIOLATION",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.TENANT_BOUNDARY_VIOLATION",
+        "rule_name": "Tenant Boundary Is Terminal",
+        "category": "tenant",
+        "severity": "terminal",
+        "trigger_conditions": [
+          "tenant boundary is violated"
+        ],
+        "expected_behavior": "Tenant violations force blocked readiness regardless of approval presence.",
+        "violation_behavior": "Fail consistency and terminally block chain.",
+        "remediation_guidance": "Restore tenant-compliant roots/apps/toolpacks before further validation.",
+        "retry_possible": false,
+        "terminal": true,
+        "governance_layer": "tenant"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.TRUST_BLOCKED_TERMINALITY",
+    "title": "Trust Blocked Is Terminal",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Trust Blocked Is Terminal",
+    "category": "trust",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.TRUST_BLOCKED_TERMINALITY",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.TRUST_BLOCKED_TERMINALITY",
+        "rule_name": "Trust Blocked Is Terminal",
+        "category": "trust",
+        "severity": "terminal",
+        "trigger_conditions": [
+          "trust registry marks chain blocked"
+        ],
+        "expected_behavior": "No execution-ready state may survive trust-blocked posture.",
+        "violation_behavior": "Fail consistency and force blocked readiness.",
+        "remediation_guidance": "Resolve trust assignment before any higher readiness class is allowed.",
+        "retry_possible": false,
+        "terminal": true,
+        "governance_layer": "trust"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.PROVIDER_MISSING_PRECEDENCE",
+    "title": "Provider Missing Precedes Approval",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Provider Missing Precedes Approval",
+    "category": "provider",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.PROVIDER_MISSING_PRECEDENCE",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.PROVIDER_MISSING_PRECEDENCE",
+        "rule_name": "Provider Missing Precedes Approval",
+        "category": "provider",
+        "severity": "critical",
+        "trigger_conditions": [
+          "provider missing while approval state is present or required"
+        ],
+        "expected_behavior": "Provider absence blocks chain before approval can matter.",
+        "violation_behavior": "Fail expectation or consistency if approval is treated as sufficient.",
+        "remediation_guidance": "Restore provider chain before interpreting approval state.",
+        "retry_possible": true,
+        "terminal": true,
+        "governance_layer": "provider"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "RULE.APPROVAL_WITHOUT_PROVIDER_VALIDITY",
+    "title": "Approval Presence Without Provider Validity",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Approval Presence Without Provider Validity",
+    "category": "approval",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "sourceId": "RULE.APPROVAL_WITHOUT_PROVIDER_VALIDITY",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "original": {
+        "rule_id": "RULE.APPROVAL_WITHOUT_PROVIDER_VALIDITY",
+        "rule_name": "Approval Presence Without Provider Validity",
+        "category": "approval",
+        "severity": "elevated",
+        "trigger_conditions": [
+          "approval present while provider invalid or missing"
+        ],
+        "expected_behavior": "Approval presence must not imply execution readiness without valid provider chain.",
+        "violation_behavior": "Fail consistency if approval is treated as sufficient.",
+        "remediation_guidance": "Re-establish provider validity before approval can have effect.",
+        "retry_possible": true,
+        "terminal": false,
+        "governance_layer": "approval"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Expired approval chain still reports execution-ready state.",
+    "description": "Expired approval chain still reports execution-ready state.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/approval-expired-executable-violation.json",
+      "original": {
+        "failure_id": "CONSISTENCY.APPROVAL_EXPIRED_EXECUTABLE_VIOLATION.0001",
+        "description": "Expired approval chain still reports execution-ready state.",
+        "violated_rule": "approval consistency",
+        "expected_outcome": "FAIL_CONSISTENCY",
+        "observed_problem": "approval_state is approval_expired but executable_state or final readiness still imply structural execution readiness.",
+        "recommended_remediation": "Block the chain until a non-expired approval token is present."
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Blocked output lacks corresponding blocked reason tokens or objects.",
+    "description": "Blocked output lacks corresponding blocked reason tokens or objects.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/blocked-reason-missing.json",
+      "original": {
+        "failure_id": "CONSISTENCY.BLOCKED_REASON_MISSING.0001",
+        "description": "Blocked output lacks corresponding blocked reason tokens or objects.",
+        "violated_rule": "blocked-reason consistency",
+        "expected_outcome": "FAIL_CONSISTENCY",
+        "observed_problem": "executable_state or final readiness is blocked, but no matching blocked reason token/object is emitted.",
+        "recommended_remediation": "Emit stable blocked reason tokens and corresponding blocked reason objects for all blocked outcomes."
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Binding is validated while provider state is missing or invalid.",
+    "description": "Binding is validated while provider state is missing or invalid.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/provider-binding-contradiction.json",
+      "original": {
+        "failure_id": "CONSISTENCY.PROVIDER_BINDING_CONTRADICTION.0001",
+        "description": "Binding is validated while provider state is missing or invalid.",
+        "violated_rule": "provider-binding consistency",
+        "expected_outcome": "FAIL_CONSISTENCY",
+        "observed_problem": "provider_state indicates provider_missing or provider_version_invalid, but binding_state still claims binding_validated.",
+        "recommended_remediation": "Invalidate or remove the binding state until a valid provider is present."
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Governance summary readiness does not align with executable_state semantics.",
+    "description": "Governance summary readiness does not align with executable_state semantics.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/readiness-executable-state-mismatch.json",
+      "original": {
+        "failure_id": "CONSISTENCY.READINESS_EXECUTABLE_STATE_MISMATCH.0001",
+        "description": "Governance summary readiness does not align with executable_state semantics.",
+        "violated_rule": "readiness consistency",
+        "expected_outcome": "FAIL_CONSISTENCY",
+        "observed_problem": "governance_summary.final_preview_readiness and executable_state.state describe different readiness levels without an approved exception record.",
+        "recommended_remediation": "Align executable_state with governance summary or explicitly document the mismatch as a preserved sentinel."
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Rollback-invalid risky chain still reports execution-ready state.",
+    "description": "Rollback-invalid risky chain still reports execution-ready state.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/rollback-invalid-executable-violation.json",
+      "original": {
+        "failure_id": "CONSISTENCY.ROLLBACK_INVALID_EXECUTABLE_VIOLATION.0001",
+        "description": "Rollback-invalid risky chain still reports execution-ready state.",
+        "violated_rule": "rollback consistency",
+        "expected_outcome": "FAIL_CONSISTENCY",
+        "observed_problem": "rollback_state is invalid for a risky action chain, but executable_state or final readiness remains execution-eligible.",
+        "recommended_remediation": "Require a valid rollback policy before permitting execution-ready classification."
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Trust-blocked chain still reports non-blocked final readiness.",
+    "description": "Trust-blocked chain still reports non-blocked final readiness.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/trust-terminal-violation.json",
+      "original": {
+        "failure_id": "CONSISTENCY.TRUST_TERMINAL_VIOLATION.0001",
+        "description": "Trust-blocked chain still reports non-blocked final readiness.",
+        "violated_rule": "trust consistency",
+        "expected_outcome": "FAIL_CONSISTENCY",
+        "observed_problem": "trust_state includes trust_blocked but final readiness or executable state is not blocked.",
+        "recommended_remediation": "Force final readiness to blocked whenever trust_blocked is present."
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_instruction_block_1_1",
+    "title": "instruction block 1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Static runtime preview fixture bundle for non-executing harness validation.",
+    "description": "Static runtime preview fixture bundle for non-executing harness validation.",
+    "category": "uncategorized",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "1.0.0"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/fixture-bundle-manifest.example.json",
+      "original": {
+        "bundle_id": "BUNDLE.RUNTIME.PREVIEW.0001",
+        "version": "1.0.0",
+        "created_at": "2026-05-02T00:00:00Z",
+        "description": "Static runtime preview fixture bundle for non-executing harness validation.",
+        "fixture_root": "AI/EXAMPLES/runtime-preview",
+        "schema_root": "AI/SCHEMAS",
+        "expected_results_file": "AI/EXAMPLES/runtime-preview/EXPECTED_RESULTS.md",
+        "validation_matrix_file": "AI/EXAMPLES/runtime-preview/validation-matrix.json",
+        "trace_expectations_file": "AI/EXAMPLES/runtime-preview/trace-expectations.json",
+        "included_fixtures": [
+          {
+            "fixture_name": "valid-preview-only-chain.json",
+            "fixture_path": "AI/EXAMPLES/runtime-preview/valid-preview-only-chain.json",
+            "expected_result_id": "valid-preview-only-chain",
+            "trace_expectation_id": "valid-preview-only-chain",
+            "expected_outcome": "PASS_WITH_MISMATCH_NOTE",
+            "expected_final_readiness": "preview_only",
+            "known_mismatch": true,
+            "notes": [
+              "Known readiness/executable-state mismatch sentinel."
+            ]
+          },
+          {
+            "fixture_name": "dry-run-only-chain.json",
+            "fixture_path": "AI/EXAMPLES/runtime-preview/dry-run-only-chain.json",
+            "expected_result_id": "dry-run-only-chain",
+            "trace_expectation_id": "dry-run-only-chain",
+            "expected_outcome": "PASS",
+            "expected_final_readiness": "dry_run_only",
+            "known_mismatch": false,
+            "notes": []
+          }
+        ],
+        "excluded_fixtures": [],
+        "security_mode": "no_execution",
+        "runner_mode": "static_validation_only"
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_approval_token_schema_v0_1_1",
+    "title": "UMG Approval Token Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for bounded runtime approval grants. Defines approval structure only and does not bypass OpenClaw gating.",
+    "description": "Validating schema for bounded runtime approval grants. Defines approval structure only and does not bypass OpenClaw gating.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/approval-token.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/approval-token.schema.json",
+        "title": "UMG Approval Token Schema v0.1",
+        "description": "Validating schema for bounded runtime approval grants. Defines approval structure only and does not bypass OpenClaw gating.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "approval_token": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "approval_id": {
+                "type": "string",
+                "pattern": "^APR\\.[A-Z0-9._-]+$"
+              },
+              "granted_by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "granted_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "tenant_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sleeve_id": {
+                "type": "string",
+                "pattern": "^SLV\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "capability_id": {
+                "type": "string",
+                "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "toolpack_id": {
+                "type": "string",
+                "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "tool_binding_id": {
+                "type": "string",
+                "pattern": "^BIND\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "execution_mode": {
+                "type": "string",
+                "enum": [
+                  "preview",
+                  "dry_run",
+                  "assisted",
+                  "approved_execute",
+                  "blocked"
+                ]
+              },
+              "reusable": {
+                "type": "boolean"
+              },
+              "revoked": {
+                "type": "boolean"
+              },
+              "approval_scope": {
+                "type": "string",
+                "enum": [
+                  "session",
+                  "phase",
+                  "capability",
+                  "binding",
+                  "workflow",
+                  "one_time"
+                ]
+              },
+              "approval_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "approval_channel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "max_uses": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "used_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "phase_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "workflow_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "human_confirmation_text": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "audit_signature": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "approval_id",
+              "granted_by",
+              "granted_at",
+              "expires_at",
+              "tenant_id",
+              "sleeve_id",
+              "capability_id",
+              "toolpack_id",
+              "tool_binding_id",
+              "execution_mode",
+              "reusable",
+              "revoked"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "execution_mode": {
+                      "const": "blocked"
+                    }
+                  },
+                  "required": [
+                    "execution_mode"
+                  ]
+                },
+                "then": false
+              },
+              {
+                "if": {
+                  "properties": {
+                    "reusable": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "reusable"
+                  ]
+                },
+                "then": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "max_uses"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "expires_at"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "approval_scope": {
+                      "const": "one_time"
+                    }
+                  },
+                  "required": [
+                    "approval_scope"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "reusable": {
+                      "const": false
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "approval_token"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_audit_export_schema_v0_1_1",
+    "title": "UMG Audit Export Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for audit export bundles covering fixture validation assets. Defines export structure only and does not authorize runtime action.",
+    "description": "Validating schema for audit export bundles covering fixture validation assets. Defines export structure only and does not authorize runtime action.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/audit-export.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/audit-export.schema.json",
+        "title": "UMG Audit Export Schema v0.1",
+        "description": "Validating schema for audit export bundles covering fixture validation assets. Defines export structure only and does not authorize runtime action.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fixture_bundle": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_results": {
+            "type": "string",
+            "minLength": 1
+          },
+          "validation_matrix": {
+            "type": "string",
+            "minLength": 1
+          },
+          "trace_expectations": {
+            "type": "string",
+            "minLength": 1
+          },
+          "harness_results": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "synthetic_traces": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "consistency_failures": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "schema_versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "governance_versions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "export_timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "export_scope": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "fixture_bundle",
+          "expected_results",
+          "validation_matrix",
+          "trace_expectations",
+          "harness_results",
+          "synthetic_traces",
+          "consistency_failures",
+          "schema_versions",
+          "governance_versions",
+          "export_timestamp",
+          "export_scope"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_blocked_reason_schema_v0_1_1",
+    "title": "UMG Blocked Reason Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for machine-readable resolver preview blocked reasons. Defines governance and structural blockage only and does not authorize runtime action.",
+    "description": "Validating schema for machine-readable resolver preview blocked reasons. Defines governance and structural blockage only and does not authorize runtime action.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/blocked-reason.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/blocked-reason.schema.json",
+        "title": "UMG Blocked Reason Schema v0.1",
+        "description": "Validating schema for machine-readable resolver preview blocked reasons. Defines governance and structural blockage only and does not authorize runtime action.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "blocked_reason_code": {
+            "type": "string",
+            "enum": [
+              "CAPABILITY_UNKNOWN",
+              "CAPABILITY_REGISTRY_MISSING",
+              "TRUST_BLOCKED",
+              "PROVIDER_MISSING",
+              "PROVIDER_VERSION_INVALID",
+              "BINDING_MISSING",
+              "BINDING_INVALID",
+              "APPROVAL_REQUIRED",
+              "APPROVAL_MISSING",
+              "APPROVAL_EXPIRED",
+              "APPROVAL_REVOKED",
+              "TENANT_VIOLATION",
+              "EXECUTION_MODE_BLOCKED",
+              "ROLLBACK_POLICY_INVALID",
+              "AUDIT_POLICY_INVALID",
+              "TOOLPACK_BLOCKED",
+              "TARGET_CONSTRAINT_INVALID",
+              "CROSS_SCHEMA_CONFLICT"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "capability",
+              "trust",
+              "provider",
+              "binding",
+              "approval",
+              "tenant",
+              "rollback",
+              "governance"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warn",
+              "error",
+              "critical"
+            ]
+          },
+          "human_summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remediation_guidance": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retry_possible": {
+            "type": "boolean"
+          },
+          "requires_human_action": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "blocked_reason_code",
+          "category",
+          "severity",
+          "human_summary",
+          "remediation_guidance",
+          "retry_possible",
+          "requires_human_action"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_capability_schema_v0_1_1",
+    "title": "UMG Capability Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static UMG capability registry manifests. Defines structure only and does not grant permission or execution authority.",
+    "description": "Validating schema for static UMG capability registry manifests. Defines structure only and does not grant permission or execution authority.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/capability.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/capability.schema.json",
+        "title": "UMG Capability Schema v0.1",
+        "description": "Validating schema for static UMG capability registry manifests. Defines structure only and does not grant permission or execution authority.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "capability": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "capability_id": {
+                "type": "string",
+                "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "risk_level": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              "blocked_by_default": {
+                "type": "boolean"
+              },
+              "approval_required": {
+                "type": "boolean"
+              },
+              "allowed_modes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "preview",
+                    "dry_run",
+                    "assisted",
+                    "approved_execute",
+                    "blocked"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "provided_by_toolpacks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "side_effect_level": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "read_only",
+                  "local_mutation",
+                  "workflow_transition",
+                  "external_action",
+                  "critical_action"
+                ]
+              },
+              "trust_tier": {
+                "type": "string",
+                "enum": [
+                  "TRUST.INTERNAL",
+                  "TRUST.OPENCLAW_VERIFIED",
+                  "TRUST.BUSINESS_VERIFIED",
+                  "TRUST.EXPERIMENTAL",
+                  "TRUST.BLOCKED"
+                ]
+              },
+              "audit_required": {
+                "type": "boolean"
+              },
+              "diagnostics": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "emitted_events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "blocked_reasons": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "validation_notes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "emitted_events",
+                  "blocked_reasons",
+                  "validation_notes"
+                ]
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "capability_id",
+              "version",
+              "description",
+              "risk_level",
+              "blocked_by_default",
+              "approval_required",
+              "allowed_modes",
+              "provided_by_toolpacks",
+              "side_effect_level",
+              "trust_tier",
+              "audit_required",
+              "diagnostics"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "risk_level": {
+                      "const": "critical"
+                    }
+                  },
+                  "required": [
+                    "risk_level"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "approval_required": {
+                      "const": true
+                    },
+                    "blocked_by_default": {
+                      "const": true
+                    },
+                    "allowed_modes": {
+                      "contains": {
+                        "const": "approved_execute"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "trust_tier": {
+                      "const": "TRUST.BLOCKED"
+                    }
+                  },
+                  "required": [
+                    "trust_tier"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "blocked_by_default": {
+                      "const": true
+                    },
+                    "allowed_modes": {
+                      "maxItems": 1,
+                      "items": {
+                        "const": "blocked"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "capability"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_consistency_rule_catalog_schema_v0_1_1",
+    "title": "UMG Consistency Rule Catalog Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for machine-readable governance consistency rules. Defines static governance rules only and does not authorize execution.",
+    "description": "Validating schema for machine-readable governance consistency rules. Defines static governance rules only and does not authorize execution.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/consistency-rule-catalog.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/consistency-rule-catalog.schema.json",
+        "title": "UMG Consistency Rule Catalog Schema v0.1",
+        "description": "Validating schema for machine-readable governance consistency rules. Defines static governance rules only and does not authorize execution.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "catalog_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "rules": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "rule_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "rule_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "readiness",
+                    "trust",
+                    "provider",
+                    "binding",
+                    "approval",
+                    "rollback",
+                    "tenant",
+                    "reporting"
+                  ]
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "warning",
+                    "elevated",
+                    "critical",
+                    "terminal"
+                  ]
+                },
+                "trigger_conditions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "expected_behavior": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "violation_behavior": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "remediation_guidance": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "retry_possible": {
+                  "type": "boolean"
+                },
+                "terminal": {
+                  "type": "boolean"
+                },
+                "governance_layer": {
+                  "type": "string",
+                  "enum": [
+                    "schema",
+                    "preview",
+                    "trust",
+                    "provider",
+                    "binding",
+                    "approval",
+                    "rollback",
+                    "tenant",
+                    "reporting"
+                  ]
+                },
+                "notes": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "rule_id",
+                "rule_name",
+                "category",
+                "severity",
+                "trigger_conditions",
+                "expected_behavior",
+                "violation_behavior",
+                "remediation_guidance",
+                "retry_possible",
+                "terminal",
+                "governance_layer"
+              ]
+            }
+          }
+        },
+        "required": [
+          "catalog_id",
+          "version",
+          "rules"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_enterprise_report_schema_v0_1_1",
+    "title": "UMG Enterprise Report Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for enterprise-facing static validation reports. Defines reporting structure only and does not authorize runtime action.",
+    "description": "Validating schema for enterprise-facing static validation reports. Defines reporting structure only and does not authorize runtime action.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/enterprise-report.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/enterprise-report.schema.json",
+        "title": "UMG Enterprise Report Schema v0.1",
+        "description": "Validating schema for enterprise-facing static validation reports. Defines reporting structure only and does not authorize runtime action.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "report_identity": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "report_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "generated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "report_id",
+              "generated_at",
+              "scope"
+            ]
+          },
+          "executive_summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fixture_inventory": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "schema_provenance": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "governance_provenance": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "validation_outcome_summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pass_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "pass_with_mismatch_note_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fail_schema_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fail_expectation_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fail_consistency_count": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "pass_count",
+              "pass_with_mismatch_note_count",
+              "fail_schema_count",
+              "fail_expectation_count",
+              "fail_consistency_count"
+            ]
+          },
+          "blocked_issue_summary": {
+            "type": "array",
+            "items": {
+              "$ref": "./blocked-reason.schema.json"
+            }
+          },
+          "trust_posture": {
+            "type": "string",
+            "minLength": 1
+          },
+          "approval_posture": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rollback_posture": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tenant_compliance": {
+            "type": "string",
+            "minLength": 1
+          },
+          "remediation_roadmap": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "risk_summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "export_metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "format": {
+                "type": "string",
+                "minLength": 1
+              },
+              "exported_by": {
+                "type": "string",
+                "minLength": 1
+              },
+              "security_mode": {
+                "type": "string",
+                "const": "no_execution"
+              }
+            },
+            "required": [
+              "format",
+              "exported_by",
+              "security_mode"
+            ]
+          }
+        },
+        "required": [
+          "report_identity",
+          "executive_summary",
+          "fixture_inventory",
+          "schema_provenance",
+          "governance_provenance",
+          "validation_outcome_summary",
+          "blocked_issue_summary",
+          "trust_posture",
+          "approval_posture",
+          "rollback_posture",
+          "tenant_compliance",
+          "remediation_roadmap",
+          "risk_summary",
+          "export_metadata"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_fixture_bundle_manifest_schema_v0_1_1",
+    "title": "UMG Fixture Bundle Manifest Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static runtime preview fixture bundle manifests. Defines bundle metadata only and does not authorize execution.",
+    "description": "Validating schema for static runtime preview fixture bundle manifests. Defines bundle metadata only and does not authorize execution.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/fixture-bundle-manifest.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/fixture-bundle-manifest.schema.json",
+        "title": "UMG Fixture Bundle Manifest Schema v0.1",
+        "description": "Validating schema for static runtime preview fixture bundle manifests. Defines bundle metadata only and does not authorize execution.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fixture_root": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema_root": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_results_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "validation_matrix_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "trace_expectations_file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "included_fixtures": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fixture_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fixture_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "expected_result_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "trace_expectation_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "expected_outcome": {
+                  "type": "string",
+                  "enum": [
+                    "PASS",
+                    "PASS_WITH_MISMATCH_NOTE",
+                    "FAIL_SCHEMA",
+                    "FAIL_EXPECTATION",
+                    "FAIL_CONSISTENCY"
+                  ]
+                },
+                "expected_final_readiness": {
+                  "type": "string",
+                  "enum": [
+                    "preview_only",
+                    "dry_run_only",
+                    "structurally_executable_pending_gate",
+                    "blocked"
+                  ]
+                },
+                "known_mismatch": {
+                  "type": "boolean"
+                },
+                "notes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "fixture_name",
+                "fixture_path",
+                "expected_result_id",
+                "trace_expectation_id",
+                "expected_outcome",
+                "expected_final_readiness",
+                "known_mismatch",
+                "notes"
+              ]
+            }
+          },
+          "excluded_fixtures": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "security_mode": {
+            "type": "string",
+            "const": "no_execution"
+          },
+          "runner_mode": {
+            "type": "string",
+            "const": "static_validation_only"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "version",
+          "created_at",
+          "description",
+          "fixture_root",
+          "schema_root",
+          "expected_results_file",
+          "validation_matrix_file",
+          "trace_expectations_file",
+          "included_fixtures",
+          "excluded_fixtures",
+          "security_mode",
+          "runner_mode"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_gate_schema_public_placeholder_1",
+    "title": "UMG Gate Schema (public placeholder)",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Provisional public placeholder for future gate schema publication. This file intentionally marks the gate schema surface as planned but not yet release-ready in this first public population pass.",
+    "description": "Provisional public placeholder for future gate schema publication. This file intentionally marks the gate schema surface as planned but not yet release-ready in this first public population pass.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/gate.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "UMG Gate Schema (public placeholder)",
+        "description": "Provisional public placeholder for future gate schema publication. This file intentionally marks the gate schema surface as planned but not yet release-ready in this first public population pass.",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "provisional_placeholder"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "notes"
+        ],
+        "additionalProperties": true,
+        "examples": [
+          {
+            "status": "provisional_placeholder",
+            "notes": [
+              "Public gate schema not yet stabilized for publication.",
+              "See AI/DOCTRINE/TRIGGER-GATE-DOCTRINE.md for current doctrine."
+            ]
+          }
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_governance_pack_manifest_schema_v0_1_1",
+    "title": "UMG Governance Pack Manifest Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static governance pack manifests. Defines packaging and review boundaries only and does not authorize execution or release mutation.",
+    "description": "Validating schema for static governance pack manifests. Defines packaging and review boundaries only and does not authorize execution or release mutation.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/governance-pack-manifest.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/governance-pack-manifest.schema.json",
+        "title": "UMG Governance Pack Manifest Schema v0.1",
+        "description": "Validating schema for static governance pack manifests. Defines packaging and review boundaries only and does not authorize execution or release mutation.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pack_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "included_doctrine_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_schema_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_example_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_fixture_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_report_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_dashboard_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_evidence_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_remediation_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_signoff_files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "security_boundary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "non_execution_statement": {
+            "type": "string",
+            "minLength": 1
+          },
+          "active_constraints": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "compatibility_notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "pack_id",
+          "version",
+          "created_at",
+          "purpose",
+          "included_doctrine_files",
+          "included_schema_files",
+          "included_example_files",
+          "included_fixture_files",
+          "included_report_files",
+          "included_dashboard_files",
+          "included_evidence_files",
+          "included_remediation_files",
+          "included_signoff_files",
+          "security_boundary",
+          "non_execution_statement",
+          "active_constraints",
+          "compatibility_notes"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_governance_readiness_packet_schema_v0_1_1",
+    "title": "UMG Governance Readiness Packet Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static governance readiness packets. Defines review packaging only and does not authorize implementation, execution, or release.",
+    "description": "Validating schema for static governance readiness packets. Defines review packaging only and does not authorize implementation, execution, or release.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/governance-readiness-packet.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/governance-readiness-packet.schema.json",
+        "title": "UMG Governance Readiness Packet Schema v0.1",
+        "description": "Validating schema for static governance readiness packets. Defines review packaging only and does not authorize implementation, execution, or release.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "packet_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assessed_pack_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assessed_variant": {
+            "type": "string",
+            "minLength": 1
+          },
+          "maturity_assessment_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dependency_health_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "completeness_scoring_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "escalation_threshold_report_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "readiness_dashboard_summary_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "included_evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "included_signoff_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "implementation_allowed": {
+            "type": "boolean",
+            "default": false,
+            "const": false
+          },
+          "release_allowed": {
+            "type": "boolean",
+            "default": false,
+            "const": false
+          },
+          "security_gate_required": {
+            "type": "boolean"
+          },
+          "readiness_summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "active_constraints": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "expiration_or_recheck_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "packet_id",
+          "assessed_pack_id",
+          "assessed_variant",
+          "maturity_assessment_ref",
+          "dependency_health_ref",
+          "completeness_scoring_ref",
+          "escalation_threshold_report_ref",
+          "readiness_dashboard_summary_ref",
+          "included_evidence_refs",
+          "included_signoff_refs",
+          "implementation_allowed",
+          "release_allowed",
+          "security_gate_required",
+          "readiness_summary",
+          "active_constraints",
+          "expiration_or_recheck_date"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_harness_result_report_schema_v0_1_1",
+    "title": "UMG Harness Result Report Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static validation harness result reports. Defines reporting structure only and does not authorize execution.",
+    "description": "Validating schema for static validation harness result reports. Defines reporting structure only and does not authorize execution.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/harness-result-report.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/harness-result-report.schema.json",
+        "title": "UMG Harness Result Report Schema v0.1",
+        "description": "Validating schema for static validation harness result reports. Defines reporting structure only and does not authorize execution.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "report_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "runner_mode": {
+            "type": "string",
+            "const": "static_validation_only"
+          },
+          "security_mode": {
+            "type": "string",
+            "const": "no_execution"
+          },
+          "fixture_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fixture_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_result_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "validation_matrix_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema_set_used": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runtimespec_preview": {
+                "type": "string",
+                "minLength": 1
+              },
+              "validation_trace_preview": {
+                "type": "string",
+                "minLength": 1
+              },
+              "blocked_reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "runtimespec_preview",
+              "validation_trace_preview",
+              "blocked_reason"
+            ]
+          },
+          "governance_schema_set_used": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "capability_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "toolpack_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tool_binding_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sleeve_runtime_governance_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "trust_registry_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "approval_token_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rollback_taxonomy_schema": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "capability_schema",
+              "toolpack_schema",
+              "tool_binding_schema",
+              "sleeve_runtime_governance_schema",
+              "trust_registry_schema",
+              "approval_token_schema",
+              "rollback_taxonomy_schema"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "PASS_WITH_MISMATCH_NOTE",
+              "FAIL_SCHEMA",
+              "FAIL_EXPECTATION",
+              "FAIL_CONSISTENCY"
+            ]
+          },
+          "outcome_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema_validation": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL"
+            ]
+          },
+          "expectation_validation": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "PASS_WITH_MISMATCH_NOTE"
+            ]
+          },
+          "consistency_validation": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "PASS_WITH_MISMATCH_NOTE"
+            ]
+          },
+          "trace_expectation_validation": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "NOT_RUN"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "mismatch_notes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "blocked_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "./blocked-reason.schema.json"
+            }
+          },
+          "final_readiness": {
+            "type": "string",
+            "enum": [
+              "preview_only",
+              "dry_run_only",
+              "structurally_executable_pending_gate",
+              "blocked"
+            ]
+          },
+          "execution_authorized": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "report_id",
+          "generated_at",
+          "runner_mode",
+          "security_mode",
+          "fixture_name",
+          "fixture_path",
+          "expected_result_path",
+          "validation_matrix_path",
+          "schema_set_used",
+          "governance_schema_set_used",
+          "outcome",
+          "outcome_reason",
+          "schema_validation",
+          "expectation_validation",
+          "consistency_validation",
+          "trace_expectation_validation",
+          "warnings",
+          "errors",
+          "mismatch_notes",
+          "blocked_reasons",
+          "final_readiness",
+          "execution_authorized"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_preview_ui_mapping_schema_v0_1_1",
+    "title": "UMG Preview UI Mapping Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for preview-state UI presentation mappings. Defines display structure only and does not authorize runtime action.",
+    "description": "Validating schema for preview-state UI presentation mappings. Defines display structure only and does not authorize runtime action.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/preview-ui-mapping.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/preview-ui-mapping.schema.json",
+        "title": "UMG Preview UI Mapping Schema v0.1",
+        "description": "Validating schema for preview-state UI presentation mappings. Defines display structure only and does not authorize runtime action.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "readiness_display_mapping": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "readiness": {
+                  "type": "string",
+                  "enum": [
+                    "preview_only",
+                    "dry_run_only",
+                    "structurally_executable_pending_gate",
+                    "blocked"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "badge": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "color": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "readiness",
+                "label",
+                "badge",
+                "color",
+                "description"
+              ]
+            },
+            "minItems": 4
+          },
+          "blocked_reason_display_mapping": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "blocked_reason_code": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "display_label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "display_group": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "priority": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "blocked_reason_code",
+                "display_label",
+                "display_group",
+                "priority"
+              ]
+            }
+          },
+          "severity_display_mapping": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "warning",
+                    "elevated",
+                    "critical",
+                    "terminal"
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "color": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "icon": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "severity",
+                "label",
+                "color",
+                "icon"
+              ]
+            },
+            "minItems": 5
+          },
+          "remediation_display_mapping": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "show_inline": {
+                "type": "boolean"
+              },
+              "show_expandable": {
+                "type": "boolean"
+              },
+              "show_retry_hint": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "show_inline",
+              "show_expandable",
+              "show_retry_hint"
+            ]
+          },
+          "governance_summary_panel": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "show_declared_capabilities": {
+                "type": "boolean"
+              },
+              "show_provider_availability": {
+                "type": "boolean"
+              },
+              "show_trust_status": {
+                "type": "boolean"
+              },
+              "show_approval_requirements": {
+                "type": "boolean"
+              },
+              "show_rollback_validity": {
+                "type": "boolean"
+              },
+              "show_tenant_compliance": {
+                "type": "boolean"
+              },
+              "show_final_preview_readiness": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "show_declared_capabilities",
+              "show_provider_availability",
+              "show_trust_status",
+              "show_approval_requirements",
+              "show_rollback_validity",
+              "show_tenant_compliance",
+              "show_final_preview_readiness"
+            ]
+          },
+          "mismatch_note_display": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "warning",
+                  "elevated",
+                  "critical",
+                  "terminal"
+                ]
+              }
+            },
+            "required": [
+              "enabled",
+              "label",
+              "severity"
+            ]
+          },
+          "terminal_violation_display": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "banner_label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "require_acknowledgement": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled",
+              "banner_label",
+              "require_acknowledgement"
+            ]
+          }
+        },
+        "required": [
+          "readiness_display_mapping",
+          "blocked_reason_display_mapping",
+          "severity_display_mapping",
+          "remediation_display_mapping",
+          "governance_summary_panel",
+          "mismatch_note_display",
+          "terminal_violation_display"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_review_decision_record_schema_v0_1_1",
+    "title": "UMG Review Decision Record Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static governance review decision records. Defines review decisions only and does not authorize implementation, execution, or release.",
+    "description": "Validating schema for static governance review decision records. Defines review decisions only and does not authorize implementation, execution, or release.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/review-decision-record.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/review-decision-record.schema.json",
+        "title": "UMG Review Decision Record Schema v0.1",
+        "description": "Validating schema for static governance review decision records. Defines review decisions only and does not authorize implementation, execution, or release.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "review_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reviewed_packet_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_status": {
+            "type": "string",
+            "enum": [
+              "accepted_static",
+              "accepted_with_conditions",
+              "rejected_static",
+              "deferred",
+              "blocked_security",
+              "superseded"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "blocked_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "required_followups": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "reviewer_roles": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "implementation_allowed": {
+            "type": "boolean",
+            "const": false
+          },
+          "release_allowed": {
+            "type": "boolean",
+            "const": false
+          },
+          "security_gate_required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "decision_id",
+          "review_type",
+          "reviewed_packet_id",
+          "decision_status",
+          "rationale",
+          "conditions",
+          "blocked_reasons",
+          "required_followups",
+          "reviewer_roles",
+          "expires_at",
+          "implementation_allowed",
+          "release_allowed",
+          "security_gate_required"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "decision_status": {
+                  "const": "blocked_security"
+                }
+              },
+              "required": [
+                "decision_status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "release_allowed": {
+                  "const": false
+                },
+                "security_gate_required": {
+                  "const": true
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "decision_status": {
+                  "const": "rejected_static"
+                }
+              },
+              "required": [
+                "decision_status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "implementation_allowed": {
+                  "const": false
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "decision_status": {
+                  "const": "accepted_with_conditions"
+                }
+              },
+              "required": [
+                "decision_status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "conditions": {
+                  "minItems": 1
+                },
+                "required_followups": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_rollback_taxonomy_schema_v0_1_1",
+    "title": "UMG Rollback Taxonomy Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for rollback classifications used by runtime governance. Defines rollback structure only and does not imply automatic recovery authority.",
+    "description": "Validating schema for rollback classifications used by runtime governance. Defines rollback structure only and does not imply automatic recovery authority.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/rollback-taxonomy.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/rollback-taxonomy.schema.json",
+        "title": "UMG Rollback Taxonomy Schema v0.1",
+        "description": "Validating schema for rollback classifications used by runtime governance. Defines rollback structure only and does not imply automatic recovery authority.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "rollback_taxonomy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "rollback_policy_id": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "manual_only",
+                  "reversible_file",
+                  "reversible_ui",
+                  "checkpoint_required",
+                  "transactional"
+                ]
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "side_effect_level": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "read_only",
+                  "local_mutation",
+                  "workflow_transition",
+                  "external_action",
+                  "critical_action"
+                ]
+              },
+              "automatic_rollback_supported": {
+                "type": "boolean"
+              },
+              "manual_intervention_required": {
+                "type": "boolean"
+              },
+              "checkpoint_required": {
+                "type": "boolean"
+              },
+              "audit_required": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "rollback_policy_id",
+              "description",
+              "side_effect_level",
+              "automatic_rollback_supported",
+              "manual_intervention_required",
+              "checkpoint_required",
+              "audit_required"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "side_effect_level": {
+                      "enum": [
+                        "local_mutation",
+                        "workflow_transition",
+                        "external_action",
+                        "critical_action"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "side_effect_level"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "audit_required": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "rollback_policy_id": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "rollback_policy_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "side_effect_level": {
+                      "enum": [
+                        "none",
+                        "read_only"
+                      ]
+                    },
+                    "automatic_rollback_supported": {
+                      "const": false
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "rollback_policy_id": {
+                      "const": "reversible_file"
+                    }
+                  },
+                  "required": [
+                    "rollback_policy_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "side_effect_level": {
+                      "const": "local_mutation"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "rollback_policy_id": {
+                      "const": "reversible_ui"
+                    }
+                  },
+                  "required": [
+                    "rollback_policy_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "side_effect_level": {
+                      "const": "external_action"
+                    },
+                    "manual_intervention_required": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "rollback_policy_id": {
+                      "const": "checkpoint_required"
+                    }
+                  },
+                  "required": [
+                    "rollback_policy_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "checkpoint_required": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "rollback_taxonomy"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_runtimespec_preview_schema_v0_1_1",
+    "title": "UMG RuntimeSpec Preview Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for non-executing RuntimeSpec preview outputs. Defines structural governance readiness only and does not authorize runtime action.",
+    "description": "Validating schema for non-executing RuntimeSpec preview outputs. Defines structural governance readiness only and does not authorize runtime action.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/runtimespec-preview.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/runtimespec-preview.schema.json",
+        "title": "UMG RuntimeSpec Preview Schema v0.1",
+        "description": "Validating schema for non-executing RuntimeSpec preview outputs. Defines structural governance readiness only and does not authorize runtime action.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "runtime_spec_preview_version": {
+            "type": "string"
+          },
+          "runtime_spec_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_ir_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "active_sleeve": {
+            "type": "string",
+            "pattern": "^SLV\\.[A-Z0-9._-]+\\.v[0-9]+$"
+          },
+          "requested_execution_mode": {
+            "type": "string",
+            "enum": [
+              "preview",
+              "dry_run",
+              "assisted",
+              "approved_execute",
+              "blocked"
+            ]
+          },
+          "capability_state": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "capability_id": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "declared": {
+                  "type": "boolean"
+                },
+                "registry_state": {
+                  "type": "string",
+                  "enum": [
+                    "declared",
+                    "registry_known",
+                    "registry_missing"
+                  ]
+                },
+                "risk_level": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
+                "blocked_by_default": {
+                  "type": "boolean"
+                },
+                "allowed_modes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "preview",
+                      "dry_run",
+                      "assisted",
+                      "approved_execute",
+                      "blocked"
+                    ]
+                  },
+                  "uniqueItems": true
+                }
+              },
+              "required": [
+                "capability_id",
+                "declared",
+                "registry_state",
+                "risk_level",
+                "blocked_by_default",
+                "allowed_modes"
+              ]
+            }
+          },
+          "provider_state": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "capability_id": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "toolpack_id": {
+                  "type": "string",
+                  "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "provider_state": {
+                  "type": "string",
+                  "enum": [
+                    "provider_available",
+                    "provider_missing"
+                  ]
+                },
+                "version_state": {
+                  "type": "string",
+                  "enum": [
+                    "provider_version_valid",
+                    "provider_version_invalid"
+                  ]
+                }
+              },
+              "required": [
+                "capability_id",
+                "toolpack_id",
+                "provider_state",
+                "version_state"
+              ]
+            }
+          },
+          "binding_state": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "binding_id": {
+                  "type": "string",
+                  "pattern": "^BIND\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "capability_id": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "tool_provider": {
+                  "type": "string",
+                  "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "binding_state": {
+                  "type": "string",
+                  "enum": [
+                    "binding_present",
+                    "binding_validated",
+                    "binding_invalid"
+                  ]
+                },
+                "allowed_modes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "preview",
+                      "dry_run",
+                      "assisted",
+                      "approved_execute",
+                      "blocked"
+                    ]
+                  },
+                  "uniqueItems": true
+                },
+                "failure_policy": {
+                  "type": "string",
+                  "enum": [
+                    "fail_closed",
+                    "warn_and_skip_optional",
+                    "defer_to_human",
+                    "stop_workflow"
+                  ]
+                }
+              },
+              "required": [
+                "binding_id",
+                "capability_id",
+                "tool_provider",
+                "binding_state",
+                "allowed_modes",
+                "failure_policy"
+              ]
+            }
+          },
+          "trust_state": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "trust_tier_id": {
+                  "type": "string",
+                  "enum": [
+                    "TRUST.INTERNAL",
+                    "TRUST.OPENCLAW_VERIFIED",
+                    "TRUST.BUSINESS_VERIFIED",
+                    "TRUST.EXPERIMENTAL",
+                    "TRUST.BLOCKED"
+                  ]
+                },
+                "trust_state": {
+                  "type": "string",
+                  "enum": [
+                    "trust_valid",
+                    "trust_blocked"
+                  ]
+                },
+                "tenant_binding_required": {
+                  "type": "boolean"
+                },
+                "tenant_bound": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "trust_tier_id",
+                "trust_state",
+                "tenant_binding_required",
+                "tenant_bound"
+              ]
+            }
+          },
+          "approval_state": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "capability_id": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "binding_id": {
+                  "type": "string",
+                  "pattern": "^BIND\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "approval_state": {
+                  "type": "string",
+                  "enum": [
+                    "approval_required",
+                    "approval_present",
+                    "approval_missing",
+                    "approval_expired",
+                    "approval_revoked"
+                  ]
+                },
+                "approval_required": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "capability_id",
+                "binding_id",
+                "approval_state",
+                "approval_required"
+              ]
+            }
+          },
+          "rollback_state": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "binding_id": {
+                  "type": "string",
+                  "pattern": "^BIND\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "rollback_policy_id": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "manual_only",
+                    "reversible_file",
+                    "reversible_ui",
+                    "checkpoint_required",
+                    "transactional"
+                  ]
+                },
+                "rollback_state": {
+                  "type": "string",
+                  "enum": [
+                    "valid",
+                    "invalid"
+                  ]
+                }
+              },
+              "required": [
+                "binding_id",
+                "rollback_policy_id",
+                "rollback_state"
+              ]
+            }
+          },
+          "executable_state": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "executable",
+                  "dry_run_only",
+                  "blocked_reason"
+                ]
+              },
+              "mode_limit": {
+                "type": "string",
+                "enum": [
+                  "preview",
+                  "dry_run",
+                  "assisted",
+                  "approved_execute",
+                  "blocked"
+                ]
+              },
+              "blocked_reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "CAPABILITY_UNKNOWN",
+                    "CAPABILITY_REGISTRY_MISSING",
+                    "TRUST_BLOCKED",
+                    "PROVIDER_MISSING",
+                    "PROVIDER_VERSION_INVALID",
+                    "BINDING_MISSING",
+                    "BINDING_INVALID",
+                    "APPROVAL_REQUIRED",
+                    "APPROVAL_MISSING",
+                    "APPROVAL_EXPIRED",
+                    "APPROVAL_REVOKED",
+                    "TENANT_VIOLATION",
+                    "EXECUTION_MODE_BLOCKED",
+                    "ROLLBACK_POLICY_INVALID",
+                    "AUDIT_POLICY_INVALID",
+                    "TOOLPACK_BLOCKED",
+                    "TARGET_CONSTRAINT_INVALID",
+                    "CROSS_SCHEMA_CONFLICT"
+                  ]
+                },
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "state",
+              "mode_limit",
+              "blocked_reasons"
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "blocked_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "./blocked-reason.schema.json"
+            }
+          },
+          "governance_summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "declared_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "provider_availability": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "partial",
+                  "missing"
+                ]
+              },
+              "trust_status": {
+                "type": "string",
+                "enum": [
+                  "valid",
+                  "blocked",
+                  "mixed"
+                ]
+              },
+              "approval_requirements": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "required",
+                  "mixed"
+                ]
+              },
+              "rollback_validity": {
+                "type": "string",
+                "enum": [
+                  "valid",
+                  "invalid",
+                  "mixed"
+                ]
+              },
+              "tenant_compliance": {
+                "type": "string",
+                "enum": [
+                  "compliant",
+                  "violating",
+                  "mixed"
+                ]
+              },
+              "final_preview_readiness": {
+                "type": "string",
+                "enum": [
+                  "preview_only",
+                  "dry_run_only",
+                  "structurally_executable_pending_gate",
+                  "blocked"
+                ]
+              }
+            },
+            "required": [
+              "declared_capabilities",
+              "provider_availability",
+              "trust_status",
+              "approval_requirements",
+              "rollback_validity",
+              "tenant_compliance",
+              "final_preview_readiness"
+            ]
+          }
+        },
+        "required": [
+          "runtime_spec_preview_version",
+          "runtime_spec_id",
+          "source_ir_id",
+          "active_sleeve",
+          "requested_execution_mode",
+          "capability_state",
+          "provider_state",
+          "binding_state",
+          "trust_state",
+          "approval_state",
+          "rollback_state",
+          "executable_state",
+          "warnings",
+          "errors",
+          "blocked_reasons",
+          "governance_summary"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_sleeve_runtime_governance_schema_v0_1_1",
+    "title": "UMG Sleeve Runtime Governance Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for business or tool-enabled sleeve runtime governance declarations. Defines governance structure only and does not authorize execution.",
+    "description": "Validating schema for business or tool-enabled sleeve runtime governance declarations. Defines governance structure only and does not authorize execution.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/sleeve-runtime-governance.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/sleeve-runtime-governance.schema.json",
+        "title": "UMG Sleeve Runtime Governance Schema v0.1",
+        "description": "Validating schema for business or tool-enabled sleeve runtime governance declarations. Defines governance structure only and does not authorize execution.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "runtime_governance": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "sleeve_id": {
+                "type": "string",
+                "pattern": "^SLV\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+              },
+              "business_profile": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "tenant_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "business_domain": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "operator_roles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  "automation_posture": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "tenant_id",
+                  "business_domain",
+                  "operator_roles",
+                  "automation_posture"
+                ]
+              },
+              "software_inventory": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target_apps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "target_windows": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "plugin_dependencies": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "target_apps",
+                  "target_windows",
+                  "plugin_dependencies"
+                ]
+              },
+              "required_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "optional_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "approved_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "preferred_toolpacks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "allowed_toolpacks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "blocked_toolpacks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "uniqueItems": true
+              },
+              "execution_mode": {
+                "type": "string",
+                "enum": [
+                  "preview",
+                  "dry_run",
+                  "assisted",
+                  "approved_execute",
+                  "blocked"
+                ]
+              },
+              "approval_mode": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "human_required",
+                  "per_step",
+                  "per_phase",
+                  "per_capability",
+                  "multi_approver_required"
+                ]
+              },
+              "approval_checkpoints": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "rollback_model": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "default_policy": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "manual_only",
+                      "reversible_file",
+                      "reversible_ui",
+                      "checkpoint_required",
+                      "transactional"
+                    ]
+                  },
+                  "manual_override_required": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "required",
+                  "default_policy",
+                  "manual_override_required"
+                ]
+              },
+              "audit_policy": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "trace_level": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "summary",
+                      "full"
+                    ]
+                  },
+                  "retain_bindings": {
+                    "type": "boolean"
+                  },
+                  "retain_approval_tokens": {
+                    "type": "boolean"
+                  },
+                  "retain_failure_reasons": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "required",
+                  "trace_level",
+                  "retain_bindings",
+                  "retain_approval_tokens",
+                  "retain_failure_reasons"
+                ]
+              },
+              "escalation_path": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "on_policy_failure": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "on_runtime_block": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "on_unrecoverable_error": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "on_policy_failure",
+                  "on_runtime_block",
+                  "on_unrecoverable_error"
+                ]
+              },
+              "tenant_boundary": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "tenant_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "allowed_roots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "blocked_roots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "allowed_apps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "blocked_apps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "allowed_toolpacks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                    },
+                    "uniqueItems": true
+                  },
+                  "blocked_toolpacks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                    },
+                    "uniqueItems": true
+                  },
+                  "audit_namespace": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "data_boundary": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "tenant_id",
+                  "allowed_roots",
+                  "blocked_roots",
+                  "allowed_apps",
+                  "blocked_apps",
+                  "allowed_toolpacks",
+                  "blocked_toolpacks",
+                  "audit_namespace",
+                  "data_boundary"
+                ]
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "sleeve_id",
+              "version",
+              "business_profile",
+              "software_inventory",
+              "required_capabilities",
+              "optional_capabilities",
+              "approved_capabilities",
+              "preferred_toolpacks",
+              "allowed_toolpacks",
+              "blocked_toolpacks",
+              "execution_mode",
+              "approval_mode",
+              "approval_checkpoints",
+              "rollback_model",
+              "audit_policy",
+              "escalation_path",
+              "tenant_boundary"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "execution_mode": {
+                      "const": "approved_execute"
+                    }
+                  },
+                  "required": [
+                    "execution_mode"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "approval_mode": {
+                      "not": {
+                        "const": "none"
+                      }
+                    },
+                    "audit_policy": {
+                      "properties": {
+                        "required": {
+                          "const": true
+                        }
+                      },
+                      "required": [
+                        "required"
+                      ]
+                    },
+                    "rollback_model": {
+                      "properties": {
+                        "required": {
+                          "const": true
+                        }
+                      },
+                      "required": [
+                        "required"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "approval_mode": {
+                      "const": "none"
+                    }
+                  },
+                  "required": [
+                    "approval_mode"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "execution_mode": {
+                      "enum": [
+                        "preview",
+                        "blocked"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "runtime_governance"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_tool_binding_schema_v0_1_1",
+    "title": "UMG Tool Binding Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static capability-to-tool binding manifests. Defines mapping structure only and does not grant execution authority.",
+    "description": "Validating schema for static capability-to-tool binding manifests. Defines mapping structure only and does not grant execution authority.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/tool-binding.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/tool-binding.schema.json",
+        "title": "UMG Tool Binding Schema v0.1",
+        "description": "Validating schema for static capability-to-tool binding manifests. Defines mapping structure only and does not grant execution authority.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "binding": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "binding_id": {
+                "type": "string",
+                "pattern": "^BIND\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "capability_id": {
+                "type": "string",
+                "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "tool_provider": {
+                "type": "string",
+                "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "openclaw_tool_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "allowed_modes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "preview",
+                    "dry_run",
+                    "assisted",
+                    "approved_execute",
+                    "blocked"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "approval_required": {
+                "type": "boolean"
+              },
+              "audit_required": {
+                "type": "boolean"
+              },
+              "dry_run_supported": {
+                "type": "boolean"
+              },
+              "rollback_policy": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "manual_only",
+                  "reversible_file",
+                  "reversible_ui",
+                  "checkpoint_required",
+                  "transactional"
+                ]
+              },
+              "trust_tier": {
+                "type": "string",
+                "enum": [
+                  "TRUST.INTERNAL",
+                  "TRUST.OPENCLAW_VERIFIED",
+                  "TRUST.BUSINESS_VERIFIED",
+                  "TRUST.EXPERIMENTAL",
+                  "TRUST.BLOCKED"
+                ]
+              },
+              "risk_level": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "critical"
+                ]
+              },
+              "target_constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "allowed_window_titles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "required_window_match": {
+                    "type": "boolean"
+                  },
+                  "allowed_file_roots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "denied_file_roots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "allowed_app_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "blocked_app_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "coordinate_bounds_required": {
+                    "type": "boolean"
+                  },
+                  "user_confirmation_required": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "allowed_window_titles",
+                  "required_window_match",
+                  "allowed_file_roots",
+                  "denied_file_roots",
+                  "allowed_app_ids",
+                  "blocked_app_ids",
+                  "coordinate_bounds_required",
+                  "user_confirmation_required"
+                ]
+              },
+              "failure_policy": {
+                "type": "string",
+                "enum": [
+                  "fail_closed",
+                  "warn_and_skip_optional",
+                  "defer_to_human",
+                  "stop_workflow"
+                ]
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "binding_id",
+              "capability_id",
+              "tool_provider",
+              "openclaw_tool_id",
+              "allowed_modes",
+              "approval_required",
+              "audit_required",
+              "dry_run_supported",
+              "rollback_policy",
+              "trust_tier",
+              "risk_level",
+              "target_constraints",
+              "failure_policy"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "risk_level": {
+                      "enum": [
+                        "high",
+                        "critical"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "risk_level"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "approval_required": {
+                      "const": true
+                    },
+                    "audit_required": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "risk_level": {
+                      "const": "critical"
+                    }
+                  },
+                  "required": [
+                    "risk_level"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "allowed_modes": {
+                      "contains": {
+                        "const": "approved_execute"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "trust_tier": {
+                      "const": "TRUST.BLOCKED"
+                    }
+                  },
+                  "required": [
+                    "trust_tier"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "allowed_modes": {
+                      "maxItems": 1,
+                      "items": {
+                        "const": "blocked"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "binding"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_tool_pack_schema_v0_2_draft_1",
+    "title": "UMG Tool Pack Schema v0.2-draft",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static UMG toolpack provider manifests. Defines provider supply only and does not grant execution authority.",
+    "description": "Validating schema for static UMG toolpack provider manifests. Defines provider supply only and does not grant execution authority.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/toolpack.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/toolpack.schema.json",
+        "title": "UMG Tool Pack Schema v0.2-draft",
+        "description": "Validating schema for static UMG toolpack provider manifests. Defines provider supply only and does not grant execution authority.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "toolpack": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "toolpack_id": {
+                "type": "string",
+                "pattern": "^TP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provided_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^CAP\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "declared_tool_surfaces": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "tool_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "surface_kind": {
+                      "type": "string",
+                      "enum": [
+                        "read_only",
+                        "side_effect",
+                        "relay_orchestration",
+                        "bounded_execution"
+                      ]
+                    },
+                    "description": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "approval_required": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "tool_id",
+                    "surface_kind",
+                    "approval_required"
+                  ]
+                },
+                "minItems": 1
+              },
+              "bindings": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^BIND\\.[A-Z0-9._-]+\\.v[0-9]+$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "permissions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "trust_tier": {
+                    "type": "string",
+                    "enum": [
+                      "TRUST.INTERNAL",
+                      "TRUST.OPENCLAW_VERIFIED",
+                      "TRUST.BUSINESS_VERIFIED",
+                      "TRUST.EXPERIMENTAL",
+                      "TRUST.BLOCKED"
+                    ]
+                  },
+                  "required_approvals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "restricted_contexts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "trust_tier",
+                  "required_approvals",
+                  "restricted_contexts"
+                ]
+              },
+              "compatibility": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "minimum_envoy_version": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minimum_openclaw_version": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "supported_execution_modes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "preview",
+                        "dry_run",
+                        "assisted",
+                        "approved_execute",
+                        "blocked"
+                      ]
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  "supported_platforms": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "uniqueItems": true
+                  },
+                  "required_plugin_config": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "minimum_envoy_version",
+                  "minimum_openclaw_version",
+                  "supported_execution_modes",
+                  "supported_platforms",
+                  "required_plugin_config"
+                ]
+              },
+              "runtime_constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "fail_closed": {
+                    "type": "boolean"
+                  },
+                  "bounded_execution_required": {
+                    "type": "boolean"
+                  },
+                  "tenant_binding_required": {
+                    "type": "boolean"
+                  },
+                  "notes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "fail_closed",
+                  "bounded_execution_required",
+                  "tenant_binding_required"
+                ]
+              },
+              "diagnostics": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "emitted_events": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "blocked_reasons": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  },
+                  "validation_notes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "emitted_events",
+                  "blocked_reasons",
+                  "validation_notes"
+                ]
+              },
+              "failure_policy": {
+                "type": "string",
+                "enum": [
+                  "fail_closed",
+                  "warn_and_skip_optional",
+                  "defer_to_human",
+                  "stop_workflow"
+                ]
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "toolpack_id",
+              "version",
+              "provider",
+              "provided_capabilities",
+              "declared_tool_surfaces",
+              "bindings",
+              "permissions",
+              "compatibility",
+              "runtime_constraints",
+              "diagnostics",
+              "failure_policy"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "permissions": {
+                      "properties": {
+                        "trust_tier": {
+                          "const": "TRUST.BLOCKED"
+                        }
+                      },
+                      "required": [
+                        "trust_tier"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "permissions"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "compatibility": {
+                      "properties": {
+                        "supported_execution_modes": {
+                          "maxItems": 1,
+                          "items": {
+                            "const": "blocked"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "declared_tool_surfaces": {
+                      "contains": {
+                        "type": "object",
+                        "properties": {
+                          "surface_kind": {
+                            "enum": [
+                              "side_effect",
+                              "relay_orchestration",
+                              "bounded_execution"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "surface_kind"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "declared_tool_surfaces"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "runtime_constraints": {
+                      "properties": {
+                        "bounded_execution_required": {
+                          "const": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "toolpack"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_tool_pack_schema_legacy_snapshot_v0_1_1",
+    "title": "UMG Tool Pack Schema Legacy Snapshot v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Preserved snapshot of the earlier toolpack schema before TOOL-RUNTIME-2B schema drafting.",
+    "description": "Preserved snapshot of the earlier toolpack schema before TOOL-RUNTIME-2B schema drafting.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/toolpack.schema.legacy-v0.1.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/toolpack.schema.legacy-v0.1.json",
+        "title": "UMG Tool Pack Schema Legacy Snapshot v0.1",
+        "description": "Preserved snapshot of the earlier toolpack schema before TOOL-RUNTIME-2B schema drafting.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "toolpack": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deprecated",
+                  "experimental",
+                  "archived"
+                ]
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "general",
+                  "domain_specific",
+                  "framework_specific",
+                  "experimental",
+                  "archived"
+                ]
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              },
+              "provides_capabilities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "tool_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "surface": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "description": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "input_contract": {
+                      "type": [
+                        "string",
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "output_contract": {
+                      "type": [
+                        "string",
+                        "object",
+                        "null"
+                      ]
+                    },
+                    "safe_mode": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "read_only",
+                        "bounded_write",
+                        "interactive",
+                        "privileged",
+                        null
+                      ]
+                    },
+                    "requires_human_approval": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "tool_id"
+                  ]
+                }
+              },
+              "bindings": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "runtime_surface": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "host_kinds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  },
+                  "transport_modes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  }
+                }
+              },
+              "permissions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "trust_level": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "enum": [
+                      "public_safe",
+                      "developer_local",
+                      "private_resleever",
+                      "internal_operator",
+                      null
+                    ]
+                  },
+                  "required_approvals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  },
+                  "restricted_contexts": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  }
+                }
+              },
+              "compatibility": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "runtime_profiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  },
+                  "plugin_versions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  },
+                  "schema_versions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  }
+                }
+              },
+              "runtime_constraints": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "fail_closed": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "allowed_lanes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "uniqueItems": true
+                  },
+                  "notes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              "examples": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "object",
+                    "string"
+                  ]
+                }
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "status",
+              "version",
+              "category",
+              "provides_capabilities"
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "toolpack"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_trust_registry_schema_v0_1_1",
+    "title": "UMG Trust Registry Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for static trust tier declarations. Defines trust classification only and does not grant execution authority.",
+    "description": "Validating schema for static trust tier declarations. Defines trust classification only and does not grant execution authority.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/trust-registry.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/trust-registry.schema.json",
+        "title": "UMG Trust Registry Schema v0.1",
+        "description": "Validating schema for static trust tier declarations. Defines trust classification only and does not grant execution authority.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "./artifact.identity.schema.json"
+          },
+          "provenance": {
+            "$ref": "./provenance.schema.json"
+          },
+          "trust_registry": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "trust_tier_id": {
+                "type": "string",
+                "enum": [
+                  "TRUST.INTERNAL",
+                  "TRUST.OPENCLAW_VERIFIED",
+                  "TRUST.BUSINESS_VERIFIED",
+                  "TRUST.EXPERIMENTAL",
+                  "TRUST.BLOCKED"
+                ]
+              },
+              "description": {
+                "type": "string",
+                "minLength": 1
+              },
+              "allowed_capability_risk_levels": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high",
+                    "critical"
+                  ]
+                },
+                "uniqueItems": true
+              },
+              "allowed_execution_modes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "preview",
+                    "dry_run",
+                    "assisted",
+                    "approved_execute",
+                    "blocked"
+                  ]
+                },
+                "uniqueItems": true
+              },
+              "approval_requirements": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              },
+              "provider_requirements": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              },
+              "signing_required": {
+                "type": "boolean"
+              },
+              "audit_required": {
+                "type": "boolean"
+              },
+              "default_blocked": {
+                "type": "boolean"
+              },
+              "tenant_binding_required": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "trust_tier_id",
+              "description",
+              "allowed_capability_risk_levels",
+              "allowed_execution_modes",
+              "approval_requirements",
+              "provider_requirements",
+              "signing_required",
+              "audit_required",
+              "default_blocked",
+              "tenant_binding_required"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "trust_tier_id": {
+                      "const": "TRUST.BLOCKED"
+                    }
+                  },
+                  "required": [
+                    "trust_tier_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "allowed_execution_modes": {
+                      "maxItems": 0
+                    },
+                    "default_blocked": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "trust_tier_id": {
+                      "const": "TRUST.EXPERIMENTAL"
+                    }
+                  },
+                  "required": [
+                    "trust_tier_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "allowed_execution_modes": {
+                      "not": {
+                        "contains": {
+                          "const": "approved_execute"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "trust_tier_id": {
+                      "const": "TRUST.BUSINESS_VERIFIED"
+                    }
+                  },
+                  "required": [
+                    "trust_tier_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "tenant_binding_required": {
+                      "const": true
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "trust_tier_id": {
+                      "const": "TRUST.OPENCLAW_VERIFIED"
+                    }
+                  },
+                  "required": [
+                    "trust_tier_id"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "provider_requirements": {
+                      "contains": {
+                        "const": "provider_verification_required"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "allowed_capability_risk_levels": {
+                      "contains": {
+                        "enum": [
+                          "high",
+                          "critical"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "allowed_capability_risk_levels"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "audit_required": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "metadata": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "identity",
+          "provenance",
+          "trust_registry"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  },
+  {
+    "id": "blk_umg_validation_trace_preview_schema_v0_1_1",
+    "title": "UMG Validation Trace Preview Schema v0.1",
+    "type": "molt_block",
+    "role": "instruction",
+    "content": "Validating schema for non-executing resolver preview validation traces. Defines trace output only and does not authorize runtime action.",
+    "description": "Validating schema for non-executing resolver preview validation traces. Defines trace output only and does not authorize runtime action.",
+    "category": "object",
+    "tags": [],
+    "priorityOrder": 20,
+    "defaultState": "on",
+    "visibility": "visible",
+    "activation": {
+      "mode": "always"
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "compatibleSleeves": [],
+    "compatibleStacks": [],
+    "source": {
+      "origin": "library",
+      "version": "0.1"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "AI/SCHEMAS/validation-trace-preview.schema.json",
+      "original": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://umg.envoy/schemas/validation-trace-preview.schema.json",
+        "title": "UMG Validation Trace Preview Schema v0.1",
+        "description": "Validating schema for non-executing resolver preview validation traces. Defines trace output only and does not authorize runtime action.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sleeve_id": {
+            "type": "string",
+            "pattern": "^SLV\\.[A-Z0-9._-]+\\.v[0-9]+$"
+          },
+          "tenant_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "event_sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "event_type": {
+                  "type": "string",
+                  "enum": [
+                    "capability.declared",
+                    "capability.registry_known",
+                    "capability.registry_missing",
+                    "provider.found",
+                    "provider.invalid",
+                    "binding.validated",
+                    "binding.invalid",
+                    "trust.valid",
+                    "trust.blocked",
+                    "approval.present",
+                    "approval.expired",
+                    "approval.missing",
+                    "tenant.valid",
+                    "tenant.violation",
+                    "rollback.valid",
+                    "rollback.invalid",
+                    "preview.executable_state"
+                  ]
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "info",
+                    "warn",
+                    "error",
+                    "critical"
+                  ]
+                },
+                "source_layer": {
+                  "type": "string",
+                  "enum": [
+                    "capability",
+                    "trust",
+                    "provider",
+                    "binding",
+                    "approval",
+                    "tenant",
+                    "rollback",
+                    "governance",
+                    "preview"
+                  ]
+                },
+                "blocked_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "CAPABILITY_UNKNOWN",
+                    "CAPABILITY_REGISTRY_MISSING",
+                    "TRUST_BLOCKED",
+                    "PROVIDER_MISSING",
+                    "PROVIDER_VERSION_INVALID",
+                    "BINDING_MISSING",
+                    "BINDING_INVALID",
+                    "APPROVAL_REQUIRED",
+                    "APPROVAL_MISSING",
+                    "APPROVAL_EXPIRED",
+                    "APPROVAL_REVOKED",
+                    "TENANT_VIOLATION",
+                    "EXECUTION_MODE_BLOCKED",
+                    "ROLLBACK_POLICY_INVALID",
+                    "AUDIT_POLICY_INVALID",
+                    "TOOLPACK_BLOCKED",
+                    "TARGET_CONSTRAINT_INVALID",
+                    "CROSS_SCHEMA_CONFLICT",
+                    null
+                  ]
+                },
+                "remediation_hint": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "event_sequence",
+                "event_type",
+                "severity",
+                "source_layer",
+                "blocked_reason",
+                "remediation_hint"
+              ]
+            }
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "trace_id",
+          "timestamp",
+          "sleeve_id",
+          "tenant_id",
+          "events"
+        ]
+      },
+      "migrationWarnings": [
+        "role inferred",
+        "tags defaulted"
+      ]
+    }
+  }
+]

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
 import { applyCompileResultToGraph, buildGraphFromSleeve } from '../lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
-import { normalizeImportedBlocks } from '../lib/umg/migrateLibrary';
+import { normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
 
 const rawBlocks = [
@@ -24,6 +24,23 @@ describe('UMG Studio core engine', () => {
     expect(migrated[0].role).toBe('trigger');
     expect(migrated[0].defaultState).toBe('on');
     expect(migrated[0].legacy?.original).toBeTruthy();
+  });
+
+  it('imports upstream AI and sleeves assets while skipping HUMAN markdown and preserving unsupported roles', () => {
+    const catalog = normalizeSourceCatalog([
+      { lane: 'AI', sourcePath: 'AI/blocks/directive.customer.json', data: { id: 'src_directive', title: 'Customer Directive', role: 'Directive', tags: ['chatbot'], content: 'Help customers.' } },
+      { lane: 'AI', sourcePath: 'AI/blocks/aim.future.json', data: { id: 'src_aim', title: 'Future Aim', role: 'Aim', content: 'Future extension.' } },
+      { lane: 'AI', sourcePath: 'AI/MOLT/Aim/catalog.json', data: { description: 'MOLT Aim blocks without explicit role field.' } },
+      { lane: 'HUMAN', sourcePath: 'HUMAN/guide.md', data: '# readable reference' },
+      { lane: 'sleeves', sourcePath: 'sleeves/sample.json', data: { sleeve_id: 'sleeve_demo', title: 'Demo Sleeve', block_refs: [{ block_id: 'src_directive', enabled: true }] } }
+    ]);
+
+    expect(catalog.blocks).toHaveLength(1);
+    expect(catalog.blocks[0].legacy?.sourceRepo).toBe('UMG-Block-Library');
+    expect(catalog.blocks[0].legacy?.sourcePath).toBe('AI/blocks/directive.customer.json');
+    expect(catalog.sleeves).toHaveLength(1);
+    expect(catalog.report.skippedHumanReferences).toBe(1);
+    expect(catalog.report.unsupportedRoles).toEqual(expect.arrayContaining(['aim']));
   });
 
   it('composes a balanced mobile detailing chatbot sleeve with required role coverage and reasons', () => {

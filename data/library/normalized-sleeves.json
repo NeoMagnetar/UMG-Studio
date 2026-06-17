@@ -1,0 +1,437 @@
+[
+  {
+    "id": "slv_catalog",
+    "title": "catalog",
+    "type": "sleeve",
+    "version": "0.1",
+    "tags": [],
+    "stacks": [
+      {
+        "id": "slv_catalog_stack",
+        "title": "Imported Sleeve Stack",
+        "type": "neostack",
+        "tags": [],
+        "neoblocks": [
+          {
+            "id": "slv_catalog_neoblock",
+            "title": "Imported Sleeve Blocks",
+            "type": "neoblock",
+            "tags": [],
+            "blocks": [],
+            "defaultState": "on"
+          }
+        ],
+        "defaultState": "on",
+        "compileStrategy": "role_then_priority"
+      }
+    ],
+    "runtimeConfig": {
+      "active": true,
+      "depth": "balanced",
+      "hermesEnabled": false,
+      "runtimeAdaptation": false,
+      "showRuntimeTrace": true
+    },
+    "metadata": {
+      "author": "UMG-Block-Library"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "sleeves/manifests/catalog.json",
+      "original": {
+        "generated_at": "2026-04-20T17:26:00Z",
+        "catalog_status": "public_package_curated_sleeve_catalog",
+        "catalog_scope": "Bundled public-facing sleeve catalog for the public UMG Block Library package. Entries are intentionally classified by promotion posture rather than treated as undifferentiated compatibility mirror material.",
+        "notes": [
+          "This catalog supports the current public v0 tool surface while also distinguishing promoted reference sleeves from compatibility-only and historical sleeves.",
+          "The public lane is intentionally narrower than the private Resleever sleeve lane.",
+          "Payload/runtime ids may differ from public catalog ids; the catalog id is the stable public reference name."
+        ],
+        "sleeves": [
+          {
+            "id": "slv-operator",
+            "name": "SLV.OPERATOR",
+            "status": "needs_normalization",
+            "source_path": "../SLV.OPERATOR.json",
+            "notes": "Public-compatible operator sleeve carried forward from the private lane. Stable source exists, but naming/style normalization is still recommended before stronger public promotion posture."
+          },
+          {
+            "id": "sample-basic-minimal",
+            "name": "Sample Basic Minimal",
+            "status": "promoted_reference",
+            "source_path": "../archive/sample-basic_minimal.json",
+            "notes": "Public-safe promoted reference sleeve. Valid compile success-path sample used for public smoke validation. Payload runtime id remains sleeve_basic."
+          },
+          {
+            "id": "neomagnetar-dynamic-persona-v1",
+            "name": "Neomagnetar Dynamic Persona Sleeve",
+            "status": "compatibility_reference",
+            "source_path": "../sleeve-neomagnetar-dynamic-persona-v1.json",
+            "notes": "Meaningful public compatibility/reference sleeve with multi-domain routing value. Public catalog id is stable. Normalized to an explicit public-curated sleeves-lane JSON target for safe readonly inspection."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "neomagnetar-dynamic-persona-v1",
+    "title": "Neomagnetar Dynamic Persona Sleeve",
+    "type": "sleeve",
+    "version": "0.1",
+    "tags": [],
+    "stacks": [
+      {
+        "id": "neomagnetar-dynamic-persona-v1_stack",
+        "title": "Imported Sleeve Stack",
+        "type": "neostack",
+        "tags": [],
+        "neoblocks": [
+          {
+            "id": "neomagnetar-dynamic-persona-v1_neoblock",
+            "title": "Imported Sleeve Blocks",
+            "type": "neoblock",
+            "tags": [],
+            "blocks": [
+              {
+                "id": "primary.sample",
+                "title": "primary.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block primary.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "primary.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "primary.sample",
+                    "title": "primary.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block primary.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              },
+              {
+                "id": "directive.sample",
+                "title": "directive.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block directive.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "directive.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "directive.sample",
+                    "title": "directive.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block directive.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              },
+              {
+                "id": "instruction.sample",
+                "title": "instruction.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block instruction.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "instruction.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "instruction.sample",
+                    "title": "instruction.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block instruction.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              },
+              {
+                "id": "subject.sample",
+                "title": "subject.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block subject.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "subject.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "subject.sample",
+                    "title": "subject.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block subject.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              },
+              {
+                "id": "philosophy.sample",
+                "title": "philosophy.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block philosophy.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "philosophy.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "philosophy.sample",
+                    "title": "philosophy.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block philosophy.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              },
+              {
+                "id": "blueprint.sample",
+                "title": "blueprint.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block blueprint.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "blueprint.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "blueprint.sample",
+                    "title": "blueprint.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block blueprint.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              },
+              {
+                "id": "trigger.sample",
+                "title": "trigger.sample",
+                "type": "molt_block",
+                "role": "instruction",
+                "content": "Referenced upstream block trigger.sample",
+                "category": "uncategorized",
+                "tags": [],
+                "priorityOrder": 20,
+                "defaultState": "on",
+                "visibility": "visible",
+                "activation": {
+                  "mode": "always"
+                },
+                "dependencies": [],
+                "conflicts": [],
+                "compatibleSleeves": [],
+                "compatibleStacks": [],
+                "source": {
+                  "origin": "library",
+                  "sourceId": "trigger.sample",
+                  "version": "0.1"
+                },
+                "legacy": {
+                  "sourceRepo": "UMG-Block-Library",
+                  "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+                  "original": {
+                    "id": "trigger.sample",
+                    "title": "trigger.sample",
+                    "role": "instruction",
+                    "content": "Referenced upstream block trigger.sample",
+                    "tags": [],
+                    "defaultState": "on"
+                  },
+                  "migrationWarnings": []
+                }
+              }
+            ],
+            "defaultState": "on"
+          }
+        ],
+        "defaultState": "on",
+        "compileStrategy": "role_then_priority"
+      }
+    ],
+    "runtimeConfig": {
+      "active": true,
+      "depth": "balanced",
+      "hermesEnabled": false,
+      "runtimeAdaptation": false,
+      "showRuntimeTrace": true
+    },
+    "metadata": {
+      "author": "UMG-Block-Library"
+    },
+    "legacy": {
+      "sourceRepo": "UMG-Block-Library",
+      "sourcePath": "sleeves/sleeve-neomagnetar-dynamic-persona-v1.json",
+      "original": {
+        "sleeve_id": "neomagnetar-dynamic-persona-v1",
+        "title": "Neomagnetar Dynamic Persona Sleeve",
+        "snap_id": "default",
+        "primary_shell_block_id": "primary.sample",
+        "block_refs": [
+          {
+            "block_id": "primary.sample",
+            "enabled": true
+          },
+          {
+            "block_id": "directive.sample",
+            "enabled": true
+          },
+          {
+            "block_id": "instruction.sample",
+            "enabled": true
+          },
+          {
+            "block_id": "subject.sample",
+            "enabled": true
+          },
+          {
+            "block_id": "philosophy.sample",
+            "enabled": true
+          },
+          {
+            "block_id": "blueprint.sample",
+            "enabled": true
+          },
+          {
+            "block_id": "trigger.sample",
+            "enabled": true
+          }
+        ],
+        "strategy": {
+          "mode": "public-coder",
+          "compiler": "bundled-adapter"
+        },
+        "constraints": [
+          "public-safe",
+          "compiler-visible",
+          "no-private-paths"
+        ],
+        "context": {
+          "audience": "developers"
+        },
+        "values": {
+          "debuggable": true
+        },
+        "format": {
+          "style": "technical"
+        },
+        "tool_requests": [],
+        "metadata": {
+          "normalization_basis": "faithful public-curated mirror from existing bundled public sample structure",
+          "source_evidence": "C:\\/.openclaw\\workspace\\work\\public-next\\package\\public-content\\sleeves\\public-coder-envoy.sleeve.json",
+          "catalog_identity_preserved": true
+        }
+      }
+    }
+  }
+]
