@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
-import { applyCompileResultToGraph, buildGraphFromSleeve } from '../lib/umg/graphBuilder';
+import { applyCompileResultToGraph, buildGraphFromSleeve, focusGraph } from '../lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { getLibraryAssetStatus, normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
@@ -236,6 +236,49 @@ describe('UMG Studio core engine', () => {
     expect(compiled.promptPreview).toContain('Support Directive');
   });
 
+  it('keeps graph runtime state when switching semantic focus modes', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const offBlock = sleeve.stacks[0].neoblocks[0].blocks.find((b) => b.role === 'instruction');
+    if (!offBlock) throw new Error('expected instruction block');
+    offBlock.defaultState = 'off';
+    const workspace = { id: 'ws_test', title: 'Test Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] });
+    const runtimeGraph = applyCompileResultToGraph(workspace.graph, compiled);
+    const stackId = sleeve.stacks[0].id;
+    const blockId = sleeve.stacks[0].neoblocks[0].id;
+
+    const stackFocus = focusGraph(runtimeGraph, { mode: 'neostack', sourceId: stackId });
+    const blockFocus = focusGraph(runtimeGraph, { mode: 'neoblock', sourceId: blockId });
+
+    expect(stackFocus.nodes.find((n) => n.sourceId === offBlock.id)?.state.off).toBe(true);
+    expect(blockFocus.nodes.find((n) => n.sourceId === offBlock.id)?.state.off).toBe(true);
+    for (const row of compiled.irMatrix.filter((r) => r.active && !r.off)) {
+      expect(stackFocus.nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
+      expect(blockFocus.nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
+    }
+    expect(stackFocus.nodes.some((n) => n.nodeType === 'neostack' && n.sourceId === stackId)).toBe(true);
+    expect(blockFocus.nodes.some((n) => n.nodeType === 'molt_block')).toBe(true);
+  });
+
+  it('builds inspector context for a selected focused MOLT block with matching IR Matrix row', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_test', title: 'Test Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] });
+    const block = sleeve.stacks[0].neoblocks[0].blocks[0];
+    const focused = focusGraph(applyCompileResultToGraph(workspace.graph, compiled), { mode: 'molt_block', sourceId: block.id });
+    const selectedNode = focused.nodes.find((n) => n.sourceId === block.id);
+    const irRow = compiled.irMatrix.find((row) => row.nodeId === block.id);
+
+    expect(selectedNode?.nodeType).toBe('molt_block');
+    expect(block.title).toBeTruthy();
+    expect(block.role).toBeTruthy();
+    expect(block.tags.length).toBeGreaterThan(0);
+    expect(block.content).toBeTruthy();
+    expect(irRow?.nodeId).toBe(block.id);
+  });
+
   it('exports a Hermes packet without leaking API secrets', () => {
     const blocks = normalizeImportedBlocks(rawBlocks);
     const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'lean' }, blocks).draft_sleeve;
@@ -244,7 +287,7 @@ describe('UMG Studio core engine', () => {
     const packet = exportHermesPacket('Build it', compiled, { endpoint: 'http://localhost', apiKey: 'SECRET_KEY', model: 'hermes-default', temperature: 0.3, maxTokens: 1000 });
 
     expect(JSON.stringify(packet)).not.toContain('SECRET_KEY');
-    expect(packet.settings.apiKey).toBeUndefined();
+    expect('apiKey' in packet.settings).toBe(false);
     expect(packet.mode).toBe('generate');
   });
 });

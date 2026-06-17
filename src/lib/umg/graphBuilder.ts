@@ -1,4 +1,4 @@
-import { CompileResult, GraphEdge, GraphNode, IRMatrixRow, Sleeve } from './types';
+import { CompileResult, GraphEdge, GraphFocus, GraphNode, IRMatrixRow, Sleeve } from './types';
 
 const active = (off: boolean) => ({ selected: false, active: !off, off, triggered: false, invalid: false });
 
@@ -93,4 +93,51 @@ export function applyCompileResultToGraph(graph: { nodes: GraphNode[]; edges: Gr
   });
 
   return { ...graph, nodes };
+}
+
+function collectDescendants(edges: GraphEdge[], nodeIds: Set<string>) {
+  const keep = new Set(nodeIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const edge of edges) {
+      if (edge.type !== 'contains') continue;
+      if (keep.has(edge.source) && !keep.has(edge.target)) {
+        keep.add(edge.target);
+        changed = true;
+      }
+    }
+  }
+  return keep;
+}
+
+function collectAncestors(edges: GraphEdge[], nodeIds: Set<string>) {
+  const keep = new Set(nodeIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const edge of edges) {
+      if (edge.type !== 'contains') continue;
+      if (keep.has(edge.target) && !keep.has(edge.source)) {
+        keep.add(edge.source);
+        changed = true;
+      }
+    }
+  }
+  return keep;
+}
+
+export function focusGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, focus: GraphFocus) {
+  const focusNode = focus.sourceId ? graph.nodes.find((node) => node.sourceId === focus.sourceId || node.id === focus.sourceId) : graph.nodes.find((node) => node.nodeType === 'sleeve');
+  const baseIds = new Set(focusNode ? [focusNode.id] : graph.nodes.filter((node) => node.nodeType === 'sleeve').map((node) => node.id));
+  const descendants = collectDescendants(graph.edges, baseIds);
+  const ancestors = collectAncestors(graph.edges, baseIds);
+  const keep = focus.mode === 'sleeve' ? new Set(graph.nodes.map((node) => node.id)) : new Set([...descendants, ...ancestors]);
+  const nodes = graph.nodes.map((node) => {
+    const dimmed = !keep.has(node.id);
+    const focused = focusNode ? node.id === focusNode.id : node.nodeType === 'sleeve';
+    return { ...node, visual: { focused, dimmed } };
+  });
+  const edges = graph.edges.map((edge) => ({ ...edge }));
+  return { ...graph, nodes, edges, viewport: { ...(graph as any).viewport, zoom: focus.mode === 'sleeve' ? 0.75 : focus.mode === 'neostack' ? 0.9 : 1.05, x: focusNode?.position.x ?? 0, y: focusNode?.position.y ?? 0, focusNodeId: focusNode?.id } };
 }

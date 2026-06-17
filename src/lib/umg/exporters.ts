@@ -1,3 +1,28 @@
 import { CompileResult, HermesConfig } from './types';
-export function exportHermesPacket(user_request:string, compiled:CompileResult, settings:HermesConfig){ return { mode:'generate', user_request, compiled_prompt:compiled.promptPreview, runtime_spec:compiled.runtimeSpec, active_blocks:compiled.irMatrix.filter(r=>r.active).map(r=>r.nodeId), trace:compiled.trace, settings:{endpoint:settings.endpoint, model:settings.model, temperature:settings.temperature, maxTokens:settings.maxTokens, apiKey: undefined as undefined} }; }
-export function downloadJson(name:string, data:unknown){ const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url); }
+
+export function exportHermesPacket(user_request: string, compiled: CompileResult, settings: HermesConfig) {
+  return {
+    mode: 'generate',
+    user_request,
+    compiled_prompt: compiled.promptPreview,
+    runtime_spec: compiled.runtimeSpec,
+    active_blocks: compiled.irMatrix.filter((r) => r.active).map((r) => r.nodeId),
+    trace: compiled.trace,
+    settings: {
+      endpoint: settings.endpoint,
+      model: settings.model,
+      temperature: settings.temperature,
+      maxTokens: settings.maxTokens
+    }
+  };
+}
+
+export function downloadJson(name: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
