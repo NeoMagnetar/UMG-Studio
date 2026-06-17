@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
 import { applyCompileResultToGraph, buildGraphFromSleeve } from '../lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
-import { normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
+import { getLibraryAssetStatus, normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
 
 const rawBlocks = [
@@ -41,6 +41,35 @@ describe('UMG Studio core engine', () => {
     expect(catalog.sleeves).toHaveLength(1);
     expect(catalog.report.skippedHumanReferences).toBe(1);
     expect(catalog.report.unsupportedRoles).toEqual(expect.arrayContaining(['aim']));
+  });
+
+  it('classifies library presentation status for runnable, warning-bearing, reference-only, and unsupported assets', () => {
+    const runnable = normalizeImportedBlocks([{ role: 'Directive', title: 'Runnable', content: 'Use this.', tags: ['chatbot'] }], 'AI/runnable.json')[0];
+    const warning = normalizeImportedBlocks([{ title: 'Inferred Role', content: 'No explicit role.' }], 'AI/warning.json')[0];
+    const referenceOnly = normalizeImportedBlocks([{ role: 'Instruction', title: 'Schema Reference', content: '' }], 'AI/SCHEMAS/runtime.schema.json')[0];
+    const unsupported = normalizeImportedBlocks([{ role: 'Aim', title: 'Future Aim', content: 'Future.' }], 'AI/MOLT/Aim/future.json')[0];
+
+    expect(getLibraryAssetStatus(runnable)).toBe('runnable');
+    expect(getLibraryAssetStatus(warning)).toBe('warning-bearing');
+    expect(getLibraryAssetStatus(referenceOnly)).toBe('reference-only');
+    expect(getLibraryAssetStatus(unsupported)).toBe('unsupported');
+  });
+
+  it('composer prioritizes runnable v0.1 blocks and does not activate unsupported Aim/Use/Need assets', () => {
+    const blocks = normalizeImportedBlocks([
+      { id: 'unsupported_instruction', role: 'Instruction', title: 'Aim-like Instruction', tags: ['chatbot', 'intake'], content: 'Do not select as v0.1.', priorityOrder: 1 },
+      { id: 'runnable_instruction', role: 'Instruction', title: 'Runnable Instruction', tags: ['chatbot', 'intake'], content: 'Collect usable details.', priorityOrder: 20 },
+      { id: 'directive', role: 'Directive', title: 'Directive', tags: ['chatbot'], content: 'Help.' },
+      { id: 'subject', role: 'Subject', title: 'Subject', tags: ['chatbot'], content: 'Chatbot.' },
+      { id: 'primary', role: 'Primary', title: 'Primary', tags: ['chatbot'], content: 'Success.' },
+      { id: 'blueprint', role: 'Blueprint', title: 'Blueprint', tags: ['chatbot'], content: 'Output.' }
+    ]);
+    blocks[0].legacy = { ...(blocks[0].legacy ?? { original: {} }), sourcePath: 'AI/MOLT/Aim/unsupported.json', migrationWarnings: ['unsupported role preserved: aim'] };
+
+    const result = composeBlocks({ freeform_request: 'chatbot intake', target_type: 'chatbot', depth: 'lean' }, blocks);
+
+    expect(result.selected_nodes.map((n) => n.id)).toContain('runnable_instruction');
+    expect(result.selected_nodes.map((n) => n.id)).not.toContain('unsupported_instruction');
   });
 
   it('composes a balanced mobile detailing chatbot sleeve with required role coverage and reasons', () => {

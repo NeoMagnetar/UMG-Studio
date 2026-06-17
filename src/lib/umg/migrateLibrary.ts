@@ -1,4 +1,4 @@
-import { MOLTRole, Sleeve, UMGBlock } from './types';
+import { LibraryAssetStatus, MOLTRole, Sleeve, UMGBlock } from './types';
 
 const roles: MOLTRole[] = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
 const unsupportedRoleNames = ['aim', 'use', 'need'];
@@ -36,6 +36,20 @@ export function normalizeRole(value: unknown): MOLTRole {
   return detectRole(value) ?? 'instruction';
 }
 
+export function getLibraryAssetStatus(block: UMGBlock): LibraryAssetStatus {
+  const warnings = block.legacy?.migrationWarnings ?? [];
+  const sourcePath = block.legacy?.sourcePath ?? '';
+  const unsupported = detectUnsupportedRole(block.role) ?? detectUnsupportedRole(sourcePath) ?? warnings.map(detectUnsupportedRole).find(Boolean);
+  if (unsupported) return 'unsupported';
+  if (!block.content.trim() || /(^|\/)(schemas?|manifests?|catalog)(\/|\.|$)/i.test(sourcePath)) return 'reference-only';
+  if (warnings.length > 0) return 'warning-bearing';
+  return 'runnable';
+}
+
+function withPresentationStatus(block: UMGBlock): UMGBlock {
+  return { ...block, presentationStatus: getLibraryAssetStatus(block) };
+}
+
 function extractBlockCandidates(data: unknown): Record<string, any>[] {
   const raw = asRecord(data);
   if (Array.isArray(data)) return data.map(asRecord).filter((item) => Object.keys(item).length > 0);
@@ -64,7 +78,7 @@ export function normalizeImportedBlocks(input: unknown[], sourcePath?: string, s
     if (!detectRole(roleInput)) warnings.push('role inferred');
     if (!raw.tags) warnings.push('tags defaulted');
     if (detectUnsupportedRole(roleInput)) warnings.push(`unsupported role preserved: ${detectUnsupportedRole(roleInput)}`);
-    return {
+    return withPresentationStatus({
       id: String(raw.id ?? raw.block_id ?? raw.rule_id ?? `blk_${slug(title)}_${i + 1}`),
       title,
       type: 'molt_block',
@@ -83,7 +97,7 @@ export function normalizeImportedBlocks(input: unknown[], sourcePath?: string, s
       compatibleStacks: Array.isArray(raw.compatibleStacks) ? raw.compatibleStacks.map(String) : [],
       source: { origin: 'library', sourceId: String(raw.id ?? raw.block_id ?? raw.rule_id ?? '') || undefined, version: String(raw.version ?? '0.1') },
       legacy: { sourceRepo, original: rawValue, sourcePath, migrationWarnings: warnings }
-    };
+    });
   });
 }
 
