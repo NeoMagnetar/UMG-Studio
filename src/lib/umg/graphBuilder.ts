@@ -1,18 +1,18 @@
-import { CompileResult, GraphEdge, GraphFocus, GraphNode, IRMatrixRow, Sleeve } from './types';
+import { CompileResult, GraphEdge, GraphFocus, GraphLayoutItem, GraphNode, IRMatrixRow, Sleeve } from './types';
 
 const active = (off: boolean) => ({ selected: false, active: !off, off, triggered: false, invalid: false });
 
 export function buildGraphFromSleeve(sleeve: Sleeve) {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
-  nodes.push({ id: `node_${sleeve.id}`, sourceId: sleeve.id, nodeType: 'sleeve', label: sleeve.title, position: { x: 40, y: 160 }, state: active(false) });
+  nodes.push({ id: `node_${sleeve.id}`, sourceId: sleeve.id, nodeType: 'sleeve', label: sleeve.title, position: { x: 40, y: 160 }, layout: { row: 0, column: 0, width: 2, height: 1, priorityRank: 0, relation: 'governs' }, state: active(false) });
   sleeve.stacks.forEach((s, si) => {
     const sid = `node_${s.id}`;
-    nodes.push({ id: sid, sourceId: s.id, nodeType: 'neostack', label: s.title, position: { x: 320, y: 80 + si * 240 }, state: active(s.defaultState === 'off') });
+    nodes.push({ id: sid, sourceId: s.id, nodeType: 'neostack', label: s.title, position: { x: 320, y: 80 + si * 240 }, layout: { row: si + 1, column: si % 2, width: 2, height: 1, priorityRank: si, relation: si === 0 ? 'sequence' : 'parallel' }, state: active(s.defaultState === 'off') });
     edges.push({ id: `e_${sleeve.id}_${s.id}`, source: `node_${sleeve.id}`, target: sid, type: 'contains' });
     s.neoblocks.forEach((nb, ni) => {
       const nid = `node_${nb.id}`;
-      nodes.push({ id: nid, sourceId: nb.id, nodeType: 'neoblock', label: nb.title, position: { x: 620, y: 60 + si * 260 + ni * 170 }, state: active(nb.defaultState === 'off') });
+      nodes.push({ id: nid, sourceId: nb.id, nodeType: 'neoblock', label: nb.title, position: { x: 620, y: 60 + si * 260 + ni * 170 }, layout: { row: Math.floor(ni / 2), column: ni % 2, width: 1, height: 1, priorityRank: nb.priorityOrder ?? ni, relation: ni === 0 ? 'governs' : 'parallel' }, state: active(nb.defaultState === 'off') });
       edges.push({ id: `e_${s.id}_${nb.id}`, source: sid, target: nid, type: 'contains' });
       nb.blocks.forEach((b, bi) => {
         const bid = `node_${b.id}`;
@@ -22,13 +22,14 @@ export function buildGraphFromSleeve(sleeve: Sleeve) {
           nodeType: 'molt_block',
           label: b.title,
           position: { x: 940, y: 20 + si * 280 + ni * 170 + bi * 72 },
+          layout: { row: bi, column: 0, width: 1, height: 1, priorityRank: b.priorityOrder ?? bi, relation: bi === 0 ? 'governs' : b.role === 'blueprint' ? 'supports' : 'sequence' },
           state: { ...active(b.defaultState === 'off'), invalid: !b.content, warning: !b.content ? 'Empty block content' : undefined }
         });
         edges.push({ id: `e_${nb.id}_${b.id}`, source: nid, target: bid, type: 'contains', label: b.role });
       });
     });
   });
-  nodes.push({ id: `node_output_${sleeve.id}`, sourceId: `output_${sleeve.id}`, nodeType: 'output', label: 'Compiler / Hermes Output', position: { x: 1260, y: 160 }, state: active(false) });
+  nodes.push({ id: `node_output_${sleeve.id}`, sourceId: `output_${sleeve.id}`, nodeType: 'output', label: 'Compiler / Hermes Output', position: { x: 1260, y: 160 }, layout: { row: 99, column: 0, relation: 'supports' }, state: active(false) });
   const leaves = nodes.filter((n) => n.nodeType === 'molt_block' && !n.state.off);
   leaves.slice(-2).forEach((n) => edges.push({ id: `e_${n.id}_out`, source: n.id, target: `node_output_${sleeve.id}`, type: 'compiles_to' }));
   return { nodes, edges };
@@ -95,49 +96,66 @@ export function applyCompileResultToGraph(graph: { nodes: GraphNode[]; edges: Gr
   return { ...graph, nodes };
 }
 
-function collectDescendants(edges: GraphEdge[], nodeIds: Set<string>) {
-  const keep = new Set(nodeIds);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const edge of edges) {
-      if (edge.type !== 'contains') continue;
-      if (keep.has(edge.source) && !keep.has(edge.target)) {
-        keep.add(edge.target);
-        changed = true;
-      }
-    }
-  }
-  return keep;
+export function applyManualLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId: string, layout: GraphLayoutItem) {
+  const nodes = graph.nodes.map((node) => {
+    if (node.sourceId !== sourceId && node.id !== sourceId) return node;
+    return {
+      ...node,
+      position: { x: layout.x ?? node.position.x, y: layout.y ?? node.position.y },
+      layout: { ...(node.layout ?? {}), ...layout, manual: layout.manual ?? true }
+    };
+  });
+  return { ...graph, nodes };
 }
 
-function collectAncestors(edges: GraphEdge[], nodeIds: Set<string>) {
-  const keep = new Set(nodeIds);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const edge of edges) {
-      if (edge.type !== 'contains') continue;
-      if (keep.has(edge.target) && !keep.has(edge.source)) {
-        keep.add(edge.source);
-        changed = true;
-      }
-    }
-  }
-  return keep;
+export function resetManualLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId?: string) {
+  const nodes = graph.nodes.map((node) => {
+    if (sourceId && node.sourceId !== sourceId && node.id !== sourceId) return node;
+    const { x, y, manual, ...rest } = node.layout ?? {};
+    return { ...node, layout: rest };
+  });
+  return { ...graph, nodes };
 }
 
 export function focusGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, focus: GraphFocus) {
   const focusNode = focus.sourceId ? graph.nodes.find((node) => node.sourceId === focus.sourceId || node.id === focus.sourceId) : graph.nodes.find((node) => node.nodeType === 'sleeve');
-  const baseIds = new Set(focusNode ? [focusNode.id] : graph.nodes.filter((node) => node.nodeType === 'sleeve').map((node) => node.id));
-  const descendants = collectDescendants(graph.edges, baseIds);
-  const ancestors = collectAncestors(graph.edges, baseIds);
-  const keep = focus.mode === 'sleeve' ? new Set(graph.nodes.map((node) => node.id)) : new Set([...descendants, ...ancestors]);
-  const nodes = graph.nodes.map((node) => {
-    const dimmed = !keep.has(node.id);
+  let keep = new Set<string>();
+  if (focus.mode === 'sleeve') {
+    for (const node of graph.nodes) if (node.nodeType === 'sleeve' || node.nodeType === 'neostack') keep.add(node.id);
+  } else if (focus.mode === 'molt_block') {
+    if (focusNode) keep.add(focusNode.id);
+  } else if (focusNode) {
+    keep.add(focusNode.id);
+    for (const edge of graph.edges) if (edge.type === 'contains' && edge.source === focusNode.id) keep.add(edge.target);
+  } else {
+    for (const node of graph.nodes) if (node.nodeType === 'sleeve') keep.add(node.id);
+  }
+
+  const nodes = graph.nodes.filter((node) => keep.has(node.id)).map((node, index) => {
+    const autoPosition = hierarchyPosition(node, focus.mode, index);
     const focused = focusNode ? node.id === focusNode.id : node.nodeType === 'sleeve';
-    return { ...node, visual: { focused, dimmed } };
+    const position = node.layout?.manual ? node.position : autoPosition;
+    return { ...node, position, visual: { focused, dimmed: false } };
   });
-  const edges = graph.edges.map((edge) => ({ ...edge }));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = focus.mode === 'sleeve' ? graph.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)).map((edge) => ({ ...edge })) : [];
   return { ...graph, nodes, edges, viewport: { ...(graph as any).viewport, zoom: focus.mode === 'sleeve' ? 0.75 : focus.mode === 'neostack' ? 0.9 : 1.05, x: focusNode?.position.x ?? 0, y: focusNode?.position.y ?? 0, focusNodeId: focusNode?.id } };
+}
+
+function hierarchyPosition(node: GraphNode, mode: GraphFocus['mode'], index: number) {
+  if (mode === 'sleeve') {
+    if (node.nodeType === 'sleeve') return { x: 420, y: 40 };
+    return { x: 180 + Math.max(0, index - 1) * 280, y: 220 };
+  }
+  if (mode === 'neostack') {
+    if (node.nodeType === 'neostack') return { x: 420, y: 40 };
+    const child = Math.max(0, index - 1);
+    return { x: 180 + (child % 3) * 260, y: 220 + Math.floor(child / 3) * 150 };
+  }
+  if (mode === 'neoblock') {
+    if (node.nodeType === 'neoblock') return { x: 420, y: 40 };
+    const child = Math.max(0, index - 1);
+    return { x: 120 + (child % 3) * 250, y: 210 + Math.floor(child / 3) * 130 };
+  }
+  return { x: 360, y: 160 };
 }

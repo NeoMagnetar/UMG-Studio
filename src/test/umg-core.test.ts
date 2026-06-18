@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
-import { applyCompileResultToGraph, buildGraphFromSleeve, focusGraph } from '../lib/umg/graphBuilder';
+import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, focusGraph } from '../lib/umg/graphBuilder';
+import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from '../lib/umg/workbenchLayout';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { getLibraryAssetStatus, normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
@@ -251,13 +252,12 @@ describe('UMG Studio core engine', () => {
     const stackFocus = focusGraph(runtimeGraph, { mode: 'neostack', sourceId: stackId });
     const blockFocus = focusGraph(runtimeGraph, { mode: 'neoblock', sourceId: blockId });
 
-    expect(stackFocus.nodes.find((n) => n.sourceId === offBlock.id)?.state.off).toBe(true);
+    expect(stackFocus.nodes.some((n) => n.nodeType === 'neostack' && n.sourceId === stackId)).toBe(true);
+    expect(stackFocus.nodes.every((n) => n.nodeType === 'neostack' || n.nodeType === 'neoblock')).toBe(true);
     expect(blockFocus.nodes.find((n) => n.sourceId === offBlock.id)?.state.off).toBe(true);
-    for (const row of compiled.irMatrix.filter((r) => r.active && !r.off)) {
-      expect(stackFocus.nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
+    for (const row of compiled.irMatrix.filter((r) => r.active && !r.off && r.nodeType === 'molt_block')) {
       expect(blockFocus.nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
     }
-    expect(stackFocus.nodes.some((n) => n.nodeType === 'neostack' && n.sourceId === stackId)).toBe(true);
     expect(blockFocus.nodes.some((n) => n.nodeType === 'molt_block')).toBe(true);
   });
 
@@ -277,6 +277,68 @@ describe('UMG Studio core engine', () => {
     expect(block.tags.length).toBeGreaterThan(0);
     expect(block.content).toBeTruthy();
     expect(irRow?.nodeId).toBe(block.id);
+  });
+
+  it('persists VS Code-style workbench panel layout state', () => {
+    const store = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value)
+    };
+
+    const layout = { ...defaultWorkbenchLayout, leftWidth: 260, rightWidth: 320, bottomHeight: 180, leftCollapsed: true, rightCollapsed: false, bottomCollapsed: false };
+    saveWorkbenchLayout(storage, layout);
+
+    expect(loadWorkbenchLayout(storage)).toMatchObject(layout);
+  });
+
+  it('renders hierarchy-specific graph views with connector rules', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const graph = buildGraphFromSleeve(sleeve);
+    const stackId = sleeve.stacks[0].id;
+    const neoBlockId = sleeve.stacks[0].neoblocks[0].id;
+    const moltId = sleeve.stacks[0].neoblocks[0].blocks[0].id;
+
+    const sleeveView = focusGraph(graph, { mode: 'sleeve', sourceId: sleeve.id });
+    const stackView = focusGraph(graph, { mode: 'neostack', sourceId: stackId });
+    const blockView = focusGraph(graph, { mode: 'neoblock', sourceId: neoBlockId });
+    const moltView = focusGraph(graph, { mode: 'molt_block', sourceId: moltId });
+
+    expect(sleeveView.nodes.map((n) => n.nodeType)).toEqual(expect.arrayContaining(['sleeve', 'neostack']));
+    expect(sleeveView.nodes.some((n) => n.nodeType === 'neoblock')).toBe(false);
+    expect(sleeveView.edges.length).toBeGreaterThan(0);
+    expect(stackView.nodes.every((n) => n.nodeType === 'neostack' || n.nodeType === 'neoblock')).toBe(true);
+    expect(stackView.nodes.some((n) => n.sourceId === stackId)).toBe(true);
+    expect(stackView.edges).toHaveLength(0);
+    expect(blockView.nodes.every((n) => n.nodeType === 'neoblock' || n.nodeType === 'molt_block')).toBe(true);
+    expect(blockView.nodes.some((n) => n.sourceId === moltId)).toBe(true);
+    expect(blockView.edges).toHaveLength(0);
+    expect(moltView.nodes).toHaveLength(1);
+    expect(moltView.nodes[0].sourceId).toBe(moltId);
+    expect(moltView.edges).toHaveLength(0);
+  });
+
+  it('preserves runtime active/off state across hierarchy views and manual layout movement', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const offBlock = sleeve.stacks[0].neoblocks[0].blocks.find((b) => b.role === 'instruction');
+    if (!offBlock) throw new Error('expected instruction block');
+    offBlock.defaultState = 'off';
+    const workspace = { id: 'ws_test', title: 'Test Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] });
+    const runtimeGraph = applyCompileResultToGraph(workspace.graph, compiled);
+    const movedGraph = applyManualLayout(runtimeGraph, offBlock.id, { x: 220, y: 160, width: 2, height: 1, priorityRank: 99, relation: 'supports', manual: true });
+    const blockView = focusGraph(movedGraph, { mode: 'neoblock', sourceId: sleeve.stacks[0].neoblocks[0].id });
+    const movedNode = blockView.nodes.find((n) => n.sourceId === offBlock.id);
+
+    expect(movedNode?.position).toEqual({ x: 220, y: 160 });
+    expect(movedNode?.layout).toMatchObject({ relation: 'supports', manual: true, priorityRank: 99 });
+    expect(movedNode?.state.off).toBe(true);
+    expect(movedNode?.state.active).toBe(false);
+    for (const row of compiled.irMatrix.filter((r) => r.active && !r.off)) {
+      expect(focusGraph(movedGraph, { mode: 'neoblock', sourceId: sleeve.stacks[0].neoblocks[0].id }).nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
+    }
   });
 
   it('exports a Hermes packet without leaking API secrets', () => {
