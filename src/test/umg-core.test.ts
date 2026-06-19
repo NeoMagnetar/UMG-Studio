@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
-import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, focusGraph } from '../lib/umg/graphBuilder';
+import { applyCompileResultToGraph, applyManualLayout, applySnapLayout, buildGraphFromSleeve, focusGraph, openSelectedAsFocus, selectGraphNode } from '../lib/umg/graphBuilder';
+import { MOLT_ROLE_ORDER, addWorkbenchBlockByRole, saveWorkbenchBlockToLibrary, toggleWorkbenchBlock, updateWorkbenchBlockContent, validateHermesWorkbenchGeneration } from '../lib/umg/moltWorkbench';
 import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from '../lib/umg/workbenchLayout';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { getLibraryAssetStatus, normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
@@ -338,6 +339,71 @@ describe('UMG Studio core engine', () => {
     expect(movedNode?.state.active).toBe(false);
     for (const row of compiled.irMatrix.filter((r) => r.active && !r.off)) {
       expect(focusGraph(movedGraph, { mode: 'neoblock', sourceId: sleeve.stacks[0].neoblocks[0].id }).nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
+    }
+  });
+
+  it('selects graph nodes without changing view until explicit view controls open the selection', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const graph = buildGraphFromSleeve(sleeve);
+    const initialFocus = { mode: 'sleeve' as const, sourceId: sleeve.id };
+    const stackNode = graph.nodes.find((n) => n.nodeType === 'neostack');
+    if (!stackNode) throw new Error('expected neostack node');
+
+    const selectedState = selectGraphNode(graph, stackNode.sourceId, initialFocus);
+    const opened = openSelectedAsFocus(selectedState.selected!, selectedState.focus);
+
+    expect(selectedState.selected?.sourceId).toBe(stackNode.sourceId);
+    expect(selectedState.focus).toEqual(initialFocus);
+    expect(opened).toEqual({ mode: 'neostack', sourceId: stackNode.sourceId });
+  });
+
+  it('supports V21-style MOLT workbench role cards without dropping Trigger', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const neoblock = sleeve.stacks[0].neoblocks[0];
+
+    const added = addWorkbenchBlockByRole(neoblock, 'trigger');
+    const target = added.blocks[added.blocks.length - 1];
+    const edited = updateWorkbenchBlockContent(added, target.id, 'Edited trigger content');
+    const toggled = toggleWorkbenchBlock(edited, target.id);
+    const saved = saveWorkbenchBlockToLibrary(toggled.blocks.find((b) => b.id === target.id)!);
+
+    expect(MOLT_ROLE_ORDER[0]).toBe('trigger');
+    expect(added.blocks.some((b) => b.role === 'trigger')).toBe(true);
+    expect(edited.blocks.find((b) => b.id === target.id)?.content).toBe('Edited trigger content');
+    expect(toggled.blocks.find((b) => b.id === target.id)?.defaultState).toBe('off');
+    expect(saved.source?.origin).toBe('library');
+    expect(saved.id).not.toBe(target.id);
+  });
+
+  it('blocks MOLT workbench generation through Hermes-safe validation when endpoint is unconfigured', () => {
+    const result = validateHermesWorkbenchGeneration({ endpoint: '', apiKey: 'SECRET_KEY', model: 'hermes-default', temperature: 0.3, maxTokens: 1200 });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('Hermes endpoint not configured');
+    expect(JSON.stringify(result)).not.toContain('SECRET_KEY');
+    expect(JSON.stringify(result)).not.toContain('apiKey');
+  });
+
+  it('stores NeoBlock snap/lock relationships while preserving manual layout and runtime state', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const first = sleeve.stacks[0].neoblocks[0];
+    const second = { ...structuredClone(first), id: 'nb_parallel_test', title: 'Parallel Intake Support', blocks: first.blocks.slice(0, 2) };
+    sleeve.stacks[0].neoblocks.push(second);
+    const workspace = { id: 'ws_test', title: 'Test Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] });
+    const runtimeGraph = applyCompileResultToGraph(workspace.graph, compiled);
+    const moved = applyManualLayout(runtimeGraph, second.id, { x: 436, y: 40, relation: 'parallel', manual: true });
+    const snapped = applySnapLayout(moved, second.id, first.id, { threshold: 18, relation: 'parallel' });
+    const snappedNode = snapped.nodes.find((n) => n.sourceId === second.id);
+
+    expect(snappedNode?.layout).toMatchObject({ manual: true, locked: true, snapTargetId: first.id, relation: 'parallel' });
+    expect(snappedNode?.position.y).toBe(snapped.nodes.find((n) => n.sourceId === first.id)?.position.y);
+    expect(focusGraph(snapped, { mode: 'neostack', sourceId: sleeve.stacks[0].id }).edges).toHaveLength(0);
+    for (const row of compiled.irMatrix.filter((r) => r.active && !r.off)) {
+      expect(focusGraph(snapped, { mode: 'neoblock', sourceId: first.id }).nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
     }
   });
 

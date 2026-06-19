@@ -102,10 +102,40 @@ export function applyManualLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[
     return {
       ...node,
       position: { x: layout.x ?? node.position.x, y: layout.y ?? node.position.y },
-      layout: { ...(node.layout ?? {}), ...layout, manual: layout.manual ?? true }
+      layout: { ...(node.layout ?? {}), ...layout, manual: layout.manual ?? true, manualOverride: layout.manualOverride ?? true }
     };
   });
   return { ...graph, nodes };
+}
+
+export function selectGraphNode(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId: string, focus: GraphFocus) {
+  const selected = graph.nodes.find((node) => node.sourceId === sourceId || node.id === sourceId);
+  return { graph, selected, focus };
+}
+
+export function openSelectedAsFocus(selected: GraphNode, current: GraphFocus): GraphFocus {
+  if (selected.nodeType === 'sleeve') return { mode: 'sleeve', sourceId: selected.sourceId };
+  if (selected.nodeType === 'neostack') return { mode: 'neostack', sourceId: selected.sourceId };
+  if (selected.nodeType === 'neoblock') return { mode: 'neoblock', sourceId: selected.sourceId };
+  if (selected.nodeType === 'molt_block') return { mode: 'molt_block', sourceId: selected.sourceId };
+  return current;
+}
+
+export function applySnapLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId: string, targetSourceId: string, options: { threshold?: number; relation?: GraphLayoutItem['relation'] } = {}) {
+  const threshold = options.threshold ?? 16;
+  const target = graph.nodes.find((node) => node.sourceId === targetSourceId || node.id === targetSourceId);
+  const source = graph.nodes.find((node) => node.sourceId === sourceId || node.id === sourceId);
+  if (!target || !source) return graph;
+  const dx = Math.abs(source.position.x - target.position.x);
+  const dy = Math.abs(source.position.y - target.position.y);
+  const touchingHorizontal = Math.abs(source.position.x - (target.position.x + 260)) <= threshold || Math.abs(target.position.x - (source.position.x + 260)) <= threshold;
+  const sameRowAttach = dy <= threshold + 8 && dx <= 260;
+  const near = dx <= threshold || dy <= threshold || touchingHorizontal || sameRowAttach;
+  if (!near) return graph;
+  const relation = options.relation ?? (source.position.y < target.position.y ? 'governs' : Math.abs(source.position.y - target.position.y) <= threshold ? 'parallel' : 'supports');
+  const snapX = relation === 'parallel' ? target.position.x + 260 : target.position.x;
+  const snapY = relation === 'parallel' ? target.position.y : source.position.y < target.position.y ? target.position.y - 150 : target.position.y + 150;
+  return applyManualLayout(graph, sourceId, { x: snapX, y: snapY, relation, manual: true, manualOverride: true, locked: true, snapTargetId: target.sourceId, snapGroupId: `snap_${target.sourceId}` });
 }
 
 export function resetManualLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId?: string) {
