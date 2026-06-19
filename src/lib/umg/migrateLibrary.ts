@@ -133,6 +133,7 @@ export function normalizeImportedBlocks(input: unknown[], sourcePath?: string, s
       category: String(raw.category ?? raw.governance_layer ?? raw.type ?? 'uncategorized'),
       tags,
       priorityOrder: Number(raw.priorityOrder ?? raw.priority ?? rolePriority[role]),
+      hierarchy: { orderIndex: Number(raw.priorityOrder ?? raw.priority ?? rolePriority[role]), orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' },
       defaultState: meta ? 'off' : (String(raw.defaultState ?? raw.state ?? 'on').toLowerCase() === 'off' ? 'off' : 'on'),
       visibility: meta ? 'audit_only' : (['collapsed', 'audit_only'].includes(String(raw.visibility)) ? raw.visibility : 'visible') as UMGBlock['visibility'],
       activation: raw.activation ?? { mode: 'always' },

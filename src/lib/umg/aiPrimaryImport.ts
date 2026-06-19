@@ -95,6 +95,7 @@ export function normalizeAIPrimaryEntry(entry: AIPrimaryLibraryEntry, librarySou
     category: entry.category || 'general',
     tags,
     priorityOrder: rolePriority,
+    hierarchy: { orderIndex: rolePriority, orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' },
     defaultState: 'on',
     visibility: 'visible',
     activation: { mode: 'always' },

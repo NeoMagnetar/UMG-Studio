@@ -14,12 +14,16 @@ import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { generateWithHermes, redactKey, testHermesConnection } from './lib/hermes/hermesClient';
 import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceAuditItem } from './lib/umg/libraryAssets';
+import { buildBlockInspectorViews } from './lib/umg/blockViews';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, UMGBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
 const statuses = ['all', 'runnable', 'warning-bearing', 'meta', 'reference-only', 'unsupported'];
 const defaultStatusFilter = 'runnable';
+const inspectorTabs = ['Card', 'Runtime', 'NL', 'JSON', 'Legacy Source', 'Trace', 'IR Row'] as const;
+
+type InspectorTab = typeof inspectorTabs[number];
 
 type ShelfMode = AssetShelfId;
 
@@ -32,6 +36,7 @@ export default function App() {
   const [compiled, setCompiled] = useState<CompileResult | undefined>();
   const [selected, setSelected] = useState<GraphNode | undefined>();
   const [inspected, setInspected] = useState<unknown | undefined>();
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('Card');
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('ready');
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
@@ -62,6 +67,14 @@ export default function App() {
   }, [currentShelf, search, tagFilters, activeShelf, roleFilter, statusFilter]);
   const visibleTags = useMemo(() => [...new Set(currentShelf.items.flatMap((item) => item.tags))].filter(Boolean).slice(0, 24), [currentShelf]);
   const graph = workspace?.graph;
+  const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
+  const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
+  const inspectorBlock = inspectedBlock ?? selectedBlock;
+  const inspectorViews = useMemo(() => inspectorBlock ? buildBlockInspectorViews(inspectorBlock, {
+    graphNode: selected?.sourceId === inspectorBlock.id ? selected : undefined,
+    irRow: compiled?.irMatrix.find((row) => row.nodeId === inspectorBlock.id),
+    trace: compiled?.trace
+  }) : undefined, [inspectorBlock, selected, compiled]);
 
   const compose = () => {
     const composition = composeBlocks({ freeform_request: request, target_type: target as any, depth }, libraryWithStatus);
@@ -81,8 +94,13 @@ export default function App() {
     setStatus(`compiled with ${result.diagnostics.length} diagnostics; RuntimeSpec source ${(result.runtimeSpec as any).source ?? 'unknown'}`);
   };
 
+  const inspectAsset = (item: ShelfAsset) => {
+    setInspected(item.asset);
+    setInspectorTab('Card');
+  };
+
   const addAsset = (item: ShelfAsset) => {
-    if (item.kind === 'source_asset') { setInspected(item.asset); return; }
+    if (item.kind === 'source_asset') { setInspected(item.asset); setInspectorTab('Legacy Source'); return; }
     if (item.kind === 'sleeve') {
       const sleeve = structuredClone(item.asset as Sleeve);
       const nextWorkspace: UMGWorkspace = { id: `ws_${sleeve.id}`, title: sleeve.title, activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
@@ -141,11 +159,11 @@ export default function App() {
         {activeShelf === 'source_audit' && <AuditShelfBanner total={currentShelf.items.length} />}
         {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Role filter</b><div className="filterBar roleSubsections"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => setRoleFilter('all')}>All MOLT + Meta ({libraryWithStatus.length})</button>{roles.map((role) => <button key={role} className={roleFilter === role ? 'hot roleHot' : ''} onClick={() => setRoleFilter(role)}>{labelDisplayType(role)} ({libraryWithStatus.filter((block) => block.displayType === role).length})</button>)}<button className={roleFilter === 'meta' ? 'hot metaHot roleHot' : ''} onClick={() => setRoleFilter('meta')}>Meta ({libraryWithStatus.filter((block) => block.displayType === 'meta').length})</button></div></div>}
         {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Status filter</b><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? libraryWithStatus.length : statusCounts[s] ?? 0)}</button>)}</div></div>}
-        {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={(item) => setInspected(item.asset)} /> : <AssetCards items={visibleItems} onAdd={addAsset} onInspect={(item) => setInspected(item.asset)} />}
+        {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <AssetCards items={visibleItems} onAdd={addAsset} onInspect={inspectAsset} />}
         {activeShelf === 'molt_blocks' && <details className="secondaryAudit"><summary>Source Assets / Audit — secondary import accountability</summary><LibraryAudit report={migrationReport as any} />{sections.map((section) => <div key={section.type}>{section.label} ({section.blocks.length})</div>)}</details>}
       </section>
       <section className="graph card"><div className="bar"><h2>Graph Studio</h2><button onClick={() => workspace && downloadJson('sleeve.json', workspace.sleeves[0])}>Export Sleeve</button><button onClick={() => compiled && downloadJson('ir-matrix.json', compiled.irMatrix)}>Export IR</button><button onClick={() => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config))}>Export Hermes Packet</button></div>{graph ? <Graph nodes={graph.nodes} edges={graph.edges} selected={selected?.id} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}</section>
-      <aside className="inspect card"><h2>Inspector / Config</h2>{selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}{Boolean(inspected) && <><h3>Inspect JSON / Legacy Source</h3><pre>{JSON.stringify(inspected, null, 2)}</pre></>}<h3>Hermes</h3><div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div><input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => setConfig({ ...config, endpoint: event.target.value })} /><input placeholder="API key" type="password" value={config.apiKey ?? ''} onChange={(event) => setConfig({ ...config, apiKey: event.target.value })} /><input aria-label="Hermes model" value={config.model} onChange={(event) => setConfig({ ...config, model: event.target.value })} /><button onClick={async () => { const result = await testHermesConnection(config); setHermesStatus(result.ok ? 'test passed' : 'test failed'); setStatus(`Hermes ${result.message}`); }}>Test Connection</button></aside>
+      <aside className="inspect card"><h2>Inspector / Config</h2>{selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}<BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} /><h3>Hermes</h3><div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div><input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => setConfig({ ...config, endpoint: event.target.value })} /><input placeholder="API key" type="password" value={config.apiKey ?? ''} onChange={(event) => setConfig({ ...config, apiKey: event.target.value })} /><input aria-label="Hermes model" value={config.model} onChange={(event) => setConfig({ ...config, model: event.target.value })} /><button onClick={async () => { const result = await testHermesConnection(config); setHermesStatus(result.ok ? 'test passed' : 'test failed'); setStatus(`Hermes ${result.message}`); }}>Test Connection</button></aside>
       <section className="drawer card"><h2>Compiler / Runtime</h2><div className="tabs"><button>RuntimeSpec</button><button>Trace</button><button>IR Matrix</button><button>Output</button></div><pre>{renderRuntime(workspace, compiled, output)}</pre></section>
     </main>
   </div>;
@@ -192,6 +210,31 @@ function AssetCards({ items, onAdd, onInspect }: { items: ShelfAsset[]; onAdd: (
 
 function Graph({ nodes, edges, selected, onPick }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void }) {
   return <div className="canvas">{edges.map((edge) => <svg key={edge.id} className="edge" style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} stroke="#4b5563" /></svg>)}{nodes.map((node) => <button key={node.id} className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''}`} style={{ left: node.position.x, top: node.position.y }} onClick={() => onPick(node)}><b>{node.label}</b><small>{node.nodeType}</small>{node.state.warning && <em>{node.state.warning}</em>}</button>)}</div>;
+}
+
+function BlockInspector({ views, fallback, activeTab, setActiveTab }: { views?: ReturnType<typeof buildBlockInspectorViews>; fallback?: unknown; activeTab: InspectorTab; setActiveTab: (tab: InspectorTab) => void }) {
+  if (!views && !fallback) return <div className="empty">Select or inspect a block to view Card / Runtime / NL / JSON / Legacy Source.</div>;
+  if (!views) return <><h3>Inspect JSON / Legacy Source</h3><pre>{JSON.stringify(fallback, null, 2)}</pre></>;
+  const body = activeTab === 'Card' ? views.card
+    : activeTab === 'Runtime' ? views.runtime.runtimeState
+    : activeTab === 'NL' ? views.nl
+    : activeTab === 'JSON' ? views.compilerJson
+    : activeTab === 'Legacy Source' ? views.legacySource
+    : activeTab === 'Trace' ? views.trace ?? []
+    : views.irRow ?? { message: 'Compile to populate IR Row from IR Matrix source of truth.' };
+  return <div className="blockInspector"><div className="tabs inspectorTabs">{inspectorTabs.map((tab) => <button key={tab} className={activeTab === tab ? 'hot' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div><div className="report"><span>model SearchCard / RuntimeBlock / FullSourceRecord</span><span>NL/JSON sync rule: derived from the same normalized block</span><span>IR Matrix source of truth; Glyph Matrix graph projection layer</span><span>Off is runtime state; Merge is action/synthesis, not MOLT type</span></div>{activeTab === 'NL' ? <pre>{String(body)}</pre> : <pre>{JSON.stringify(body, null, 2)}</pre>}</div>;
+}
+
+function isUMGBlock(value: unknown): value is UMGBlock {
+  return Boolean(value && typeof value === 'object' && (value as UMGBlock).type === 'molt_block' && (value as UMGBlock).role && (value as UMGBlock).content !== undefined);
+}
+
+function findWorkspaceBlock(workspace: UMGWorkspace | undefined, sourceId: string) {
+  for (const sleeve of workspace?.sleeves ?? []) for (const stack of sleeve.stacks) {
+    for (const neoblock of stack.neoblocks) for (const block of neoblock.blocks) if (block.id === sourceId) return block;
+    for (const block of stack.directBlocks ?? []) if (block.id === sourceId) return block;
+  }
+  return undefined;
 }
 
 function renderRuntime(workspace?: UMGWorkspace, compiled?: CompileResult, output?: string) {

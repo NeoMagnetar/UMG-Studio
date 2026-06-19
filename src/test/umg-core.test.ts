@@ -7,6 +7,7 @@ import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
+import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/aiInstructionImport';
 import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubjectImport';
 import { normalizeAIPrimaryEntry, stableAIPrimaryId } from '../lib/umg/aiPrimaryImport';
@@ -122,6 +123,35 @@ const primaryEntry010 = {
 };
 
 describe('UMG Studio core engine', () => {
+  it('exposes layered block inspector views with hierarchy-order priority semantics and legacy source preservation', () => {
+    const block = normalizeAIInstructionEntry(instructionEntry001);
+    const views = buildBlockInspectorViews(block, {
+      graphNode: { id: 'node_inst_001', sourceId: block.id, nodeType: 'molt_block', label: block.title, position: { x: 0, y: 0 }, state: { selected: true, active: true, off: false, triggered: false, invalid: false } },
+      irRow: { rowId: 'ir_1', nodeId: block.id, nodeType: 'molt_block', role: 'instruction', title: block.title, selected: true, active: true, off: false, triggered: false, required: true, tagsMatched: ['instruction'], priority: block.priorityOrder, contribution: block.content }
+    });
+
+    expect(views.card).toMatchObject({ type: 'SearchCard', id: 'inst_001', role: 'instruction', title: 'Break into components' });
+    expect(views.card.hierarchy).toEqual({ orderIndex: 20, orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' });
+    expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'instruction', compiler: { source: 'compiler_aligned_json', moltType: 'instruction' } });
+    expect(views.runtime.runtimeState).toMatchObject({ selected: true, active: true, off: false, triggered: false });
+    expect(views.nl).toContain('Break into components');
+    expect(views.nl).toContain('role: Instruction');
+    expect(views.compilerJson).toEqual(views.runtime);
+    expect(views.legacySource).toMatchObject({ type: 'FullSourceRecord', sourcePath: 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json#INST.001', sourceLayer: 'AI' });
+    expect(views.legacySource.legacyOriginal).toMatchObject({ id: 'INST.001', type: 'INSTRUCTION' });
+    expect(views.irRow?.nodeId).toBe(block.id);
+  });
+
+  it('does not model Merge or Off as MOLT types while exposing Off as runtime state', () => {
+    expect(MOLT_ROLE_ORDER).not.toContain('merge' as any);
+    expect(MOLT_ROLE_ORDER).not.toContain('off' as any);
+    const block = { ...normalizeAIPrimaryEntry(primaryEntry001), defaultState: 'off' as const };
+    const views = buildBlockInspectorViews(block);
+
+    expect(views.runtime.runtimeState.off).toBe(true);
+    expect(views.runtime.role).toBe('primary');
+  });
+
   it('normalizes inconsistent imported block JSON into v0.1 MOLT blocks', () => {
     const migrated = normalizeImportedBlocks(rawBlocks);
     expect(migrated).toHaveLength(8);

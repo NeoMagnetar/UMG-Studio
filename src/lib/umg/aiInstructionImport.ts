@@ -90,6 +90,7 @@ export function normalizeAIInstructionEntry(entry: AIInstructionLibraryEntry, li
     category: entry.category || 'general',
     tags,
     priorityOrder: rolePriority,
+    hierarchy: { orderIndex: rolePriority, orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' },
     defaultState: 'on',
     visibility: 'visible',
     activation: { mode: 'always' },
