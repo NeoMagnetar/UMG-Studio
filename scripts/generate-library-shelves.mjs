@@ -6,16 +6,20 @@ const aiInstructionLibraryPath = '/home/neomagnetar/umg-block-library/AI/MOLT-BL
 const aiInstructionLibrarySourcePath = 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json';
 const aiSubjectLibraryPath = '/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/subjects/library.v1.0.0.json';
 const aiSubjectLibrarySourcePath = 'AI/MOLT-BLOCKS/subjects/library.v1.0.0.json';
+const aiPrimaryLibraryPath = '/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/primary/library.v1.0.0.json';
+const aiPrimaryLibrarySourcePath = 'AI/MOLT-BLOCKS/primary/library.v1.0.0.json';
 const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'));
 const writeJson = (rel, data) => fs.writeFileSync(path.join(root, rel), `${JSON.stringify(data, null, 2)}\n`);
 const uniqBy = (items, keyFn) => [...new Map(items.map((item) => [keyFn(item), item])).values()];
 const stableAIInstructionId = (entry) => String(entry.id ?? '').trim().toLowerCase().replace(/^inst\.(\d{3})$/, 'inst_$1').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 const stableAISubjectId = (entry) => String(entry.id ?? '').trim().toLowerCase().replace(/^subj\.(\d{3})$/, 'subj_$1').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+const stableAIPrimaryId = (entry) => String(entry.id ?? '').trim().toLowerCase().replace(/^prim\.(\d{3})$/, 'prim_$1').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 const cleanTags = (tags) => Array.isArray(tags) ? [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : [];
 const contentSummary = (content) => typeof content === 'string' ? content.trim() : content?.summary?.trim() || '';
 const contentDetails = (content) => !content || typeof content === 'string' ? '' : content.details?.trim() || '';
 const instructionEntrySourcePath = (entry) => `${aiInstructionLibrarySourcePath}#${entry.id}`;
 const subjectEntrySourcePath = (entry) => `${aiSubjectLibrarySourcePath}#${entry.id}`;
+const primaryEntrySourcePath = (entry) => `${aiPrimaryLibrarySourcePath}#${entry.id}`;
 const normalizeAIInstructionEntry = (entry) => {
   const summary = contentSummary(entry.content);
   const details = contentDetails(entry.content);
@@ -102,9 +106,53 @@ const normalizeAISubjectEntry = (entry) => {
     }
   };
 };
+const normalizeAIPrimaryEntry = (entry) => {
+  const summary = contentSummary(entry.content) || entry.essence?.trim() || '';
+  const details = contentDetails(entry.content);
+  const coreConcern = entry.core_concern?.trim() || '';
+  const action = entry.action?.trim() || '';
+  const expectedOutput = entry.expected_output?.trim() || '';
+  const contentParts = [
+    summary && `Primary: ${summary}`,
+    coreConcern && `Core Concern: ${coreConcern}`,
+    details && `Details: ${details}`,
+    action && `Action: ${action}`,
+    expectedOutput && `Expected Output: ${expectedOutput}`
+  ].filter(Boolean);
+  const sourcePath = primaryEntrySourcePath(entry);
+  return {
+    id: stableAIPrimaryId(entry),
+    title: entry.name?.trim() || entry.id,
+    type: 'molt_block',
+    role: 'primary',
+    displayType: 'primary',
+    content: contentParts.join('\n'),
+    description: summary || details || coreConcern || undefined,
+    category: entry.category || 'general',
+    tags: [...new Set(['primary', 'molt', 'ai', 'source-ai', ...cleanTags(entry.tags)])],
+    priorityOrder: 40,
+    defaultState: 'on',
+    visibility: 'visible',
+    activation: { mode: 'always' },
+    action: action || undefined,
+    expectedOutput: expectedOutput || undefined,
+    sourcePath,
+    sourceLayer: 'AI',
+    status: 'runnable',
+    presentationStatus: 'runnable',
+    source: { origin: 'imported', sourceId: sourcePath, version: entry.version || '1.0.0' },
+    legacy: {
+      sourceRepo: 'UMG-Block-Library',
+      sourcePath,
+      parentSourcePath: aiPrimaryLibrarySourcePath,
+      libraryEntryId: entry.id,
+      original: entry
+    }
+  };
+};
 
 const importedAssets = readJson('data/imports/umg-block-library/imported-assets.json');
-const baseBlocks = readJson('data/library/normalized-blocks.json').filter((block) => block.sourceLayer !== 'HUMAN' && !String(block.legacy?.sourcePath ?? '').startsWith('HUMAN/MOLT-BLOCKS/instructions/') && String(block.legacy?.parentSourcePath ?? '') !== aiInstructionLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiInstructionLibrarySourcePath}#`) && String(block.legacy?.parentSourcePath ?? '') !== aiSubjectLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiSubjectLibrarySourcePath}#`));
+const baseBlocks = readJson('data/library/normalized-blocks.json').filter((block) => block.sourceLayer !== 'HUMAN' && !String(block.legacy?.sourcePath ?? '').startsWith('HUMAN/MOLT-BLOCKS/instructions/') && String(block.legacy?.parentSourcePath ?? '') !== aiInstructionLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiInstructionLibrarySourcePath}#`) && String(block.legacy?.parentSourcePath ?? '') !== aiSubjectLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiSubjectLibrarySourcePath}#`) && String(block.legacy?.parentSourcePath ?? '') !== aiPrimaryLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiPrimaryLibrarySourcePath}#`));
 const normalizedSleeves = readJson('data/library/normalized-sleeves.json');
 const existingReportRaw = readJson('data/library/migration-report.json');
 const { humanInstructionImport: _discardedHumanInstructionImport, ...existingReport } = existingReportRaw;
@@ -114,10 +162,14 @@ const aiInstructionBlocks = aiInstructionEntries.map((entry) => normalizeAIInstr
 const aiSubjectLibrary = JSON.parse(fs.readFileSync(aiSubjectLibraryPath, 'utf8'));
 const aiSubjectEntries = aiSubjectLibrary.entries ?? [];
 const aiSubjectBlocks = aiSubjectEntries.map((entry) => normalizeAISubjectEntry(entry));
-const blocks = uniqBy([...baseBlocks, ...aiInstructionBlocks, ...aiSubjectBlocks], (block) => block.id);
+const aiPrimaryLibrary = JSON.parse(fs.readFileSync(aiPrimaryLibraryPath, 'utf8'));
+const aiPrimaryEntries = aiPrimaryLibrary.entries ?? [];
+const aiPrimaryBlocks = aiPrimaryEntries.map((entry) => normalizeAIPrimaryEntry(entry));
+const blocks = uniqBy([...baseBlocks, ...aiInstructionBlocks, ...aiSubjectBlocks, ...aiPrimaryBlocks], (block) => block.id);
 const aiInstructionSourceAssets = aiInstructionEntries.map((entry) => ({ lane: 'AI', sourcePath: instructionEntrySourcePath(entry), data: entry }));
 const aiSubjectSourceAssets = aiSubjectEntries.map((entry) => ({ lane: 'AI', sourcePath: subjectEntrySourcePath(entry), data: entry }));
-const allSourceAssets = uniqBy([...importedAssets, ...aiInstructionSourceAssets, ...aiSubjectSourceAssets], (asset) => asset.sourcePath);
+const aiPrimarySourceAssets = aiPrimaryEntries.map((entry) => ({ lane: 'AI', sourcePath: primaryEntrySourcePath(entry), data: entry }));
+const allSourceAssets = uniqBy([...importedAssets, ...aiInstructionSourceAssets, ...aiSubjectSourceAssets, ...aiPrimarySourceAssets], (asset) => asset.sourcePath);
 
 const neostacks = uniqBy(normalizedSleeves.flatMap((sleeve) => (sleeve.stacks ?? []).map((stack) => ({
   ...stack,
@@ -199,6 +251,7 @@ const missingFieldsDetected = blocks.flatMap((block) => (block.legacy?.migration
   .map((warning) => ({ id: block.id, title: block.title, sourcePath: block.legacy?.sourcePath, warning })));
 const warningBearingAIInstructions = aiInstructionBlocks.filter((block) => block.presentationStatus === 'warning-bearing');
 const warningBearingAISubjects = aiSubjectBlocks.filter((block) => block.presentationStatus === 'warning-bearing');
+const warningBearingAIPrimaries = aiPrimaryBlocks.filter((block) => block.presentationStatus === 'warning-bearing');
 
 const nextReport = {
   ...existingReport,
@@ -244,6 +297,20 @@ const nextReport = {
     warningBearingImports: warningBearingAISubjects.length,
     parseWarnings: warningBearingAISubjects.map((block) => ({ id: block.id, sourcePath: block.sourcePath, warnings: block.legacy?.parseWarnings ?? [] }))
   },
+  aiPrimaryImport: {
+    sourcePath: aiPrimaryLibraryPath,
+    sourceAssetPath: aiPrimaryLibrarySourcePath,
+    authoritativeSource: true,
+    sourceFormat: 'json',
+    libraryName: aiPrimaryLibrary.library?.name,
+    declaredEntryCount: aiPrimaryLibrary.library?.entry_count,
+    entriesScanned: aiPrimaryEntries.length,
+    primaryBlocksImported: aiPrimaryBlocks.length,
+    skippedEntries: aiPrimaryEntries.length - aiPrimaryBlocks.length,
+    skippedHumanMarkdown: true,
+    warningBearingImports: warningBearingAIPrimaries.length,
+    parseWarnings: warningBearingAIPrimaries.map((block) => ({ id: block.id, sourcePath: block.sourcePath, warnings: block.legacy?.parseWarnings ?? [] }))
+  },
   shelfCounts: {
     moltBlocks: blocks.length,
     neoBlocks: neoblocks.length,
@@ -258,4 +325,4 @@ writeJson('data/library/neostacks.json', neostacks);
 writeJson('data/library/sleeves.json', normalizedSleeves);
 writeJson('data/library/source-assets.json', sourceAudit);
 writeJson('data/library/migration-report.json', nextReport);
-console.log(JSON.stringify({ ...nextReport.shelfCounts, sourceAudit: sourceAudit.length, unaccountedCount: sourceAssetSummary.unaccountedCount, aiInstructionsImported: aiInstructionBlocks.length, aiInstructionWarnings: warningBearingAIInstructions.length, aiSubjectsImported: aiSubjectBlocks.length, aiSubjectWarnings: warningBearingAISubjects.length }));
+console.log(JSON.stringify({ ...nextReport.shelfCounts, sourceAudit: sourceAudit.length, unaccountedCount: sourceAssetSummary.unaccountedCount, aiInstructionsImported: aiInstructionBlocks.length, aiInstructionWarnings: warningBearingAIInstructions.length, aiSubjectsImported: aiSubjectBlocks.length, aiSubjectWarnings: warningBearingAISubjects.length, aiPrimariesImported: aiPrimaryBlocks.length, aiPrimaryWarnings: warningBearingAIPrimaries.length }));

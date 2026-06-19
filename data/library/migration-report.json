@@ -223,12 +223,12 @@
     "sleeves_json": 2,
     "HUMAN_md": 1988
   },
-  "totalSourceAssetsScanned": 698,
-  "totalMoltBlocksImported": 532,
+  "totalSourceAssetsScanned": 898,
+  "totalMoltBlocksImported": 732,
   "totalNeoBlocksImported": 2,
   "totalNeoStacksImported": 2,
   "totalSleevesImported": 2,
-  "totalMetaUnmappedPreserved": 532,
+  "totalMetaUnmappedPreserved": 732,
   "skippedAssets": [
     {
       "sourcePath": "AI/EXAMPLES/dashboard/audit-export-variants.example.json",
@@ -1320,17 +1320,17 @@
     }
   ],
   "shelfCounts": {
-    "moltBlocks": 532,
+    "moltBlocks": 732,
     "neoBlocks": 2,
     "neoStacks": 2,
     "sleeves": 2
   },
   "sourceAssetSummary": {
-    "totalScanned": 698,
-    "accountedTotal": 698,
+    "totalScanned": 898,
+    "accountedTotal": 898,
     "unaccountedCount": 0,
     "outcomeCounts": {
-      "runnable_molt": 502,
+      "runnable_molt": 702,
       "meta": 164,
       "neoblock": 0,
       "neostack": 0,
@@ -1350,7 +1350,7 @@
     }
   },
   "outcomeCounts": {
-    "runnable_molt": 502,
+    "runnable_molt": 702,
     "meta": 164,
     "neoblock": 0,
     "neostack": 0,
@@ -1361,7 +1361,7 @@
     "reference_only": 21,
     "warning": 0
   },
-  "visibleOrAccountedAssets": 698,
+  "visibleOrAccountedAssets": 898,
   "unaccountedCount": 0,
   "reasonSummary": {
     "no runnable block fields detected": 164,
@@ -1392,6 +1392,20 @@
     "declaredEntryCount": 200,
     "entriesScanned": 200,
     "subjectBlocksImported": 200,
+    "skippedEntries": 0,
+    "skippedHumanMarkdown": true,
+    "warningBearingImports": 0,
+    "parseWarnings": []
+  },
+  "aiPrimaryImport": {
+    "sourcePath": "/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/primary/library.v1.0.0.json",
+    "sourceAssetPath": "AI/MOLT-BLOCKS/primary/library.v1.0.0.json",
+    "authoritativeSource": true,
+    "sourceFormat": "json",
+    "libraryName": "MOLT PRIMARY Library",
+    "declaredEntryCount": 200,
+    "entriesScanned": 200,
+    "primaryBlocksImported": 200,
     "skippedEntries": 0,
     "skippedHumanMarkdown": true,
     "warningBearingImports": 0,

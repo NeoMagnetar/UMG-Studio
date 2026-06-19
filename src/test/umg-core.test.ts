@@ -9,6 +9,7 @@ import { exportHermesPacket } from '../lib/umg/exporters';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/aiInstructionImport';
 import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubjectImport';
+import { normalizeAIPrimaryEntry, stableAIPrimaryId } from '../lib/umg/aiPrimaryImport';
 import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
 
 const rawBlocks = [
@@ -84,6 +85,39 @@ const subjectEntry010 = {
   content: { summary: 'Customer request', details: 'Details supplied by a customer about a service need.', structure: null },
   action: 'Represent the customer service request as the subject of the cognition pass',
   expected_output: 'Clear subject anchor for the customer request',
+  notes: null
+};
+
+const primaryEntry001 = {
+  id: 'PRIM.001',
+  type: 'PRIMARY',
+  name: 'Factual accuracy',
+  category: 'accuracy_precision',
+  subcategory: 'factual_accuracy',
+  domain: 'ACCURACY_PRECISION',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['primary', 'accuracy-precision', 'factual-accuracy'],
+  source: { library_name: 'MOLT PRIMARY Library', library_version: '1.0.0' },
+  essence: 'Getting the facts right',
+  core_concern: 'Truth over approximation',
+  notes: null
+};
+
+const primaryEntry010 = {
+  id: 'PRIM.010',
+  type: 'PRIMARY',
+  name: 'Customer satisfaction',
+  category: 'business_value',
+  subcategory: 'customer_satisfaction',
+  domain: 'BUSINESS_VALUE',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['primary', 'business-value', 'customer-satisfaction', 'mobile-detailing'],
+  source: { library_name: 'MOLT PRIMARY Library', library_version: '1.0.0' },
+  content: { summary: 'Customer satisfaction', details: 'Prioritize useful outcomes for service customers.', structure: null },
+  action: 'Optimize for a satisfied customer outcome',
+  expected_output: 'A customer-centered success criterion',
   notes: null
 };
 
@@ -763,6 +797,59 @@ describe('UMG Studio core engine', () => {
     sleeve.stacks[0].neoblocks[0].blocks.push(meta);
     const workspace = { id: 'ws_ai_subject', title: 'AI Subject Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
     const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'request'] });
+    const graph = applyCompileResultToGraph(workspace.graph, compiled);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_need') && row.active)).toBe(false);
+    for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+  });
+
+  it('imports AI primary JSON library entries into runnable MOLT primary blocks with stable source metadata', () => {
+    const parsed = normalizeAIPrimaryEntry(primaryEntry001);
+
+    expect(stableAIPrimaryId(primaryEntry001)).toBe('prim_001');
+    expect(parsed).toMatchObject({ id: 'prim_001', type: 'molt_block', role: 'primary', status: 'runnable', presentationStatus: 'runnable', sourcePath: 'AI/MOLT-BLOCKS/primary/library.v1.0.0.json#PRIM.001', sourceLayer: 'AI' });
+    expect(parsed.title).toBe('Factual accuracy');
+    expect(parsed.description).toBe('Getting the facts right');
+    expect(parsed.content).toContain('Primary: Getting the facts right');
+    expect(parsed.content).toContain('Core Concern: Truth over approximation');
+    expect(parsed.tags).toEqual(expect.arrayContaining(['primary', 'molt', 'ai', 'source-ai', 'accuracy-precision', 'factual-accuracy']));
+    expect(parsed.legacy?.parentSourcePath).toBe('AI/MOLT-BLOCKS/primary/library.v1.0.0.json');
+    expect(parsed.legacy?.libraryEntryId).toBe('PRIM.001');
+    expect(parsed.legacy?.original).toBe(primaryEntry001);
+  });
+
+  it('surfaces imported AI JSON primary blocks in Primary shelves, tag search, and source audit without blind composer activation', () => {
+    const prim001 = normalizeAIPrimaryEntry(primaryEntry001);
+    const prim010 = normalizeAIPrimaryEntry(primaryEntry010);
+    const manyAIPrimaries = Array.from({ length: 20 }, (_, index) => ({ ...structuredClone(prim001), id: `prim_${String(index + 1).padStart(3, '0')}_sample`, title: `Sample AI Primary ${index + 1}`, tags: ['primary', 'molt', 'ai', 'source-ai', `primary-sample-${index + 1}`] }));
+    const blocks = [...normalizeImportedBlocks(rawBlocks), prim001, prim010, ...manyAIPrimaries];
+    const sections = sectionLibraryByDisplayType(blocks);
+    const shelves = buildAssetShelves({ blocks, neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: [
+      { id: 'src_prim001', title: prim001.title, detectedType: 'molt_block', normalizedRole: 'primary', outcome: 'runnable_molt', tags: prim001.tags, sourcePath: prim001.sourcePath!, legacySource: prim001.legacy?.original },
+      { id: 'src_prim010', title: prim010.title, detectedType: 'molt_block', normalizedRole: 'primary', outcome: 'runnable_molt', tags: prim010.tags, sourcePath: prim010.sourcePath!, legacySource: prim010.legacy?.original }
+    ] });
+
+    expect(sections.find((section) => section.type === 'primary')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['prim_001', 'prim_010']));
+    expect(searchShelfAssets(shelves[0].items, { query: 'factual accuracy' }).map((item) => item.id)).toContain('prim_001');
+    expect(searchShelfAssets(shelves[0].items, { tags: ['customer-satisfaction'] }).map((item) => item.id)).toContain('prim_010');
+    expect(searchShelfAssets(shelves[4].items, { query: 'PRIM.001' })).toHaveLength(1);
+
+    const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
+    const selectedAIPrimaries = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('prim_'));
+    expect(selectedAIPrimaries.length).toBeLessThan(manyAIPrimaries.length + 2);
+    expect(composed.selected_nodes.length).toBeLessThan(blocks.length);
+  });
+
+  it('keeps imported AI JSON primary blocks compatible with real compile and graph/IR agreement while Meta stays non-compiler', () => {
+    const prim010 = normalizeAIPrimaryEntry(primaryEntry010);
+    const meta = normalizeImportedBlocks([{ id: 'future_need', role: 'Need', title: 'Future Need', content: 'Do not compile.', tags: ['future'] }], 'HUMAN/MOLT-BLOCKS/need/future.md')[0];
+    const blocks = [...normalizeImportedBlocks(rawBlocks), prim010, meta];
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing customer satisfaction', depth: 'balanced' }, blocks).draft_sleeve;
+    sleeve.stacks[0].neoblocks[0].blocks.push(meta);
+    const workspace = { id: 'ws_ai_primary', title: 'AI Primary Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'satisfaction'] });
     const graph = applyCompileResultToGraph(workspace.graph, compiled);
     const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
 
