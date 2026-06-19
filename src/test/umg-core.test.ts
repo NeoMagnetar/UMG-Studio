@@ -6,6 +6,8 @@ import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
+import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
+import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
 
 const rawBlocks = [
   { name: 'Chatbot Trigger', moltType: 'Trigger', tags: ['chatbot', 'intake'], content: 'Start when a visitor asks for service help.' },
@@ -469,6 +471,127 @@ describe('UMG Studio core engine', () => {
     for (const row of compiled.irMatrix.filter((r) => r.active && !r.off)) {
       expect(focusGraph(snapped, { mode: 'neoblock', sourceId: first.id }).nodes.find((n) => n.sourceId === row.nodeId)?.state.active).toBe(true);
     }
+  });
+
+  it('supports context-aware insertion of MOLT blocks, NeoBlocks, NeoStacks, and Sleeves while keeping compile clean', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const baseSleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'balanced' }, blocks).draft_sleeve;
+    const baseWorkspace: UMGWorkspace = { id: 'ws_insert', title: 'Insert Workspace', activeSleeveId: baseSleeve.id, sleeves: [baseSleeve], libraryRefs: [], graph: buildGraphFromSleeve(baseSleeve) };
+    const meta = normalizeImportedBlocks([{ id: 'aim_meta', role: 'Aim', title: 'Future Aim', content: 'Preserve only.', tags: ['future'] }], 'AI/MOLT/Aim/future.json')[0];
+    const extraBlock = normalizeImportedBlocks([{ id: 'extra_subject', role: 'Subject', title: 'Extra Subject', content: 'Extra context.', tags: ['tagged'] }])[0];
+    const savedNeoBlock: NeoBlock = { id: 'saved_nb', title: 'Saved Intake NeoBlock', type: 'neoblock', tags: ['tagged', 'bundle'], blocks: [extraBlock], defaultState: 'on' };
+    const savedNeoStack: NeoStack = { id: 'saved_stack', title: 'Saved Stack', type: 'neostack', tags: ['stacktag'], neoblocks: [savedNeoBlock], defaultState: 'on' };
+    const savedSleeve: Sleeve = { id: 'saved_sleeve', title: 'Saved Sleeve', type: 'sleeve', version: '0.1', tags: ['sleevetag'], stacks: [savedNeoStack], runtimeConfig: { active: true, depth: 'balanced', hermesEnabled: false, runtimeAdaptation: false, showRuntimeTrace: true } };
+
+    const moltInMoltView = insertMoltBlockIntoWorkspace(baseWorkspace, extraBlock, { mode: 'molt_block', selectedNeoBlockId: baseSleeve.stacks[0].neoblocks[0].id });
+    expect(moltInMoltView.sleeves[0].stacks[0].neoblocks[0].blocks.some((block) => block.title === 'Extra Subject')).toBe(true);
+
+    const emptySleeve: Sleeve = { ...baseSleeve, id: 'empty_sleeve', stacks: [] };
+    const emptyWorkspace: UMGWorkspace = { id: 'empty_ws', title: 'Empty Workspace', activeSleeveId: emptySleeve.id, sleeves: [emptySleeve], libraryRefs: [], graph: buildGraphFromSleeve(emptySleeve) };
+    const safeWrapped = insertMoltBlockIntoWorkspace(emptyWorkspace, extraBlock, { mode: 'sleeve' });
+    expect(safeWrapped.sleeves[0].stacks[0].title).toBe('Draft NeoStack');
+    expect(safeWrapped.sleeves[0].stacks[0].neoblocks[0].title).toBe('Draft NeoBlock');
+    expect(safeWrapped.sleeves[0].stacks[0].neoblocks[0].blocks[0].title).toBe('Extra Subject');
+    expect((safeWrapped.sleeves[0] as any).blocks).toBeUndefined();
+
+    const neoInBlockView = insertNeoBlockIntoWorkspace(baseWorkspace, savedNeoBlock, { mode: 'neoblock', selectedStackId: baseSleeve.stacks[0].id });
+    expect(neoInBlockView.sleeves[0].stacks[0].neoblocks.some((nb) => nb.title === 'Saved Intake NeoBlock')).toBe(true);
+
+    const neoInSleeveView = insertNeoBlockIntoWorkspace(emptyWorkspace, savedNeoBlock, { mode: 'sleeve' });
+    expect(neoInSleeveView.sleeves[0].stacks[0].title).toBe('Draft NeoStack');
+    expect(neoInSleeveView.sleeves[0].stacks[0].neoblocks.some((nb) => nb.title === 'Saved Intake NeoBlock')).toBe(true);
+
+    const stackInSleeve = insertNeoStackIntoWorkspace(baseWorkspace, savedNeoStack, { mode: 'sleeve' });
+    expect(stackInSleeve.sleeves[0].stacks.some((stack) => stack.title === 'Saved Stack')).toBe(true);
+
+    const opened = openSleeveAsWorkspace(savedSleeve);
+    expect(opened.sleeves[0].id).not.toBe(baseWorkspace.sleeves[0].id);
+    expect(opened.sleeves[0].title).toContain('Saved Sleeve');
+    const duplicated = duplicateSleeveIntoWorkspace(baseWorkspace, savedSleeve);
+    expect(duplicated.sleeves).toHaveLength(2);
+
+    const withMeta = insertMoltBlockIntoWorkspace(baseWorkspace, meta, { mode: 'sleeve' });
+    const compiled = compileWorkspaceToRuntime(withMeta, { tags: ['future'] }, { disableInstalledCompiler: true });
+    expect(compiled.irMatrix.some((row) => row.nodeId.includes('aim_meta') && row.active)).toBe(false);
+  });
+
+  it('builds four asset shelves and searches by tag/title/source/contained child roles', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const savedNeoBlock: NeoBlock = { id: 'tagged_nb', title: 'Tagged NeoBlock', type: 'neoblock', tags: ['bundle-tag'], blocks: [blocks[0], blocks[1]], defaultState: 'on' };
+    const savedNeoStack: NeoStack = { id: 'tagged_stack', title: 'Tagged NeoStack', type: 'neostack', tags: ['stack-tag'], neoblocks: [savedNeoBlock], defaultState: 'on' };
+    const savedSleeve: Sleeve = { id: 'tagged_sleeve', title: 'Tagged Sleeve', type: 'sleeve', version: '0.1', tags: ['sleeve-tag'], stacks: [savedNeoStack], runtimeConfig: { active: true, depth: 'balanced', hermesEnabled: false, runtimeAdaptation: false, showRuntimeTrace: true } };
+    const shelves = buildAssetShelves({ blocks, neoblocks: [savedNeoBlock], neostacks: [savedNeoStack], sleeves: [savedSleeve] });
+
+    expect(shelves.map((shelf) => shelf.id)).toEqual(['molt_blocks', 'neoblocks', 'neostacks', 'sleeves', 'source_audit']);
+    expect(shelves[0].items.every((item) => item.kind === 'molt_block')).toBe(true);
+    expect(shelves[1].items.every((item) => item.kind === 'neoblock')).toBe(true);
+    expect(shelves[2].items.every((item) => item.kind === 'neostack')).toBe(true);
+    expect(shelves[3].items.every((item) => item.kind === 'sleeve')).toBe(true);
+    expect(searchShelfAssets(shelves[0].items, { query: 'chatbot', tags: ['intake'] }).length).toBeGreaterThan(0);
+    expect(searchShelfAssets(shelves[1].items, { query: 'directive' }).map((item) => item.id)).toContain('tagged_nb');
+    expect(searchShelfAssets(shelves[2].items, { tags: ['bundle-tag'] }).map((item) => item.id)).toContain('tagged_stack');
+    expect(searchShelfAssets(shelves[3].items, { tags: ['stack-tag'] }).map((item) => item.id)).toContain('tagged_sleeve');
+  });
+
+  it('accounts every scanned source asset with an audit outcome and preserves reasons', () => {
+    const blocks = normalizeImportedBlocks([
+      { id: 'run', role: 'Directive', title: 'Runnable', content: 'Run.', tags: ['chatbot'] },
+      { id: 'meta', title: 'Meta Note', content: 'Reference.', tags: ['meta'] },
+      { id: 'unsupported', role: 'Aim', title: 'Future Aim', content: 'Future.', tags: ['future'] },
+      { id: 'reference', role: 'Instruction', title: 'Schema Ref', content: '', tags: [] },
+      { id: 'warning', role: 'Instruction', title: 'Warning Block', content: 'Warn.', tags: [] }
+    ], 'AI/run.json');
+    blocks[1].legacy!.sourcePath = 'AI/meta.json';
+    blocks[2].legacy!.sourcePath = 'AI/aim.json';
+    blocks[3].legacy!.sourcePath = 'AI/SCHEMAS/ref.schema.json';
+    blocks[4].legacy!.sourcePath = 'AI/warning.json';
+    blocks[4].legacy!.migrationWarnings = ['tags defaulted'];
+    blocks[4].presentationStatus = 'warning-bearing';
+    const neoblock: NeoBlock = { id: 'nb', title: 'NB Asset', type: 'neoblock', tags: ['nb'], blocks: [], defaultState: 'on' } as NeoBlock;
+    (neoblock as any).legacy = { sourcePath: 'AI/neoblock.json', original: {} };
+    const neostack: NeoStack = { id: 'ns', title: 'NS Asset', type: 'neostack', tags: ['ns'], neoblocks: [], defaultState: 'on' } as NeoStack;
+    (neostack as any).legacy = { sourcePath: 'AI/neostack.json', original: {} };
+    const sleeve: Sleeve = { id: 'slv', title: 'Sleeve Asset', type: 'sleeve', version: '0.1', tags: ['slv'], stacks: [], runtimeConfig: { active: true, depth: 'balanced', hermesEnabled: false, runtimeAdaptation: false, showRuntimeTrace: true } };
+    (sleeve as any).legacy = { sourcePath: 'sleeves/demo.json', original: {} };
+    const sourceAssets = ['AI/run.json', 'AI/meta.json', 'AI/aim.json', 'AI/SCHEMAS/ref.schema.json', 'AI/warning.json', 'AI/neoblock.json', 'AI/neostack.json', 'sleeves/demo.json', 'AI/skipped.json', 'AI/duplicate.json']
+      .map((sourcePath) => ({ lane: sourcePath.startsWith('sleeves') ? 'sleeves' : 'AI', sourcePath, data: { title: sourcePath } }));
+
+    const audit = buildSourceAssetAudit({
+      sourceAssets: sourceAssets as any,
+      blocks,
+      neoblocks: [neoblock],
+      neostacks: [neostack],
+      sleeves: [sleeve],
+      report: {
+        skippedAssets: [{ sourcePath: 'AI/skipped.json', reason: 'parse failed' }],
+        duplicateAssets: [{ sourcePath: 'AI/duplicate.json', reason: 'duplicate source path' }]
+      }
+    });
+
+    expect(audit.summary.totalScanned).toBe(10);
+    expect(audit.summary.accountedTotal).toBe(10);
+    expect(audit.summary.unaccountedCount).toBe(0);
+    expect(audit.summary.outcomeCounts).toMatchObject({ runnable_molt: 1, meta: 1, unsupported: 1, reference_only: 1, warning: 1, neoblock: 1, neostack: 1, sleeve: 1, skipped: 1, duplicate: 1 });
+    expect(audit.items.find((item) => item.outcome === 'skipped')).toMatchObject({ sourcePath: 'AI/skipped.json', reason: 'parse failed' });
+    expect(audit.items.find((item) => item.outcome === 'duplicate')).toMatchObject({ sourcePath: 'AI/duplicate.json', reason: 'duplicate source path' });
+    expect(audit.items.find((item) => item.outcome === 'unsupported')).toMatchObject({ sourcePath: 'AI/aim.json', reason: expect.stringContaining('unsupported') });
+  });
+
+  it('adds a Source Assets / Audit shelf and clear filters can restore its full count', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    blocks[0].legacy!.sourcePath = 'AI/run.json';
+    const sourceAssets = [
+      { lane: 'AI', sourcePath: 'AI/run.json', data: blocks[0].legacy?.original },
+      { lane: 'AI', sourcePath: 'AI/skipped.json', data: {} }
+    ];
+    const audit = buildSourceAssetAudit({ sourceAssets: sourceAssets as any, blocks: [blocks[0]], neoblocks: [], neostacks: [], sleeves: [], report: { skippedAssets: [{ sourcePath: 'AI/skipped.json', reason: 'no runnable block fields detected' }] } });
+    const shelves = buildAssetShelves({ blocks: [blocks[0]], neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: audit.items });
+    const auditShelf = shelves.find((shelf) => shelf.id === 'source_audit');
+
+    expect(shelves.map((shelf) => shelf.id)).toEqual(['molt_blocks', 'neoblocks', 'neostacks', 'sleeves', 'source_audit']);
+    expect(auditShelf?.items).toHaveLength(2);
+    expect(searchShelfAssets(auditShelf!.items, { query: 'skipped' })).toHaveLength(1);
+    expect(searchShelfAssets(auditShelf!.items, { query: '', tags: [] })).toHaveLength(2);
   });
 
   it('exports a Hermes packet without leaking API secrets', () => {

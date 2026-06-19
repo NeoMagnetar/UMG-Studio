@@ -222,5 +222,1224 @@
     "AI_json": 229,
     "sleeves_json": 2,
     "HUMAN_md": 1988
+  },
+  "totalSourceAssetsScanned": 198,
+  "totalMoltBlocksImported": 38,
+  "totalNeoBlocksImported": 2,
+  "totalNeoStacksImported": 2,
+  "totalSleevesImported": 2,
+  "totalMetaUnmappedPreserved": 38,
+  "skippedAssets": [
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/audit-export-variants.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-layout.enterprise.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-layout.full.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-layout.partial.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-section-map.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-state.blocked.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-state.dry-run-only.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-state.mismatch-note.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-state.preview-only.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-state.structurally-executable-pending-gate.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-state.terminal-violation.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/dashboard-to-audit-export-crosswalk.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/screen-to-report-crosswalk.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/dashboard/severity-legend.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/artifact-bundle-inventory.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/artifact-dependency-graph.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/artifact-lifecycle-status-map.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/completeness-scoring-report.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/dependency-health-narratives.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/dependency-health-report.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/escalation-taxonomy.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/escalation-threshold-report.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/governance-pack-manifest.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/governance-pack-maturity-model.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/governance-pack-variants.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/governance-readiness-packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/maturity-assessment.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/maturity-to-review-crosswalk.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/pack-audience-profiles.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-dashboard-summary.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-validation-checklists.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variant-examples/compliance_static_readiness_packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variant-examples/enterprise_static_readiness_packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variant-examples/implementation_candidate_packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variant-examples/internal_static_readiness_packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variant-examples/release_blocked_packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variant-examples/security_triage_readiness_packet.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-packet-variants.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/readiness-review-checklists.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record-variants/accepted_static.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record-variants/accepted_with_conditions.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record-variants/blocked_security.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record-variants/deferred.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record-variants/rejected_static.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record-variants/superseded.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-record.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-decision-status-taxonomy.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-escalation-thresholds.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/review-packet-checklists.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/security-triage-blocker-taxonomy.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/security-triage-evidence-ledger.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/security-triage-overview.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/security-triage-publish-gate-prerequisites.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/security-triage-scan-surface-inventory.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/signoff-record.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/signoff-status-taxonomy.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/static-assessment-narratives.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/tool-runtime-phase-matrix.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/tool-runtime-security-constraints-snapshot.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/tool-runtime-static-governance-index.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/tool-runtime-status-snapshot.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/governance/variant-completeness-scoring.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/audit-export.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/compliance-evidence-checklists.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/compliance-narrative-templates.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/dashboard-component-glossary.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/dashboard-to-harness-field-dictionary.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/enterprise-narrative-templates.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/enterprise-report.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/evidence-pack-index.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/governance-communication-qa-checklist.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/localization-readiness.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/preview-ui-mapping.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/remediation-checklists.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/remediation-ownership-matrix.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/report-audience-profiles.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/report-section-prose-variants.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/review-signoff-workflow.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/reporting/sample-harness-result-bundle.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/blocked-trust-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/capability-unknown-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/dry-run-only-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/expired-approval-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/harness-result-report.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/provider-missing-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/rollback-invalid-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/blocked-trust-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/capability-unknown-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/dry-run-only-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/expired-approval-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/provider-missing-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/rollback-invalid-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/tenant-violation-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/synthetic-traces/valid-preview-only-chain.trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/tenant-violation-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/trace-expectations.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/valid-preview-only-chain.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/EXAMPLES/runtime-preview/validation-matrix.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/MANIFEST.NS.UMG.LANGCHAIN_BRIDGE.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/gate-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/neoblock-library-index.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MANIFESTS/sleeve-catalog.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/blueprints/BLK.BLUEPRINT.UMG.LC.RUNTIME_OUTPUT.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/blueprints/BLK.BLUEPRINT.UMG.LC.TOOL_SCHEMA.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/directives/BLK.DIRECTIVE.UMG.LC.ROUTE_TOOL_BRIDGE.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/directives/BLK.DIRECTIVE.UMG.LC.SELECT_PROVIDER.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/directives/library.v1.0.0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/instructions/BLK.INSTRUCTION.UMG.LC.FILTER_TOOLS_BY_PERMISSION.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/instructions/BLK.INSTRUCTION.UMG.LC.REQUIRE_SLEEVE_AUTHORITY.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/instructions/library.v1.0.0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/philosophy/BLK.PHILOSOPHY.UMG.LC.SUBORDINATE_TO_UMG.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/philosophy/library.v1.0.0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/primary/BLK.PRIMARY.UMG.LC.EXECUTE_TASK.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/primary/library.v1.0.0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/subjects/BLK.SUBJECT.UMG.LC.RUNTIME.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/subjects/library.v1.0.0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/business/slv-business-automation-consultant-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/coders/slv-super-emulator-dev-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/coders/slv-uo-server-developer-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.ERROR_RECOVERY.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.LANGGRAPH_ORCHESTRATOR.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.MCP_ADAPTER.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.OPENCLAW_TOOL_BRIDGE.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.PERMISSION_GATE.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.PROVIDER_ADAPTER.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.RAG_RETRIEVAL_ADAPTER.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.RUNTIME_INTAKE.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.STRUCTURED_OUTPUT_ADAPTER.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.TOOL_REGISTRY.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/core/NB.UMG.LC.TRACE_OBSERVABILITY.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/finance/slv-bank_audit-compliance-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/finance/slv-idaho-grants-finder-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/meta-random/slv-nonprofit-financing-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/research/slv-investigative-intelligence-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/categories/research/slv-journalism-investigative-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/blueprint.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/directive.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/instruction.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/philosophy.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/primary.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/subject.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOBLOCKS/sample/trigger.sample.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOSTACKS/categories/business/slv-business-automation-consultant-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOSTACKS/categories/coders/slv-super-emulator-dev-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOSTACKS/categories/coders/slv-uo-server-developer-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOSTACKS/categories/coders/slv-vrchat-developer-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOSTACKS/categories/core/NS.UMG.LANGCHAIN_BRIDGE.v0.1.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/NEOSTACKS/categories/finance/slv-idaho-grants-finder-v1-0.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/examples/sleeve.crm_assistant.langchain_bridge.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/examples/sleeve.local_desktop_operator.langchain_bridge.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/examples/sleeve.research_rag.langchain_bridge.example.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/permission.contract.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/runtime.contract.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/tool.contract.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/contracts/langchain_bridge/trace.contract.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/sample-active-runtime.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/RUNTIME-REFERENCE/sample-trace.json",
+      "reason": "no runnable block fields detected"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/aim.business.library.v1.0.0.json",
+      "reason": "unsupported role aim preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/aim.coding.library.v1.0.0.json",
+      "reason": "unsupported role aim preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/aim.library.v1.0.0.json",
+      "reason": "unsupported role aim preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/need.business.library.v1.0.0.json",
+      "reason": "unsupported role need preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/need.coding.library.v1.0.0.json",
+      "reason": "unsupported role need preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/need.library.v1.0.0.json",
+      "reason": "unsupported role need preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/use.business.library.v1.0.0.json",
+      "reason": "unsupported role use preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/use.coding.library.v1.0.0.json",
+      "reason": "unsupported role use preserved in legacy only"
+    },
+    {
+      "sourcePath": "AI/MOLT-BLOCKS/use.library.v1.0.0.json",
+      "reason": "unsupported role use preserved in legacy only"
+    }
+  ],
+  "duplicateAssets": [],
+  "unsupportedRolesPreserved": [
+    "aim",
+    "need",
+    "use"
+  ],
+  "missingFieldsDetected": [
+    {
+      "id": "RULE.READINESS_EXECUTABLE_MISMATCH",
+      "title": "Readiness / Executable State Alignment",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.READINESS_EXECUTABLE_MISMATCH",
+      "title": "Readiness / Executable State Alignment",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.PROVIDER_BINDING_CONTRADICTION",
+      "title": "Provider / Binding Consistency",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.PROVIDER_BINDING_CONTRADICTION",
+      "title": "Provider / Binding Consistency",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.TRUST_TERMINAL_VIOLATION",
+      "title": "Trust Block Terminality",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.TRUST_TERMINAL_VIOLATION",
+      "title": "Trust Block Terminality",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.APPROVAL_EXPIRED_EXECUTION_CONTRADICTION",
+      "title": "Expired Approval Cannot Be Execution-Ready",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.APPROVAL_EXPIRED_EXECUTION_CONTRADICTION",
+      "title": "Expired Approval Cannot Be Execution-Ready",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.ROLLBACK_INVALID_EXECUTION_CONTRADICTION",
+      "title": "Invalid Rollback Cannot Be Execution-Ready",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.ROLLBACK_INVALID_EXECUTION_CONTRADICTION",
+      "title": "Invalid Rollback Cannot Be Execution-Ready",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.BLOCKED_REASON_ABSENCE",
+      "title": "Blocked Outputs Must Emit Blocked Reasons",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.BLOCKED_REASON_ABSENCE",
+      "title": "Blocked Outputs Must Emit Blocked Reasons",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.TENANT_BOUNDARY_VIOLATION",
+      "title": "Tenant Boundary Is Terminal",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.TENANT_BOUNDARY_VIOLATION",
+      "title": "Tenant Boundary Is Terminal",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.TRUST_BLOCKED_TERMINALITY",
+      "title": "Trust Blocked Is Terminal",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.TRUST_BLOCKED_TERMINALITY",
+      "title": "Trust Blocked Is Terminal",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.PROVIDER_MISSING_PRECEDENCE",
+      "title": "Provider Missing Precedes Approval",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.PROVIDER_MISSING_PRECEDENCE",
+      "title": "Provider Missing Precedes Approval",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "RULE.APPROVAL_WITHOUT_PROVIDER_VALIDITY",
+      "title": "Approval Presence Without Provider Validity",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "RULE.APPROVAL_WITHOUT_PROVIDER_VALIDITY",
+      "title": "Approval Presence Without Provider Validity",
+      "sourcePath": "AI/EXAMPLES/consistency-rule-catalog.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/approval-expired-executable-violation.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/approval-expired-executable-violation.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/blocked-reason-missing.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/blocked-reason-missing.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/provider-binding-contradiction.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/provider-binding-contradiction.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/readiness-executable-state-mismatch.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/readiness-executable-state-mismatch.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/rollback-invalid-executable-violation.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/rollback-invalid-executable-violation.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/trust-terminal-violation.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/trust-terminal-violation.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/fixture-bundle-manifest.example.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_instruction_block_1_1",
+      "title": "instruction block 1",
+      "sourcePath": "AI/EXAMPLES/runtime-preview/fixture-bundle-manifest.example.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_approval_token_schema_v0_1_1",
+      "title": "UMG Approval Token Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/approval-token.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_approval_token_schema_v0_1_1",
+      "title": "UMG Approval Token Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/approval-token.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_audit_export_schema_v0_1_1",
+      "title": "UMG Audit Export Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/audit-export.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_audit_export_schema_v0_1_1",
+      "title": "UMG Audit Export Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/audit-export.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_blocked_reason_schema_v0_1_1",
+      "title": "UMG Blocked Reason Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/blocked-reason.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_blocked_reason_schema_v0_1_1",
+      "title": "UMG Blocked Reason Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/blocked-reason.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_capability_schema_v0_1_1",
+      "title": "UMG Capability Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/capability.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_capability_schema_v0_1_1",
+      "title": "UMG Capability Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/capability.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_consistency_rule_catalog_schema_v0_1_1",
+      "title": "UMG Consistency Rule Catalog Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/consistency-rule-catalog.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_consistency_rule_catalog_schema_v0_1_1",
+      "title": "UMG Consistency Rule Catalog Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/consistency-rule-catalog.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_enterprise_report_schema_v0_1_1",
+      "title": "UMG Enterprise Report Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/enterprise-report.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_enterprise_report_schema_v0_1_1",
+      "title": "UMG Enterprise Report Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/enterprise-report.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_fixture_bundle_manifest_schema_v0_1_1",
+      "title": "UMG Fixture Bundle Manifest Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/fixture-bundle-manifest.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_fixture_bundle_manifest_schema_v0_1_1",
+      "title": "UMG Fixture Bundle Manifest Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/fixture-bundle-manifest.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_gate_schema_public_placeholder_1",
+      "title": "UMG Gate Schema (public placeholder)",
+      "sourcePath": "AI/SCHEMAS/gate.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_gate_schema_public_placeholder_1",
+      "title": "UMG Gate Schema (public placeholder)",
+      "sourcePath": "AI/SCHEMAS/gate.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_governance_pack_manifest_schema_v0_1_1",
+      "title": "UMG Governance Pack Manifest Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/governance-pack-manifest.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_governance_pack_manifest_schema_v0_1_1",
+      "title": "UMG Governance Pack Manifest Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/governance-pack-manifest.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_governance_readiness_packet_schema_v0_1_1",
+      "title": "UMG Governance Readiness Packet Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/governance-readiness-packet.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_governance_readiness_packet_schema_v0_1_1",
+      "title": "UMG Governance Readiness Packet Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/governance-readiness-packet.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_harness_result_report_schema_v0_1_1",
+      "title": "UMG Harness Result Report Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/harness-result-report.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_harness_result_report_schema_v0_1_1",
+      "title": "UMG Harness Result Report Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/harness-result-report.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_preview_ui_mapping_schema_v0_1_1",
+      "title": "UMG Preview UI Mapping Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/preview-ui-mapping.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_preview_ui_mapping_schema_v0_1_1",
+      "title": "UMG Preview UI Mapping Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/preview-ui-mapping.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_review_decision_record_schema_v0_1_1",
+      "title": "UMG Review Decision Record Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/review-decision-record.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_review_decision_record_schema_v0_1_1",
+      "title": "UMG Review Decision Record Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/review-decision-record.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_rollback_taxonomy_schema_v0_1_1",
+      "title": "UMG Rollback Taxonomy Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/rollback-taxonomy.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_rollback_taxonomy_schema_v0_1_1",
+      "title": "UMG Rollback Taxonomy Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/rollback-taxonomy.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_runtimespec_preview_schema_v0_1_1",
+      "title": "UMG RuntimeSpec Preview Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/runtimespec-preview.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_runtimespec_preview_schema_v0_1_1",
+      "title": "UMG RuntimeSpec Preview Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/runtimespec-preview.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_sleeve_runtime_governance_schema_v0_1_1",
+      "title": "UMG Sleeve Runtime Governance Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/sleeve-runtime-governance.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_sleeve_runtime_governance_schema_v0_1_1",
+      "title": "UMG Sleeve Runtime Governance Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/sleeve-runtime-governance.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_tool_binding_schema_v0_1_1",
+      "title": "UMG Tool Binding Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/tool-binding.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_tool_binding_schema_v0_1_1",
+      "title": "UMG Tool Binding Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/tool-binding.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_tool_pack_schema_v0_2_draft_1",
+      "title": "UMG Tool Pack Schema v0.2-draft",
+      "sourcePath": "AI/SCHEMAS/toolpack.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_tool_pack_schema_v0_2_draft_1",
+      "title": "UMG Tool Pack Schema v0.2-draft",
+      "sourcePath": "AI/SCHEMAS/toolpack.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_tool_pack_schema_legacy_snapshot_v0_1_1",
+      "title": "UMG Tool Pack Schema Legacy Snapshot v0.1",
+      "sourcePath": "AI/SCHEMAS/toolpack.schema.legacy-v0.1.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_tool_pack_schema_legacy_snapshot_v0_1_1",
+      "title": "UMG Tool Pack Schema Legacy Snapshot v0.1",
+      "sourcePath": "AI/SCHEMAS/toolpack.schema.legacy-v0.1.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_trust_registry_schema_v0_1_1",
+      "title": "UMG Trust Registry Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/trust-registry.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_trust_registry_schema_v0_1_1",
+      "title": "UMG Trust Registry Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/trust-registry.schema.json",
+      "warning": "tags defaulted"
+    },
+    {
+      "id": "blk_umg_validation_trace_preview_schema_v0_1_1",
+      "title": "UMG Validation Trace Preview Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/validation-trace-preview.schema.json",
+      "warning": "role inferred"
+    },
+    {
+      "id": "blk_umg_validation_trace_preview_schema_v0_1_1",
+      "title": "UMG Validation Trace Preview Schema v0.1",
+      "sourcePath": "AI/SCHEMAS/validation-trace-preview.schema.json",
+      "warning": "tags defaulted"
+    }
+  ],
+  "shelfCounts": {
+    "moltBlocks": 38,
+    "neoBlocks": 2,
+    "neoStacks": 2,
+    "sleeves": 2
+  },
+  "sourceAssetSummary": {
+    "totalScanned": 198,
+    "accountedTotal": 198,
+    "unaccountedCount": 0,
+    "outcomeCounts": {
+      "runnable_molt": 8,
+      "meta": 158,
+      "neoblock": 0,
+      "neostack": 0,
+      "sleeve": 2,
+      "skipped": 0,
+      "duplicate": 0,
+      "unsupported": 9,
+      "reference_only": 21,
+      "warning": 0
+    },
+    "reasonSummary": {
+      "no runnable block fields detected": 158,
+      "unsupported role aim preserved in legacy only": 3,
+      "unsupported role need preserved in legacy only": 3,
+      "unsupported role use preserved in legacy only": 3,
+      "reference-only / non-runtime source": 21
+    }
+  },
+  "outcomeCounts": {
+    "runnable_molt": 8,
+    "meta": 158,
+    "neoblock": 0,
+    "neostack": 0,
+    "sleeve": 2,
+    "skipped": 0,
+    "duplicate": 0,
+    "unsupported": 9,
+    "reference_only": 21,
+    "warning": 0
+  },
+  "visibleOrAccountedAssets": 198,
+  "unaccountedCount": 0,
+  "reasonSummary": {
+    "no runnable block fields detected": 158,
+    "unsupported role aim preserved in legacy only": 3,
+    "unsupported role need preserved in legacy only": 3,
+    "unsupported role use preserved in legacy only": 3,
+    "reference-only / non-runtime source": 21
   }
 }
