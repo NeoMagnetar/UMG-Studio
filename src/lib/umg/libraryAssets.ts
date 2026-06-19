@@ -209,6 +209,8 @@ export function buildSourceAssetAudit(input: { sourceAssets: SourceAsset[]; bloc
       title = sleeve.title; detectedType = 'sleeve'; tags = sleeve.tags ?? []; outcome = 'sleeve';
     } else if (!duplicateReason && source.lane === 'sleeves' && !skippedReason) {
       detectedType = 'sleeve'; outcome = 'sleeve';
+    } else if (!duplicateReason && !skippedReason) {
+      outcome = 'meta'; reason = 'no runnable block fields detected';
     }
     counts[outcome] += 1;
     if (reason) reasonSummary[reason] = (reasonSummary[reason] ?? 0) + 1;
@@ -228,7 +230,7 @@ export function buildAssetShelves(input: { blocks: UMGBlock[]; neoblocks: NeoBlo
     { id: 'neoblocks', label: 'NeoBlocks', items: input.neoblocks.map(neoblockAsset) },
     { id: 'neostacks', label: 'NeoStacks', items: input.neostacks.map(neostackAsset) },
     { id: 'sleeves', label: 'Sleeves', items: input.sleeves.map(sleeveAsset) },
-    { id: 'source_audit', label: 'Source Assets / Audit', items: (input.sourceAuditItems ?? []).map(sourceAuditAsset) }
+    { id: 'source_audit', label: 'Source Assets / Audit — audit only', items: (input.sourceAuditItems ?? []).map(sourceAuditAsset) }
   ];
 }
 
@@ -237,6 +239,7 @@ export function searchShelfAssets(items: ShelfAsset[], filters: { query?: string
   const tags = (filters.tags ?? []).map((tag) => tag.toLowerCase());
   return items.filter((item) => {
     const haystack = [item.title, item.kind, item.status, item.displayType, item.sourcePath, ...item.tags, ...item.containedRoles, ...item.containedTitles].filter(Boolean).join(' ').toLowerCase();
-    return (!query || haystack.includes(query)) && tags.every((tag) => haystack.includes(tag));
+    const queryTokens = query.split(/\s+/).filter(Boolean);
+    return (!query || haystack.includes(query) || queryTokens.every((token) => haystack.includes(token))) && tags.every((tag) => haystack.includes(tag));
   });
 }

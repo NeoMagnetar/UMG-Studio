@@ -7,6 +7,7 @@ import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
+import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/aiInstructionImport';
 import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
 
 const rawBlocks = [
@@ -19,6 +20,38 @@ const rawBlocks = [
   { title: 'Service Philosophy', role: 'philosophy', tags: ['trust', 'service'], content: 'Respect customer time and ask only useful questions.' },
   { title: 'Summary Blueprint', role: 'blueprint', tags: ['summary', 'intake'], content: 'Output FAQ answer, missing info questions, and final lead summary.' }
 ];
+
+const instructionEntry001 = {
+  id: 'INST.001',
+  type: 'INSTRUCTION',
+  name: 'Break into components',
+  category: 'general',
+  subcategory: 'analytical_actions',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['instruction', 'analytical-actions'],
+  source: { library_name: 'MOLT INSTRUCTION Library', library_version: '1.0.0' },
+  content: { summary: 'Break into components', details: null, structure: null },
+  action: 'Decompose complex system or concept into constituent parts',
+  expected_output: 'List of distinct components with relationships identified',
+  notes: null
+};
+
+const instructionEntry003 = {
+  id: 'INST.003',
+  type: 'INSTRUCTION',
+  name: 'Trace causality',
+  category: 'general',
+  subcategory: 'analytical_actions',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['instruction', 'analytical-actions'],
+  source: { library_name: 'MOLT INSTRUCTION Library', library_version: '1.0.0' },
+  content: { summary: 'Trace causality', details: null, structure: null },
+  action: 'Follow chain of causes backward from observed effect',
+  expected_output: 'Causal chain from root cause to current state',
+  notes: null
+};
 
 describe('UMG Studio core engine', () => {
   it('normalizes inconsistent imported block JSON into v0.1 MOLT blocks', () => {
@@ -592,6 +625,62 @@ describe('UMG Studio core engine', () => {
     expect(auditShelf?.items).toHaveLength(2);
     expect(searchShelfAssets(auditShelf!.items, { query: 'skipped' })).toHaveLength(1);
     expect(searchShelfAssets(auditShelf!.items, { query: '', tags: [] })).toHaveLength(2);
+  });
+
+  it('imports AI instruction JSON library entries into runnable MOLT instruction blocks with stable source metadata', () => {
+    const parsed = normalizeAIInstructionEntry(instructionEntry001);
+
+    expect(stableAIInstructionId(instructionEntry001)).toBe('inst_001');
+    expect(parsed).toMatchObject({ id: 'inst_001', type: 'molt_block', role: 'instruction', status: 'runnable', presentationStatus: 'runnable', sourcePath: 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json#INST.001', sourceLayer: 'AI' });
+    expect(parsed.title).toBe('Break into components');
+    expect(parsed.description).toBe('Break into components');
+    expect(parsed.action).toBe('Decompose complex system or concept into constituent parts');
+    expect(parsed.expectedOutput).toBe('List of distinct components with relationships identified');
+    expect(parsed.content).toContain('Action: Decompose complex system or concept into constituent parts');
+    expect(parsed.content).toContain('Expected Output: List of distinct components with relationships identified');
+    expect(parsed.tags).toEqual(expect.arrayContaining(['instruction', 'molt', 'ai', 'source-ai', 'analytical-actions']));
+    expect(parsed.legacy?.parentSourcePath).toBe('AI/MOLT-BLOCKS/instructions/library.v1.0.0.json');
+    expect(parsed.legacy?.libraryEntryId).toBe('INST.001');
+    expect(parsed.legacy?.original).toBe(instructionEntry001);
+  });
+
+  it('surfaces imported AI JSON instructions in Instruction shelves, tag search, and source audit without blind composer activation', () => {
+    const inst001 = normalizeAIInstructionEntry(instructionEntry001);
+    const inst003 = normalizeAIInstructionEntry(instructionEntry003);
+    const manyAIInstructions = Array.from({ length: 20 }, (_, index) => ({ ...structuredClone(inst001), id: `inst_${String(index + 1).padStart(3, '0')}_sample`, title: `Sample AI Instruction ${index + 1}`, tags: ['instruction', 'molt', 'ai', 'source-ai', `sample-${index + 1}`] }));
+    const blocks = [...normalizeImportedBlocks(rawBlocks), inst001, inst003, ...manyAIInstructions];
+    const sections = sectionLibraryByDisplayType(blocks);
+    const shelves = buildAssetShelves({ blocks, neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: [
+      { id: 'src_inst001', title: inst001.title, detectedType: 'molt_block', normalizedRole: 'instruction', outcome: 'runnable_molt', tags: inst001.tags, sourcePath: inst001.sourcePath!, legacySource: inst001.legacy?.original },
+      { id: 'src_inst003', title: inst003.title, detectedType: 'molt_block', normalizedRole: 'instruction', outcome: 'runnable_molt', tags: inst003.tags, sourcePath: inst003.sourcePath!, legacySource: inst003.legacy?.original }
+    ] });
+
+    expect(sections.find((section) => section.type === 'instruction')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['inst_001', 'inst_003']));
+    expect(searchShelfAssets(shelves[0].items, { query: 'break components' }).map((item) => item.id)).toContain('inst_001');
+    expect(searchShelfAssets(shelves[0].items, { query: 'trace causality' }).map((item) => item.id)).toContain('inst_003');
+    expect(searchShelfAssets(shelves[0].items, { tags: ['instruction'] }).length).toBeGreaterThanOrEqual(2);
+    expect(searchShelfAssets(shelves[4].items, { query: 'INST.001' })).toHaveLength(1);
+
+    const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
+    const selectedAIInstructions = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('inst_'));
+    expect(selectedAIInstructions.length).toBeLessThan(manyAIInstructions.length + 2);
+    expect(composed.selected_nodes.length).toBeLessThan(blocks.length);
+  });
+
+  it('keeps imported AI JSON instructions compatible with real compile and graph/IR agreement while Meta stays non-compiler', () => {
+    const inst001 = normalizeAIInstructionEntry(instructionEntry001);
+    const meta = normalizeImportedBlocks([{ id: 'future_need', role: 'Need', title: 'Future Need', content: 'Do not compile.', tags: ['future'] }], 'HUMAN/MOLT-BLOCKS/need/future.md')[0];
+    const blocks = [...normalizeImportedBlocks(rawBlocks), inst001, meta];
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing break components', depth: 'balanced' }, blocks).draft_sleeve;
+    sleeve.stacks[0].neoblocks[0].blocks.push(meta);
+    const workspace = { id: 'ws_ai_instruction', title: 'AI Instruction Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'break', 'components'] });
+    const graph = applyCompileResultToGraph(workspace.graph, compiled);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_need') && row.active)).toBe(false);
+    for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
   });
 
   it('exports a Hermes packet without leaking API secrets', () => {

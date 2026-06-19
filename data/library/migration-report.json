@@ -223,12 +223,12 @@
     "sleeves_json": 2,
     "HUMAN_md": 1988
   },
-  "totalSourceAssetsScanned": 198,
-  "totalMoltBlocksImported": 38,
+  "totalSourceAssetsScanned": 498,
+  "totalMoltBlocksImported": 332,
   "totalNeoBlocksImported": 2,
   "totalNeoStacksImported": 2,
   "totalSleevesImported": 2,
-  "totalMetaUnmappedPreserved": 38,
+  "totalMetaUnmappedPreserved": 332,
   "skippedAssets": [
     {
       "sourcePath": "AI/EXAMPLES/dashboard/audit-export-variants.example.json",
@@ -1057,78 +1057,6 @@
     {
       "id": "blk_instruction_block_1_1",
       "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/approval-expired-executable-violation.json",
-      "warning": "role inferred"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/approval-expired-executable-violation.json",
-      "warning": "tags defaulted"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/blocked-reason-missing.json",
-      "warning": "role inferred"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/blocked-reason-missing.json",
-      "warning": "tags defaulted"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/provider-binding-contradiction.json",
-      "warning": "role inferred"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/provider-binding-contradiction.json",
-      "warning": "tags defaulted"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/readiness-executable-state-mismatch.json",
-      "warning": "role inferred"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/readiness-executable-state-mismatch.json",
-      "warning": "tags defaulted"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/rollback-invalid-executable-violation.json",
-      "warning": "role inferred"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/rollback-invalid-executable-violation.json",
-      "warning": "tags defaulted"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/trust-terminal-violation.json",
-      "warning": "role inferred"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
-      "sourcePath": "AI/EXAMPLES/runtime-preview/consistency-failures/trust-terminal-violation.json",
-      "warning": "tags defaulted"
-    },
-    {
-      "id": "blk_instruction_block_1_1",
-      "title": "instruction block 1",
       "sourcePath": "AI/EXAMPLES/runtime-preview/fixture-bundle-manifest.example.json",
       "warning": "role inferred"
     },
@@ -1392,18 +1320,18 @@
     }
   ],
   "shelfCounts": {
-    "moltBlocks": 38,
+    "moltBlocks": 332,
     "neoBlocks": 2,
     "neoStacks": 2,
     "sleeves": 2
   },
   "sourceAssetSummary": {
-    "totalScanned": 198,
-    "accountedTotal": 198,
+    "totalScanned": 498,
+    "accountedTotal": 498,
     "unaccountedCount": 0,
     "outcomeCounts": {
-      "runnable_molt": 8,
-      "meta": 158,
+      "runnable_molt": 302,
+      "meta": 164,
       "neoblock": 0,
       "neostack": 0,
       "sleeve": 2,
@@ -1414,7 +1342,7 @@
       "warning": 0
     },
     "reasonSummary": {
-      "no runnable block fields detected": 158,
+      "no runnable block fields detected": 164,
       "unsupported role aim preserved in legacy only": 3,
       "unsupported role need preserved in legacy only": 3,
       "unsupported role use preserved in legacy only": 3,
@@ -1422,8 +1350,8 @@
     }
   },
   "outcomeCounts": {
-    "runnable_molt": 8,
-    "meta": 158,
+    "runnable_molt": 302,
+    "meta": 164,
     "neoblock": 0,
     "neostack": 0,
     "sleeve": 2,
@@ -1433,13 +1361,26 @@
     "reference_only": 21,
     "warning": 0
   },
-  "visibleOrAccountedAssets": 198,
+  "visibleOrAccountedAssets": 498,
   "unaccountedCount": 0,
   "reasonSummary": {
-    "no runnable block fields detected": 158,
+    "no runnable block fields detected": 164,
     "unsupported role aim preserved in legacy only": 3,
     "unsupported role need preserved in legacy only": 3,
     "unsupported role use preserved in legacy only": 3,
     "reference-only / non-runtime source": 21
+  },
+  "aiInstructionImport": {
+    "sourcePath": "/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/instructions/library.v1.0.0.json",
+    "sourceAssetPath": "AI/MOLT-BLOCKS/instructions/library.v1.0.0.json",
+    "authoritativeSource": true,
+    "sourceFormat": "json",
+    "libraryName": "MOLT INSTRUCTION Library",
+    "declaredEntryCount": 300,
+    "entriesScanned": 300,
+    "instructionBlocksImported": 300,
+    "skippedHumanMarkdown": true,
+    "warningBearingImports": 0,
+    "parseWarnings": []
   }
 }

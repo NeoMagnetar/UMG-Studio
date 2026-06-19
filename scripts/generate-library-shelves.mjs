@@ -2,14 +2,70 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
+const aiInstructionLibraryPath = '/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/instructions/library.v1.0.0.json';
+const aiInstructionLibrarySourcePath = 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json';
 const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'));
 const writeJson = (rel, data) => fs.writeFileSync(path.join(root, rel), `${JSON.stringify(data, null, 2)}\n`);
 const uniqBy = (items, keyFn) => [...new Map(items.map((item) => [keyFn(item), item])).values()];
+const stableAIInstructionId = (entry) => String(entry.id ?? '').trim().toLowerCase().replace(/^inst\.(\d{3})$/, 'inst_$1').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+const cleanTags = (tags) => Array.isArray(tags) ? [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : [];
+const contentSummary = (content) => typeof content === 'string' ? content.trim() : content?.summary?.trim() || '';
+const contentDetails = (content) => !content || typeof content === 'string' ? '' : content.details?.trim() || '';
+const instructionEntrySourcePath = (entry) => `${aiInstructionLibrarySourcePath}#${entry.id}`;
+const normalizeAIInstructionEntry = (entry) => {
+  const summary = contentSummary(entry.content);
+  const details = contentDetails(entry.content);
+  const action = entry.action?.trim() || '';
+  const expectedOutput = entry.expected_output?.trim() || '';
+  const contentParts = [
+    action && `Action: ${action}`,
+    expectedOutput && `Expected Output: ${expectedOutput}`,
+    details && `Details: ${details}`,
+    !action && !expectedOutput && summary && `Summary: ${summary}`
+  ].filter(Boolean);
+  const sourcePath = instructionEntrySourcePath(entry);
+  return {
+    id: stableAIInstructionId(entry),
+    title: entry.name?.trim() || entry.id,
+    type: 'molt_block',
+    role: 'instruction',
+    displayType: 'instruction',
+    content: contentParts.join('\n'),
+    description: summary || details || undefined,
+    category: entry.category || 'general',
+    tags: [...new Set(['instruction', 'molt', 'ai', 'source-ai', ...cleanTags(entry.tags)])],
+    priorityOrder: 20,
+    defaultState: 'on',
+    visibility: 'visible',
+    activation: { mode: 'always' },
+    action: action || undefined,
+    expectedOutput: expectedOutput || undefined,
+    sourcePath,
+    sourceLayer: 'AI',
+    status: 'runnable',
+    presentationStatus: 'runnable',
+    source: { origin: 'imported', sourceId: sourcePath, version: entry.version || '1.0.0' },
+    legacy: {
+      sourceRepo: 'UMG-Block-Library',
+      sourcePath,
+      parentSourcePath: aiInstructionLibrarySourcePath,
+      libraryEntryId: entry.id,
+      original: entry
+    }
+  };
+};
 
 const importedAssets = readJson('data/imports/umg-block-library/imported-assets.json');
-const blocks = readJson('data/library/normalized-blocks.json');
+const baseBlocks = readJson('data/library/normalized-blocks.json').filter((block) => block.sourceLayer !== 'HUMAN' && !String(block.legacy?.sourcePath ?? '').startsWith('HUMAN/MOLT-BLOCKS/instructions/') && String(block.legacy?.parentSourcePath ?? '') !== aiInstructionLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiInstructionLibrarySourcePath}#`));
 const normalizedSleeves = readJson('data/library/normalized-sleeves.json');
-const existingReport = readJson('data/library/migration-report.json');
+const existingReportRaw = readJson('data/library/migration-report.json');
+const { humanInstructionImport: _discardedHumanInstructionImport, ...existingReport } = existingReportRaw;
+const aiInstructionLibrary = JSON.parse(fs.readFileSync(aiInstructionLibraryPath, 'utf8'));
+const aiInstructionEntries = aiInstructionLibrary.entries ?? [];
+const aiInstructionBlocks = aiInstructionEntries.map((entry) => normalizeAIInstructionEntry(entry));
+const blocks = uniqBy([...baseBlocks, ...aiInstructionBlocks], (block) => block.id);
+const aiInstructionSourceAssets = aiInstructionEntries.map((entry) => ({ lane: 'AI', sourcePath: instructionEntrySourcePath(entry), data: entry }));
+const allSourceAssets = uniqBy([...importedAssets, ...aiInstructionSourceAssets], (asset) => asset.sourcePath);
 
 const neostacks = uniqBy(normalizedSleeves.flatMap((sleeve) => (sleeve.stacks ?? []).map((stack) => ({
   ...stack,
@@ -21,18 +77,18 @@ const neoblocks = uniqBy(neostacks.flatMap((stack) => (stack.neoblocks ?? []).ma
   legacy: { sourceRepo: 'UMG-Block-Library', sourcePath: `${stack.legacy?.sourcePath ?? stack.id}#${neoblock.id}`, original: neoblock }
 }))), (neoblock) => neoblock.id);
 
-const statusOf = (block) => block.presentationStatus ?? 'unknown';
+const statusOf = (block) => block.presentationStatus ?? block.status ?? 'unknown';
 const metaBlocks = blocks;
 const skippedAssets = (existingReport.warnings ?? []).map((warning) => {
   const [sourcePath, ...reasonParts] = String(warning).split(': ');
   return { sourcePath, reason: reasonParts.join(': ') || 'warning' };
 });
-const scannedPaths = new Set(importedAssets.map((asset) => asset.sourcePath));
+const scannedPaths = new Set(allSourceAssets.map((asset) => asset.sourcePath));
 const skippedByPath = new Map(skippedAssets.filter((asset) => scannedPaths.has(asset.sourcePath)).map((asset) => [asset.sourcePath, asset.reason]));
 const duplicateAssets = [];
 const duplicateByPath = new Map(duplicateAssets.map((asset) => [asset.sourcePath, asset.reason]));
 const unsupportedFromWarnings = (warnings = []) => warnings.map((warning) => /unsupported role preserved: ([a-z0-9_-]+)/i.exec(String(warning))?.[1]).find(Boolean);
-const titleFromPath = (sourcePath) => (sourcePath.split('/').pop() ?? sourcePath).replace(/\.json$/i, '').replace(/[-_]+/g, ' ');
+const titleFromPath = (sourcePath) => (sourcePath.split('/').pop() ?? sourcePath).replace(/\.json$/i, '').replace(/\.md$/i, '').replace(/[-_]+/g, ' ');
 const sourcePathOf = (asset) => asset?.legacy?.sourcePath ?? asset?.sourcePath;
 const firstBySourcePath = (items) => new Map(items.map((item) => [sourcePathOf(item), item]).filter(([sourcePath]) => Boolean(sourcePath)));
 const blockBySourcePath = firstBySourcePath(blocks);
@@ -42,7 +98,7 @@ const sleeveBySourcePath = firstBySourcePath(normalizedSleeves);
 const emptyOutcomeCounts = () => ({ runnable_molt: 0, meta: 0, neoblock: 0, neostack: 0, sleeve: 0, skipped: 0, duplicate: 0, unsupported: 0, reference_only: 0, warning: 0 });
 const outcomeCounts = emptyOutcomeCounts();
 const reasonSummary = {};
-const sourceAudit = importedAssets.map((source, index) => {
+const sourceAudit = allSourceAssets.map((source, index) => {
   const sourcePath = source.sourcePath;
   const block = blockBySourcePath.get(sourcePath);
   const neoblock = neoblockBySourcePath.get(sourcePath);
@@ -77,20 +133,23 @@ const sourceAudit = importedAssets.map((source, index) => {
     title = sleeve.title; detectedType = 'sleeve'; tags = sleeve.tags ?? []; outcome = 'sleeve';
   } else if (!duplicateReason && source.lane === 'sleeves' && !skippedReason) {
     detectedType = 'sleeve'; outcome = 'sleeve';
+  } else if (!duplicateReason && !skippedReason) {
+    outcome = 'meta'; reason = 'no runnable block fields detected';
   }
   outcomeCounts[outcome] += 1;
   if (reason) reasonSummary[reason] = (reasonSummary[reason] ?? 0) + 1;
   return { id: `src_${index}_${sourcePath.replace(/[^a-z0-9]+/gi, '_')}`, title, detectedType, normalizedRole, outcome, tags, sourcePath, reason, legacySource: source.data };
 });
 const accountedTotal = Object.values(outcomeCounts).reduce((sum, count) => sum + count, 0);
-const sourceAssetSummary = { totalScanned: importedAssets.length, accountedTotal, unaccountedCount: importedAssets.length - accountedTotal, outcomeCounts, reasonSummary };
+const sourceAssetSummary = { totalScanned: allSourceAssets.length, accountedTotal, unaccountedCount: allSourceAssets.length - accountedTotal, outcomeCounts, reasonSummary };
 const missingFieldsDetected = blocks.flatMap((block) => (block.legacy?.migrationWarnings ?? [])
-  .filter((warning) => /defaulted|inferred|missing|no runnable/i.test(warning))
+  .filter((warning) => /defaulted|inferred|missing|no runnable|weak content|fallback paragraph/i.test(warning))
   .map((warning) => ({ id: block.id, title: block.title, sourcePath: block.legacy?.sourcePath, warning })));
+const warningBearingAIInstructions = aiInstructionBlocks.filter((block) => block.presentationStatus === 'warning-bearing');
 
 const nextReport = {
   ...existingReport,
-  totalSourceAssetsScanned: importedAssets.length,
+  totalSourceAssetsScanned: allSourceAssets.length,
   totalMoltBlocksImported: blocks.length,
   totalNeoBlocksImported: neoblocks.length,
   totalNeoStacksImported: neostacks.length,
@@ -105,6 +164,19 @@ const nextReport = {
   reasonSummary,
   unsupportedRolesPreserved: existingReport.unsupportedRoles ?? [],
   missingFieldsDetected,
+  aiInstructionImport: {
+    sourcePath: aiInstructionLibraryPath,
+    sourceAssetPath: aiInstructionLibrarySourcePath,
+    authoritativeSource: true,
+    sourceFormat: 'json',
+    libraryName: aiInstructionLibrary.library?.name,
+    declaredEntryCount: aiInstructionLibrary.library?.entry_count,
+    entriesScanned: aiInstructionEntries.length,
+    instructionBlocksImported: aiInstructionBlocks.length,
+    skippedHumanMarkdown: true,
+    warningBearingImports: warningBearingAIInstructions.length,
+    parseWarnings: warningBearingAIInstructions.map((block) => ({ id: block.id, sourcePath: block.sourcePath, warnings: block.legacy?.parseWarnings ?? [] }))
+  },
   shelfCounts: {
     moltBlocks: blocks.length,
     neoBlocks: neoblocks.length,
@@ -113,9 +185,10 @@ const nextReport = {
   }
 };
 
+writeJson('data/library/normalized-blocks.json', blocks);
 writeJson('data/library/neoblocks.json', neoblocks);
 writeJson('data/library/neostacks.json', neostacks);
 writeJson('data/library/sleeves.json', normalizedSleeves);
 writeJson('data/library/source-assets.json', sourceAudit);
 writeJson('data/library/migration-report.json', nextReport);
-console.log(JSON.stringify({ ...nextReport.shelfCounts, sourceAudit: sourceAudit.length, unaccountedCount: sourceAssetSummary.unaccountedCount }));
+console.log(JSON.stringify({ ...nextReport.shelfCounts, sourceAudit: sourceAudit.length, unaccountedCount: sourceAssetSummary.unaccountedCount, aiInstructionsImported: aiInstructionBlocks.length, aiInstructionWarnings: warningBearingAIInstructions.length }));
