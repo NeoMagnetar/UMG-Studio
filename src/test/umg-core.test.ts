@@ -13,6 +13,7 @@ import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubject
 import { normalizeAIPrimaryEntry, stableAIPrimaryId } from '../lib/umg/aiPrimaryImport';
 import { normalizeAIDirectiveEntry, stableAIDirectiveId } from '../lib/umg/aiDirectiveImport';
 import { normalizeAIPhilosophyEntry, stableAIPhilosophyId } from '../lib/umg/aiPhilosophyImport';
+import { normalizeAIBlueprintEntry, stableAIBlueprintId } from '../lib/umg/aiBlueprintImport';
 import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
 
 const rawBlocks = [
@@ -189,6 +190,40 @@ const philosophyEntry010 = {
   content: { summary: 'Pragmatic service clarity', details: 'Value customer understanding over abstract completeness.', structure: null },
   action: 'Use practical customer clarity as a philosophy layer',
   expected_output: 'A customer-centered philosophy anchor',
+  notes: null
+};
+
+const blueprintEntry001 = {
+  id: 'BP.001',
+  type: 'BLUEPRINT',
+  name: 'Python',
+  category: 'programming_languages',
+  subcategory: 'python',
+  domain: 'PROGRAMMING_LANGUAGES',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['blueprint', 'programming-languages', 'python'],
+  source: { library_name: 'MOLT BLUEPRINT Library', library_version: '1.0.0' },
+  structure: 'Indentation-based blocks; dynamic typing; object-oriented and functional; extensive standard library; PEP 8 style guide',
+  conventions: 'snake_case for variables/functions; CamelCase for classes; 4-space indentation; docstrings for documentation; list comprehensions',
+  output_characteristics: 'Readable, explicit, minimal syntax; whitespace significant; batteries included philosophy',
+  notes: null
+};
+
+const blueprintEntry010 = {
+  id: 'BP.010',
+  type: 'BLUEPRINT',
+  name: 'Mobile Detailing Intake Summary',
+  category: 'customer_support',
+  subcategory: 'mobile_detailing_summary',
+  domain: 'CUSTOMER_SUPPORT',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['blueprint', 'customer-support', 'mobile-detailing', 'summary'],
+  source: { library_name: 'MOLT BLUEPRINT Library', library_version: '1.0.0' },
+  content: { summary: 'Mobile Detailing Intake Summary', details: 'Structure the output as customer details, vehicle, service need, budget, and lead summary.', structure: null },
+  action: 'Shape the customer intake result into a structured lead summary',
+  expected_output: 'A clean mobile detailing lead summary blueprint',
   notes: null
 };
 
@@ -1077,6 +1112,67 @@ describe('UMG Studio core engine', () => {
 
     expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
     expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_need') && row.active)).toBe(false);
+    for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+  });
+
+  it('imports AI blueprint JSON library entries into runnable MOLT blueprint blocks with stable source metadata', () => {
+    const parsed = normalizeAIBlueprintEntry(blueprintEntry001);
+
+    expect(stableAIBlueprintId(blueprintEntry001)).toBe('bp_001');
+    expect(parsed).toMatchObject({ id: 'bp_001', type: 'molt_block', role: 'blueprint', displayType: 'blueprint', status: 'runnable', presentationStatus: 'runnable', sourcePath: 'AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json#BP.001', sourceLayer: 'AI' });
+    expect(parsed.title).toBe('Python');
+    expect(parsed.description).toContain('Indentation-based blocks');
+    expect(parsed.content).toContain('Blueprint: Indentation-based blocks');
+    expect(parsed.content).toContain('Conventions: snake_case');
+    expect(parsed.content).toContain('Output Characteristics: Readable, explicit');
+    expect(parsed.tags).toEqual(expect.arrayContaining(['blueprint', 'molt', 'ai', 'source-ai', 'programming-languages', 'python']));
+    expect(parsed.hierarchy).toEqual({ orderIndex: 60, orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' });
+    expect(parsed.legacy?.parentSourcePath).toBe('AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json');
+    expect(parsed.legacy?.libraryEntryId).toBe('BP.001');
+    expect(parsed.legacy?.original).toBe(blueprintEntry001);
+  });
+
+  it('surfaces imported AI JSON blueprint blocks in Blueprint shelves, tag search, source audit, and inspector views without blind composer activation', () => {
+    const bp001 = normalizeAIBlueprintEntry(blueprintEntry001);
+    const bp010 = normalizeAIBlueprintEntry(blueprintEntry010);
+    const manyAIBlueprints = Array.from({ length: 20 }, (_, index) => ({ ...structuredClone(bp001), id: `bp_${String(index + 1).padStart(3, '0')}_sample`, title: `Sample AI Blueprint ${index + 1}`, tags: ['blueprint', 'molt', 'ai', 'source-ai', `blueprint-sample-${index + 1}`] }));
+    const blocks = [...normalizeImportedBlocks(rawBlocks), bp001, bp010, ...manyAIBlueprints];
+    const sections = sectionLibraryByDisplayType(blocks);
+    const shelves = buildAssetShelves({ blocks, neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: [
+      { id: 'src_bp001', title: bp001.title, detectedType: 'molt_block', normalizedRole: 'blueprint', outcome: 'runnable_molt', tags: bp001.tags, sourcePath: bp001.sourcePath!, legacySource: bp001.legacy?.original },
+      { id: 'src_bp010', title: bp010.title, detectedType: 'molt_block', normalizedRole: 'blueprint', outcome: 'runnable_molt', tags: bp010.tags, sourcePath: bp010.sourcePath!, legacySource: bp010.legacy?.original }
+    ] });
+    const views = buildBlockInspectorViews(bp001);
+
+    expect(sections.find((section) => section.type === 'blueprint')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['bp_001', 'bp_010']));
+    expect(searchShelfAssets(shelves[0].items, { query: 'python' }).map((item) => item.id)).toContain('bp_001');
+    expect(searchShelfAssets(shelves[0].items, { tags: ['mobile-detailing'] }).map((item) => item.id)).toContain('bp_010');
+    expect(searchShelfAssets(shelves[4].items, { query: 'BP.001' })).toHaveLength(1);
+    expect(views.card.type).toBe('SearchCard');
+    expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'blueprint', compiler: { source: 'compiler_aligned_json', moltType: 'blueprint' } });
+    expect(views.nl).toContain('role: Blueprint');
+    expect(views.compilerJson).toEqual(views.runtime);
+    expect(views.legacySource.legacyOriginal).toMatchObject({ id: 'BP.001', type: 'BLUEPRINT' });
+
+    const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
+    const selectedAIBlueprints = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('bp_'));
+    expect(selectedAIBlueprints.length).toBeLessThan(manyAIBlueprints.length + 2);
+    expect(composed.selected_nodes.length).toBeLessThan(blocks.length);
+  });
+
+  it('keeps imported AI JSON blueprint blocks compatible with real compile and graph/IR agreement while Meta stays non-compiler', () => {
+    const bp010 = normalizeAIBlueprintEntry(blueprintEntry010);
+    const meta = normalizeImportedBlocks([{ id: 'future_use', role: 'Use', title: 'Future Use', content: 'Do not compile.', tags: ['future'] }], 'HUMAN/MOLT-BLOCKS/use/future.md')[0];
+    const blocks = [...normalizeImportedBlocks(rawBlocks), bp010, meta];
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing lead summary', depth: 'balanced' }, blocks).draft_sleeve;
+    sleeve.stacks[0].neoblocks[0].blocks.push(meta);
+    const workspace = { id: 'ws_ai_blueprint', title: 'AI Blueprint Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'summary'] });
+    const graph = applyCompileResultToGraph(workspace.graph, compiled);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_use') && row.active)).toBe(false);
     for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
   });
 
