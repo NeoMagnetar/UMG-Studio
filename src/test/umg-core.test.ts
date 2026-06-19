@@ -11,6 +11,7 @@ import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/aiInstructionImport';
 import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubjectImport';
 import { normalizeAIPrimaryEntry, stableAIPrimaryId } from '../lib/umg/aiPrimaryImport';
+import { normalizeAIDirectiveEntry, stableAIDirectiveId } from '../lib/umg/aiDirectiveImport';
 import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
 
 const rawBlocks = [
@@ -119,6 +120,40 @@ const primaryEntry010 = {
   content: { summary: 'Customer satisfaction', details: 'Prioritize useful outcomes for service customers.', structure: null },
   action: 'Optimize for a satisfied customer outcome',
   expected_output: 'A customer-centered success criterion',
+  notes: null
+};
+
+const directiveEntry001 = {
+  id: 'DIR.001',
+  type: 'DIRECTIVE',
+  name: 'Assess accurately',
+  category: 'general',
+  subcategory: 'analytical_directives',
+  scope: 'Prioritize accurate assessment over speed or agreeability',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['directive', 'analytical-directives'],
+  source: { library_name: 'MOLT DIRECTIVE Library', library_version: '1.0.0' },
+  content: { summary: 'Assess accurately', details: null, structure: null },
+  constraints: ['All analysis must favor truth over convenience'],
+  notes: null
+};
+
+const directiveEntry010 = {
+  id: 'DIR.010',
+  type: 'DIRECTIVE',
+  name: 'Maintain customer clarity',
+  category: 'customer_support',
+  subcategory: 'service_clarity',
+  scope: 'Keep mobile detailing customer intake clear and actionable',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['directive', 'customer-support', 'mobile-detailing'],
+  source: { library_name: 'MOLT DIRECTIVE Library', library_version: '1.0.0' },
+  content: { summary: 'Maintain customer clarity', details: 'Ask concise service questions and avoid vague commitments.', structure: null },
+  action: 'Keep the customer interaction clear and actionable',
+  expected_output: 'Clear customer-facing directive for the intake flow',
+  constraints: ['Avoid vague commitments'],
   notes: null
 };
 
@@ -880,6 +915,67 @@ describe('UMG Studio core engine', () => {
     sleeve.stacks[0].neoblocks[0].blocks.push(meta);
     const workspace = { id: 'ws_ai_primary', title: 'AI Primary Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
     const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'satisfaction'] });
+    const graph = applyCompileResultToGraph(workspace.graph, compiled);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_need') && row.active)).toBe(false);
+    for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+  });
+
+  it('imports AI directive JSON library entries into runnable MOLT directive blocks with stable source metadata', () => {
+    const parsed = normalizeAIDirectiveEntry(directiveEntry001);
+
+    expect(stableAIDirectiveId(directiveEntry001)).toBe('dir_001');
+    expect(parsed).toMatchObject({ id: 'dir_001', type: 'molt_block', role: 'directive', displayType: 'directive', status: 'runnable', presentationStatus: 'runnable', sourcePath: 'AI/MOLT-BLOCKS/directives/library.v1.0.0.json#DIR.001', sourceLayer: 'AI' });
+    expect(parsed.title).toBe('Assess accurately');
+    expect(parsed.description).toBe('Assess accurately');
+    expect(parsed.content).toContain('Directive: Assess accurately');
+    expect(parsed.content).toContain('Scope: Prioritize accurate assessment over speed or agreeability');
+    expect(parsed.content).toContain('Constraints: All analysis must favor truth over convenience');
+    expect(parsed.tags).toEqual(expect.arrayContaining(['directive', 'molt', 'ai', 'source-ai', 'analytical-directives']));
+    expect(parsed.hierarchy).toEqual({ orderIndex: 10, orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' });
+    expect(parsed.legacy?.parentSourcePath).toBe('AI/MOLT-BLOCKS/directives/library.v1.0.0.json');
+    expect(parsed.legacy?.libraryEntryId).toBe('DIR.001');
+    expect(parsed.legacy?.original).toBe(directiveEntry001);
+  });
+
+  it('surfaces imported AI JSON directive blocks in Directive shelves, tag search, source audit, and inspector views without blind composer activation', () => {
+    const dir001 = normalizeAIDirectiveEntry(directiveEntry001);
+    const dir010 = normalizeAIDirectiveEntry(directiveEntry010);
+    const manyAIDirectives = Array.from({ length: 20 }, (_, index) => ({ ...structuredClone(dir001), id: `dir_${String(index + 1).padStart(3, '0')}_sample`, title: `Sample AI Directive ${index + 1}`, tags: ['directive', 'molt', 'ai', 'source-ai', `directive-sample-${index + 1}`] }));
+    const blocks = [...normalizeImportedBlocks(rawBlocks), dir001, dir010, ...manyAIDirectives];
+    const sections = sectionLibraryByDisplayType(blocks);
+    const shelves = buildAssetShelves({ blocks, neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: [
+      { id: 'src_dir001', title: dir001.title, detectedType: 'molt_block', normalizedRole: 'directive', outcome: 'runnable_molt', tags: dir001.tags, sourcePath: dir001.sourcePath!, legacySource: dir001.legacy?.original },
+      { id: 'src_dir010', title: dir010.title, detectedType: 'molt_block', normalizedRole: 'directive', outcome: 'runnable_molt', tags: dir010.tags, sourcePath: dir010.sourcePath!, legacySource: dir010.legacy?.original }
+    ] });
+    const views = buildBlockInspectorViews(dir001);
+
+    expect(sections.find((section) => section.type === 'directive')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['dir_001', 'dir_010']));
+    expect(searchShelfAssets(shelves[0].items, { query: 'assess accurately' }).map((item) => item.id)).toContain('dir_001');
+    expect(searchShelfAssets(shelves[0].items, { tags: ['mobile-detailing'] }).map((item) => item.id)).toContain('dir_010');
+    expect(searchShelfAssets(shelves[4].items, { query: 'DIR.001' })).toHaveLength(1);
+    expect(views.card.type).toBe('SearchCard');
+    expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'directive', compiler: { source: 'compiler_aligned_json', moltType: 'directive' } });
+    expect(views.nl).toContain('role: Directive');
+    expect(views.compilerJson).toEqual(views.runtime);
+    expect(views.legacySource.legacyOriginal).toMatchObject({ id: 'DIR.001', type: 'DIRECTIVE' });
+
+    const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
+    const selectedAIDirectives = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('dir_'));
+    expect(selectedAIDirectives.length).toBeLessThan(manyAIDirectives.length + 2);
+    expect(composed.selected_nodes.length).toBeLessThan(blocks.length);
+  });
+
+  it('keeps imported AI JSON directive blocks compatible with real compile and graph/IR agreement while Meta stays non-compiler', () => {
+    const dir010 = normalizeAIDirectiveEntry(directiveEntry010);
+    const meta = normalizeImportedBlocks([{ id: 'future_need', role: 'Need', title: 'Future Need', content: 'Do not compile.', tags: ['future'] }], 'HUMAN/MOLT-BLOCKS/need/future.md')[0];
+    const blocks = [...normalizeImportedBlocks(rawBlocks), dir010, meta];
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing customer clarity', depth: 'balanced' }, blocks).draft_sleeve;
+    sleeve.stacks[0].neoblocks[0].blocks.push(meta);
+    const workspace = { id: 'ws_ai_directive', title: 'AI Directive Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'clarity'] });
     const graph = applyCompileResultToGraph(workspace.graph, compiled);
     const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
 
