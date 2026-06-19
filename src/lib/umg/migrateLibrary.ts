@@ -1,6 +1,7 @@
-import { LibraryAssetStatus, MOLTRole, Sleeve, UMGBlock } from './types';
+import { LibraryAssetStatus, MOLTDisplayType, MOLTRole, Sleeve, UMGBlock } from './types';
 
-const roles: MOLTRole[] = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+export const roles: MOLTRole[] = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+export const displayTypeOrder: Array<'all' | MOLTDisplayType> = ['all', ...roles, 'meta'];
 const unsupportedRoleNames = ['aim', 'use', 'need'];
 export const rolePriority: Record<MOLTRole, number> = { trigger: 0, directive: 10, instruction: 20, subject: 30, primary: 40, philosophy: 50, blueprint: 60 };
 
@@ -37,6 +38,7 @@ export function normalizeRole(value: unknown): MOLTRole {
 }
 
 export function getLibraryAssetStatus(block: UMGBlock): LibraryAssetStatus {
+  if (block.presentationStatus === 'meta') return 'meta';
   const warnings = block.legacy?.migrationWarnings ?? [];
   const sourcePath = block.legacy?.sourcePath ?? '';
   const unsupported = detectUnsupportedRole(block.role) ?? detectUnsupportedRole(sourcePath) ?? warnings.map(detectUnsupportedRole).find(Boolean);
@@ -46,8 +48,46 @@ export function getLibraryAssetStatus(block: UMGBlock): LibraryAssetStatus {
   return 'runnable';
 }
 
+export type LibraryDisplayClassification = {
+  displayType: MOLTDisplayType;
+  status: LibraryAssetStatus;
+  compilerActive: boolean;
+  badge: string;
+};
+
+export function classifyLibraryDisplay(block: UMGBlock): LibraryDisplayClassification {
+  const warnings = block.legacy?.migrationWarnings ?? [];
+  const sourcePath = block.legacy?.sourcePath ?? '';
+  const status = getLibraryAssetStatus(block);
+  const unsupported = detectUnsupportedRole(sourcePath) ?? warnings.map(detectUnsupportedRole).find(Boolean);
+  const roleWasInferred = warnings.some((warning) => /role inferred|unknown role|meta \/ non-compiler/i.test(warning));
+  const referenceOnly = status === 'reference-only';
+  const explicitMeta = block.presentationStatus === 'meta' || block.displayType === 'meta';
+  const isMeta = explicitMeta || Boolean(unsupported) || roleWasInferred || referenceOnly;
+  const displayType = isMeta ? 'meta' : block.role;
+  return {
+    displayType,
+    status: explicitMeta ? 'meta' : status,
+    compilerActive: !isMeta && (status === 'runnable' || status === 'warning-bearing'),
+    badge: isMeta ? 'Meta / non-compiler' : status
+  };
+}
+
+export function isCompilerMoltBlock(block: UMGBlock): boolean {
+  return classifyLibraryDisplay(block).compilerActive;
+}
+
+export function sectionLibraryByDisplayType(blocks: UMGBlock[]) {
+  return displayTypeOrder.map((type) => ({
+    type,
+    label: type === 'all' ? 'All' : type === 'meta' ? 'Meta' : type[0].toUpperCase() + type.slice(1),
+    blocks: type === 'all' ? blocks : blocks.filter((block) => classifyLibraryDisplay(block).displayType === type)
+  }));
+}
+
 function withPresentationStatus(block: UMGBlock): UMGBlock {
-  return { ...block, presentationStatus: getLibraryAssetStatus(block) };
+  const classification = classifyLibraryDisplay(block);
+  return { ...block, displayType: classification.displayType, presentationStatus: classification.status };
 }
 
 function extractBlockCandidates(data: unknown): Record<string, any>[] {
@@ -71,25 +111,30 @@ export function normalizeImportedBlocks(input: unknown[], sourcePath?: string, s
   return input.map((rawValue: any, i) => {
     const raw = asRecord(rawValue);
     const roleInput = raw.role ?? raw.moltType ?? raw.molt_role ?? raw.moltRole ?? raw.block_role ?? raw.type;
-    const role = normalizeRole(roleInput);
+    const cleanRole = detectRole(roleInput);
+    const unsupportedInput = detectUnsupportedRole(roleInput) ?? detectUnsupportedRole(sourcePath) ?? detectUnsupportedRole(raw.title ?? raw.name ?? raw.description);
+    const role = cleanRole ?? 'instruction';
     const title = String(raw.title ?? raw.name ?? raw.label ?? raw.rule_name ?? raw.id ?? raw.rule_id ?? `${role} block ${i + 1}`);
     const tags = asTags(raw.tags ?? raw.keywords ?? raw.categories);
     const warnings: string[] = [];
-    if (!detectRole(roleInput)) warnings.push('role inferred');
+    if (!cleanRole) warnings.push('role inferred');
     if (!raw.tags) warnings.push('tags defaulted');
-    if (detectUnsupportedRole(roleInput)) warnings.push(`unsupported role preserved: ${detectUnsupportedRole(roleInput)}`);
+    if (unsupportedInput) warnings.push(`unsupported role preserved: ${unsupportedInput}`);
+    const meta = !cleanRole || Boolean(unsupportedInput) || !likelyRunnableBlock(raw);
+    if (meta) warnings.push('meta / non-compiler asset');
     return withPresentationStatus({
       id: String(raw.id ?? raw.block_id ?? raw.rule_id ?? `blk_${slug(title)}_${i + 1}`),
       title,
       type: 'molt_block',
       role,
+      displayType: meta ? 'meta' : role,
       content: String(raw.content ?? raw.prompt ?? raw.body ?? raw.description ?? raw.rule_name ?? ''),
       description: raw.description ? String(raw.description) : undefined,
       category: String(raw.category ?? raw.governance_layer ?? raw.type ?? 'uncategorized'),
       tags,
       priorityOrder: Number(raw.priorityOrder ?? raw.priority ?? rolePriority[role]),
-      defaultState: (String(raw.defaultState ?? raw.state ?? 'on').toLowerCase() === 'off' ? 'off' : 'on'),
-      visibility: (['collapsed', 'audit_only'].includes(String(raw.visibility)) ? raw.visibility : 'visible') as UMGBlock['visibility'],
+      defaultState: meta ? 'off' : (String(raw.defaultState ?? raw.state ?? 'on').toLowerCase() === 'off' ? 'off' : 'on'),
+      visibility: meta ? 'audit_only' : (['collapsed', 'audit_only'].includes(String(raw.visibility)) ? raw.visibility : 'visible') as UMGBlock['visibility'],
       activation: raw.activation ?? { mode: 'always' },
       dependencies: Array.isArray(raw.dependencies) ? raw.dependencies.map(String) : [],
       conflicts: Array.isArray(raw.conflicts) ? raw.conflicts.map(String) : [],
@@ -155,12 +200,10 @@ export function normalizeSourceCatalog(assets: SourceAsset[]): NormalizedSourceC
       const unsupportedRole = detectUnsupportedRole(roleInput) ?? detectUnsupportedRole(asset.sourcePath) ?? detectUnsupportedRole(candidate.title ?? candidate.name ?? candidate.description);
       if (unsupportedRole) {
         unsupported.add(unsupportedRole);
-        warnings.push(`${asset.sourcePath}: unsupported role ${unsupportedRole} preserved in legacy only`);
-        continue;
+        warnings.push(`${asset.sourcePath}: unsupported role ${unsupportedRole} preserved as Meta / non-compiler`);
       }
       if (!likelyRunnableBlock(candidate)) {
-        warnings.push(`${asset.sourcePath}: no runnable block fields detected`);
-        continue;
+        warnings.push(`${asset.sourcePath}: no runnable block fields detected; preserved as Meta / non-compiler`);
       }
       blocks.push(normalizeImportedBlocks([candidate], asset.sourcePath)[0]);
     }

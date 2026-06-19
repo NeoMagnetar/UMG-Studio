@@ -1,5 +1,6 @@
 import { compileSleeve as realCompileSleeve } from '/home/neomagnetar/umg-compiler/compiler-v0/dist/compile.js';
 import { CompileResult, Diagnostic, IRMatrixRow, MOLTRole, Sleeve, UMGBlock, UMGWorkspace } from './types';
+import { isCompilerMoltBlock } from './migrateLibrary';
 
 const required: MOLTRole[] = ['directive', 'instruction', 'subject', 'primary', 'blueprint'];
 
@@ -38,7 +39,7 @@ function activeBlocks(ws: UMGWorkspace) {
   const sleeve = ws.sleeves.find((s) => s.id === ws.activeSleeveId) || ws.sleeves[0];
   const blocks: UMGBlock[] = [];
   sleeve?.stacks.forEach((s) => s.defaultState !== 'off' && s.neoblocks.forEach((nb) => nb.defaultState !== 'off' && nb.blocks.forEach((b) => {
-    if (b.defaultState !== 'off') blocks.push(b);
+    if (b.defaultState !== 'off' && isCompilerMoltBlock(b)) blocks.push(b);
   })));
   return { sleeve, blocks };
 }
@@ -46,8 +47,8 @@ function activeBlocks(ws: UMGWorkspace) {
 function workspaceBlocks(sleeve: Sleeve | undefined) {
   const blocks: UMGBlock[] = [];
   sleeve?.stacks.forEach((s) => {
-    s.neoblocks.forEach((nb) => nb.blocks.forEach((b) => blocks.push(b)));
-    (s.directBlocks ?? []).forEach((b) => blocks.push(b));
+    s.neoblocks.forEach((nb) => nb.blocks.forEach((b) => { if (isCompilerMoltBlock(b)) blocks.push(b); }));
+    (s.directBlocks ?? []).forEach((b) => { if (isCompilerMoltBlock(b)) blocks.push(b); });
   });
   return blocks;
 }
@@ -90,7 +91,7 @@ function toCompilerSleeve(sleeve: Sleeve): CompilerSleeve {
     for (const nb of stack.neoblocks) {
       if (nb.defaultState === 'off') continue;
       for (const block of nb.blocks) {
-        if (block.defaultState === 'off') continue;
+        if (block.defaultState === 'off' || !isCompilerMoltBlock(block)) continue;
         blockIds.push(block.id);
         if (seen.has(block.id)) continue;
         seen.add(block.id);
@@ -105,7 +106,7 @@ function toCompilerSleeve(sleeve: Sleeve): CompilerSleeve {
       }
     }
     for (const block of stack.directBlocks ?? []) {
-      if (block.defaultState === 'off') continue;
+      if (block.defaultState === 'off' || !isCompilerMoltBlock(block)) continue;
       blockIds.push(block.id);
       if (seen.has(block.id)) continue;
       seen.add(block.id);

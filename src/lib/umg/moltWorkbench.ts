@@ -1,6 +1,8 @@
 import { HermesConfig, MOLTRole, NeoBlock, UMGBlock } from './types';
+import { displayTypeOrder } from './migrateLibrary';
 
 export const MOLT_ROLE_ORDER: MOLTRole[] = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+export const DISPLAY_TYPE_ORDER = displayTypeOrder;
 
 export const MOLT_ROLE_COLORS: Record<MOLTRole, string> = {
   trigger: '#fb7185',

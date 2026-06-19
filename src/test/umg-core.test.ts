@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
 import { applyCompileResultToGraph, applyManualLayout, applySnapLayout, buildGraphFromSleeve, focusGraph, openSelectedAsFocus, selectGraphNode } from '../lib/umg/graphBuilder';
-import { MOLT_ROLE_ORDER, addWorkbenchBlockByRole, saveWorkbenchBlockToLibrary, toggleWorkbenchBlock, updateWorkbenchBlockContent, validateHermesWorkbenchGeneration } from '../lib/umg/moltWorkbench';
+import { DISPLAY_TYPE_ORDER, MOLT_ROLE_ORDER, addWorkbenchBlockByRole, saveWorkbenchBlockToLibrary, toggleWorkbenchBlock, updateWorkbenchBlockContent, validateHermesWorkbenchGeneration } from '../lib/umg/moltWorkbench';
 import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from '../lib/umg/workbenchLayout';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
-import { getLibraryAssetStatus, normalizeImportedBlocks, normalizeSourceCatalog } from '../lib/umg/migrateLibrary';
+import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
 
 const rawBlocks = [
@@ -37,9 +37,10 @@ describe('UMG Studio core engine', () => {
       { lane: 'sleeves', sourcePath: 'sleeves/sample.json', data: { sleeve_id: 'sleeve_demo', title: 'Demo Sleeve', block_refs: [{ block_id: 'src_directive', enabled: true }] } }
     ]);
 
-    expect(catalog.blocks).toHaveLength(1);
-    expect(catalog.blocks[0].legacy?.sourceRepo).toBe('UMG-Block-Library');
-    expect(catalog.blocks[0].legacy?.sourcePath).toBe('AI/blocks/directive.customer.json');
+    expect(catalog.blocks).toHaveLength(3);
+    const runnableBlock = catalog.blocks.find((block) => block.id === 'src_directive');
+    expect(runnableBlock?.legacy?.sourceRepo).toBe('UMG-Block-Library');
+    expect(runnableBlock?.legacy?.sourcePath).toBe('AI/blocks/directive.customer.json');
     expect(catalog.sleeves).toHaveLength(1);
     expect(catalog.report.skippedHumanReferences).toBe(1);
     expect(catalog.report.unsupportedRoles).toEqual(expect.arrayContaining(['aim']));
@@ -52,9 +53,72 @@ describe('UMG Studio core engine', () => {
     const unsupported = normalizeImportedBlocks([{ role: 'Aim', title: 'Future Aim', content: 'Future.' }], 'AI/MOLT/Aim/future.json')[0];
 
     expect(getLibraryAssetStatus(runnable)).toBe('runnable');
-    expect(getLibraryAssetStatus(warning)).toBe('warning-bearing');
+    expect(getLibraryAssetStatus(warning)).toBe('meta');
     expect(getLibraryAssetStatus(referenceOnly)).toBe('reference-only');
-    expect(getLibraryAssetStatus(unsupported)).toBe('unsupported');
+    expect(getLibraryAssetStatus(unsupported)).toBe('meta');
+  });
+
+  it('classifies supported roles into stable display sections and preserves Aim/Use/Need/unknown as non-compiler Meta', () => {
+    const blocks = normalizeImportedBlocks([
+      { id: 'directive', role: 'Directive', title: 'Directive', content: 'Run.', tags: ['chatbot'] },
+      { id: 'aim', role: 'Aim', title: 'Future Aim', content: 'Future.', tags: ['future'] },
+      { id: 'need', role: 'Need', title: 'Future Need', content: 'Future.', tags: ['future'] },
+      { id: 'unknown', role: 'Mystery', title: 'Unknown Role', content: 'Unknown.', tags: ['meta'] }
+    ], 'AI/MOLT/mixed.json');
+    const sections = sectionLibraryByDisplayType(blocks);
+
+    expect(DISPLAY_TYPE_ORDER).toEqual(['all', 'trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint', 'meta']);
+    expect(classifyLibraryDisplay(blocks[0])).toMatchObject({ displayType: 'directive', compilerActive: true });
+    expect(blocks.slice(1).map((block) => classifyLibraryDisplay(block).displayType)).toEqual(['meta', 'meta', 'meta']);
+    expect(blocks.slice(1).every((block) => !isCompilerMoltBlock(block))).toBe(true);
+    expect(sections.map((section) => section.type)).toEqual(DISPLAY_TYPE_ORDER);
+    expect(sections.find((section) => section.type === 'meta')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['aim', 'need', 'unknown']));
+  });
+
+  it('preserves Meta assets in source catalog instead of dropping them while keeping them inactive for compose and compile', () => {
+    const catalog = normalizeSourceCatalog([
+      { lane: 'AI', sourcePath: 'AI/blocks/directive.customer.json', data: { id: 'src_directive', title: 'Customer Directive', role: 'Directive', tags: ['chatbot'], content: 'Help customers.' } },
+      { lane: 'AI', sourcePath: 'AI/MOLT/Aim/future.json', data: { id: 'src_aim', title: 'Future Aim', role: 'Aim', tags: ['chatbot'], content: 'Future extension.' } },
+      { lane: 'AI', sourcePath: 'AI/MOLT/Unknown/helper.json', data: { id: 'src_unknown', title: 'Helper Note', role: 'SystemNote', content: 'Reference-only helper.' } }
+    ]);
+    const metaBlocks = catalog.blocks.filter((block) => classifyLibraryDisplay(block).displayType === 'meta');
+
+    expect(metaBlocks.map((block) => block.id)).toEqual(expect.arrayContaining(['src_aim', 'src_unknown']));
+    expect(metaBlocks.every((block) => block.defaultState === 'off')).toBe(true);
+    expect(metaBlocks.every((block) => block.visibility === 'audit_only')).toBe(true);
+    expect(metaBlocks.every((block) => block.legacy?.original)).toBe(true);
+    expect(catalog.report.unsupportedRoles).toEqual(expect.arrayContaining(['aim']));
+  });
+
+  it('composer excludes Meta by default and compile does not activate Meta blocks inserted into a workspace', () => {
+    const blocks = normalizeImportedBlocks([
+      { id: 'meta_instruction', role: 'Instruction', title: 'Meta Instruction', tags: ['chatbot', 'intake'], content: 'Reference only.', priorityOrder: 1 },
+      { id: 'runnable_instruction', role: 'Instruction', title: 'Runnable Instruction', tags: ['chatbot', 'intake'], content: 'Collect usable details.', priorityOrder: 20 },
+      { id: 'directive', role: 'Directive', title: 'Directive', tags: ['chatbot'], content: 'Help.' },
+      { id: 'subject', role: 'Subject', title: 'Subject', tags: ['chatbot'], content: 'Chatbot.' },
+      { id: 'primary', role: 'Primary', title: 'Primary', tags: ['chatbot'], content: 'Success.' },
+      { id: 'blueprint', role: 'Blueprint', title: 'Blueprint', tags: ['chatbot'], content: 'Output.' }
+    ]);
+    blocks[0].presentationStatus = 'meta';
+    blocks[0].defaultState = 'off';
+    blocks[0].visibility = 'audit_only';
+    blocks[0].legacy = { ...(blocks[0].legacy ?? { original: {} }), migrationWarnings: ['meta / non-compiler asset'] };
+
+    const result = composeBlocks({ freeform_request: 'chatbot intake', target_type: 'chatbot', depth: 'lean' }, blocks);
+    expect(result.selected_nodes.map((node) => node.id)).toContain('runnable_instruction');
+    expect(result.selected_nodes.map((node) => node.id)).not.toContain('meta_instruction');
+    result.draft_sleeve.stacks[0].neoblocks[0].blocks.push(blocks[0]);
+    const workspace = { id: 'ws_meta', title: 'Meta Workspace', activeSleeveId: result.draft_sleeve.id, sleeves: [result.draft_sleeve], libraryRefs: [], graph: buildGraphFromSleeve(result.draft_sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot'] }, { disableInstalledCompiler: true });
+
+    expect(compiled.irMatrix.some((row) => row.nodeId === 'meta_instruction' && row.active)).toBe(false);
+    expect(compiled.promptPreview).not.toContain('Reference only.');
+  });
+
+  it('keeps the Add Block compiler role menu separate from the Meta display bucket', () => {
+    expect(MOLT_ROLE_ORDER).toEqual(['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint']);
+    expect(MOLT_ROLE_ORDER).not.toContain('meta' as any);
+    expect(DISPLAY_TYPE_ORDER[DISPLAY_TYPE_ORDER.length - 1]).toBe('meta');
   });
 
   it('composer prioritizes runnable v0.1 blocks and does not activate unsupported Aim/Use/Need assets', () => {
