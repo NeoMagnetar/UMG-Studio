@@ -12,6 +12,7 @@ import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/a
 import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubjectImport';
 import { normalizeAIPrimaryEntry, stableAIPrimaryId } from '../lib/umg/aiPrimaryImport';
 import { normalizeAIDirectiveEntry, stableAIDirectiveId } from '../lib/umg/aiDirectiveImport';
+import { normalizeAIPhilosophyEntry, stableAIPhilosophyId } from '../lib/umg/aiPhilosophyImport';
 import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
 
 const rawBlocks = [
@@ -154,6 +155,40 @@ const directiveEntry010 = {
   action: 'Keep the customer interaction clear and actionable',
   expected_output: 'Clear customer-facing directive for the intake flow',
   constraints: ['Avoid vague commitments'],
+  notes: null
+};
+
+const philosophyEntry001 = {
+  id: 'PHIL.001',
+  type: 'PHILOSOPHY',
+  name: 'Platonism',
+  category: 'ancient_greek_roman',
+  subcategory: 'platonism',
+  domain: 'ANCIENT_GREEK_ROMAN',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['philosophy', 'ancient-greek-roman', 'platonism'],
+  source: { library_name: 'MOLT PHILOSOPHY Library', library_version: '1.0.0' },
+  core_principles: 'Reality of eternal Forms/Ideas beyond physical world; knowledge through reason and dialectic; material world as imperfect reflection of ideal Forms',
+  application: 'Seek underlying ideal principles beneath surface appearances; prioritize abstract reasoning over empirical observation; look for perfect forms that material instances approximate',
+  key_values: ['Eternal truths', 'Ideal forms', 'Rational insight', 'Transcendent reality'],
+  notes: null
+};
+
+const philosophyEntry010 = {
+  id: 'PHIL.010',
+  type: 'PHILOSOPHY',
+  name: 'Pragmatic service clarity',
+  category: 'customer_support',
+  subcategory: 'service_clarity',
+  domain: 'CUSTOMER_SUPPORT',
+  status: 'active',
+  version: '1.0.0',
+  tags: ['philosophy', 'customer-support', 'mobile-detailing'],
+  source: { library_name: 'MOLT PHILOSOPHY Library', library_version: '1.0.0' },
+  content: { summary: 'Pragmatic service clarity', details: 'Value customer understanding over abstract completeness.', structure: null },
+  action: 'Use practical customer clarity as a philosophy layer',
+  expected_output: 'A customer-centered philosophy anchor',
   notes: null
 };
 
@@ -975,6 +1010,67 @@ describe('UMG Studio core engine', () => {
     const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing customer clarity', depth: 'balanced' }, blocks).draft_sleeve;
     sleeve.stacks[0].neoblocks[0].blocks.push(meta);
     const workspace = { id: 'ws_ai_directive', title: 'AI Directive Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'clarity'] });
+    const graph = applyCompileResultToGraph(workspace.graph, compiled);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_need') && row.active)).toBe(false);
+    for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+  });
+
+  it('imports AI philosophy JSON library entries into runnable MOLT philosophy blocks with stable source metadata', () => {
+    const parsed = normalizeAIPhilosophyEntry(philosophyEntry001);
+
+    expect(stableAIPhilosophyId(philosophyEntry001)).toBe('phil_001');
+    expect(parsed).toMatchObject({ id: 'phil_001', type: 'molt_block', role: 'philosophy', displayType: 'philosophy', status: 'runnable', presentationStatus: 'runnable', sourcePath: 'AI/MOLT-BLOCKS/philosophy/library.v1.0.0.json#PHIL.001', sourceLayer: 'AI' });
+    expect(parsed.title).toBe('Platonism');
+    expect(parsed.description).toContain('Reality of eternal Forms');
+    expect(parsed.content).toContain('Philosophy: Reality of eternal Forms');
+    expect(parsed.content).toContain('Application: Seek underlying ideal principles');
+    expect(parsed.content).toContain('Key Values: Eternal truths; Ideal forms; Rational insight; Transcendent reality');
+    expect(parsed.tags).toEqual(expect.arrayContaining(['philosophy', 'molt', 'ai', 'source-ai', 'ancient-greek-roman', 'platonism']));
+    expect(parsed.hierarchy).toEqual({ orderIndex: 50, orderSource: 'priorityOrder', priorityMeaning: 'hierarchy_order' });
+    expect(parsed.legacy?.parentSourcePath).toBe('AI/MOLT-BLOCKS/philosophy/library.v1.0.0.json');
+    expect(parsed.legacy?.libraryEntryId).toBe('PHIL.001');
+    expect(parsed.legacy?.original).toBe(philosophyEntry001);
+  });
+
+  it('surfaces imported AI JSON philosophy blocks in Philosophy shelves, tag search, source audit, and inspector views without blind composer activation', () => {
+    const phil001 = normalizeAIPhilosophyEntry(philosophyEntry001);
+    const phil010 = normalizeAIPhilosophyEntry(philosophyEntry010);
+    const manyAIPhilosophies = Array.from({ length: 20 }, (_, index) => ({ ...structuredClone(phil001), id: `phil_${String(index + 1).padStart(3, '0')}_sample`, title: `Sample AI Philosophy ${index + 1}`, tags: ['philosophy', 'molt', 'ai', 'source-ai', `philosophy-sample-${index + 1}`] }));
+    const blocks = [...normalizeImportedBlocks(rawBlocks), phil001, phil010, ...manyAIPhilosophies];
+    const sections = sectionLibraryByDisplayType(blocks);
+    const shelves = buildAssetShelves({ blocks, neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: [
+      { id: 'src_phil001', title: phil001.title, detectedType: 'molt_block', normalizedRole: 'philosophy', outcome: 'runnable_molt', tags: phil001.tags, sourcePath: phil001.sourcePath!, legacySource: phil001.legacy?.original },
+      { id: 'src_phil010', title: phil010.title, detectedType: 'molt_block', normalizedRole: 'philosophy', outcome: 'runnable_molt', tags: phil010.tags, sourcePath: phil010.sourcePath!, legacySource: phil010.legacy?.original }
+    ] });
+    const views = buildBlockInspectorViews(phil001);
+
+    expect(sections.find((section) => section.type === 'philosophy')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['phil_001', 'phil_010']));
+    expect(searchShelfAssets(shelves[0].items, { query: 'platonism' }).map((item) => item.id)).toContain('phil_001');
+    expect(searchShelfAssets(shelves[0].items, { tags: ['mobile-detailing'] }).map((item) => item.id)).toContain('phil_010');
+    expect(searchShelfAssets(shelves[4].items, { query: 'PHIL.001' })).toHaveLength(1);
+    expect(views.card.type).toBe('SearchCard');
+    expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'philosophy', compiler: { source: 'compiler_aligned_json', moltType: 'philosophy' } });
+    expect(views.nl).toContain('role: Philosophy');
+    expect(views.compilerJson).toEqual(views.runtime);
+    expect(views.legacySource.legacyOriginal).toMatchObject({ id: 'PHIL.001', type: 'PHILOSOPHY' });
+
+    const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
+    const selectedAIPhilosophies = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('phil_'));
+    expect(selectedAIPhilosophies.length).toBeLessThan(manyAIPhilosophies.length + 2);
+    expect(composed.selected_nodes.length).toBeLessThan(blocks.length);
+  });
+
+  it('keeps imported AI JSON philosophy blocks compatible with real compile and graph/IR agreement while Meta stays non-compiler', () => {
+    const phil010 = normalizeAIPhilosophyEntry(philosophyEntry010);
+    const meta = normalizeImportedBlocks([{ id: 'future_need', role: 'Need', title: 'Future Need', content: 'Do not compile.', tags: ['future'] }], 'HUMAN/MOLT-BLOCKS/need/future.md')[0];
+    const blocks = [...normalizeImportedBlocks(rawBlocks), phil010, meta];
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing customer clarity', depth: 'balanced' }, blocks).draft_sleeve;
+    sleeve.stacks[0].neoblocks[0].blocks.push(meta);
+    const workspace = { id: 'ws_ai_philosophy', title: 'AI Philosophy Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
     const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'customer', 'clarity'] });
     const graph = applyCompileResultToGraph(workspace.graph, compiled);
     const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
