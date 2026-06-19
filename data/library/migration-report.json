@@ -223,12 +223,12 @@
     "sleeves_json": 2,
     "HUMAN_md": 1988
   },
-  "totalSourceAssetsScanned": 498,
-  "totalMoltBlocksImported": 332,
+  "totalSourceAssetsScanned": 698,
+  "totalMoltBlocksImported": 532,
   "totalNeoBlocksImported": 2,
   "totalNeoStacksImported": 2,
   "totalSleevesImported": 2,
-  "totalMetaUnmappedPreserved": 332,
+  "totalMetaUnmappedPreserved": 532,
   "skippedAssets": [
     {
       "sourcePath": "AI/EXAMPLES/dashboard/audit-export-variants.example.json",
@@ -1320,17 +1320,17 @@
     }
   ],
   "shelfCounts": {
-    "moltBlocks": 332,
+    "moltBlocks": 532,
     "neoBlocks": 2,
     "neoStacks": 2,
     "sleeves": 2
   },
   "sourceAssetSummary": {
-    "totalScanned": 498,
-    "accountedTotal": 498,
+    "totalScanned": 698,
+    "accountedTotal": 698,
     "unaccountedCount": 0,
     "outcomeCounts": {
-      "runnable_molt": 302,
+      "runnable_molt": 502,
       "meta": 164,
       "neoblock": 0,
       "neostack": 0,
@@ -1350,7 +1350,7 @@
     }
   },
   "outcomeCounts": {
-    "runnable_molt": 302,
+    "runnable_molt": 502,
     "meta": 164,
     "neoblock": 0,
     "neostack": 0,
@@ -1361,7 +1361,7 @@
     "reference_only": 21,
     "warning": 0
   },
-  "visibleOrAccountedAssets": 498,
+  "visibleOrAccountedAssets": 698,
   "unaccountedCount": 0,
   "reasonSummary": {
     "no runnable block fields detected": 164,
@@ -1379,6 +1379,20 @@
     "declaredEntryCount": 300,
     "entriesScanned": 300,
     "instructionBlocksImported": 300,
+    "skippedHumanMarkdown": true,
+    "warningBearingImports": 0,
+    "parseWarnings": []
+  },
+  "aiSubjectImport": {
+    "sourcePath": "/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/subjects/library.v1.0.0.json",
+    "sourceAssetPath": "AI/MOLT-BLOCKS/subjects/library.v1.0.0.json",
+    "authoritativeSource": true,
+    "sourceFormat": "json",
+    "libraryName": "MOLT SUBJECT Library",
+    "declaredEntryCount": 200,
+    "entriesScanned": 200,
+    "subjectBlocksImported": 200,
+    "skippedEntries": 0,
     "skippedHumanMarkdown": true,
     "warningBearingImports": 0,
     "parseWarnings": []

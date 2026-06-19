@@ -4,14 +4,18 @@ import path from 'node:path';
 const root = process.cwd();
 const aiInstructionLibraryPath = '/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/instructions/library.v1.0.0.json';
 const aiInstructionLibrarySourcePath = 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json';
+const aiSubjectLibraryPath = '/home/neomagnetar/umg-block-library/AI/MOLT-BLOCKS/subjects/library.v1.0.0.json';
+const aiSubjectLibrarySourcePath = 'AI/MOLT-BLOCKS/subjects/library.v1.0.0.json';
 const readJson = (rel) => JSON.parse(fs.readFileSync(path.join(root, rel), 'utf8'));
 const writeJson = (rel, data) => fs.writeFileSync(path.join(root, rel), `${JSON.stringify(data, null, 2)}\n`);
 const uniqBy = (items, keyFn) => [...new Map(items.map((item) => [keyFn(item), item])).values()];
 const stableAIInstructionId = (entry) => String(entry.id ?? '').trim().toLowerCase().replace(/^inst\.(\d{3})$/, 'inst_$1').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+const stableAISubjectId = (entry) => String(entry.id ?? '').trim().toLowerCase().replace(/^subj\.(\d{3})$/, 'subj_$1').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 const cleanTags = (tags) => Array.isArray(tags) ? [...new Set(tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : [];
 const contentSummary = (content) => typeof content === 'string' ? content.trim() : content?.summary?.trim() || '';
 const contentDetails = (content) => !content || typeof content === 'string' ? '' : content.details?.trim() || '';
 const instructionEntrySourcePath = (entry) => `${aiInstructionLibrarySourcePath}#${entry.id}`;
+const subjectEntrySourcePath = (entry) => `${aiSubjectLibrarySourcePath}#${entry.id}`;
 const normalizeAIInstructionEntry = (entry) => {
   const summary = contentSummary(entry.content);
   const details = contentDetails(entry.content);
@@ -54,18 +58,66 @@ const normalizeAIInstructionEntry = (entry) => {
     }
   };
 };
+const normalizeAISubjectEntry = (entry) => {
+  const summary = contentSummary(entry.content) || entry.definition?.trim() || '';
+  const details = contentDetails(entry.content);
+  const action = entry.action?.trim() || '';
+  const expectedOutput = entry.expected_output?.trim() || '';
+  const examples = Array.isArray(entry.examples) ? entry.examples.map((example) => String(example).trim()).filter(Boolean) : [];
+  const contentParts = [
+    summary && `Subject: ${summary}`,
+    details && `Details: ${details}`,
+    examples.length > 0 && `Examples: ${examples.join(', ')}`,
+    action && `Action: ${action}`,
+    expectedOutput && `Expected Output: ${expectedOutput}`
+  ].filter(Boolean);
+  const sourcePath = subjectEntrySourcePath(entry);
+  return {
+    id: stableAISubjectId(entry),
+    title: entry.name?.trim() || entry.id,
+    type: 'molt_block',
+    role: 'subject',
+    displayType: 'subject',
+    content: contentParts.join('\n'),
+    description: summary || details || undefined,
+    category: entry.category || 'general',
+    tags: [...new Set(['subject', 'molt', 'ai', 'source-ai', ...cleanTags(entry.tags)])],
+    priorityOrder: 30,
+    defaultState: 'on',
+    visibility: 'visible',
+    activation: { mode: 'always' },
+    action: action || undefined,
+    expectedOutput: expectedOutput || undefined,
+    sourcePath,
+    sourceLayer: 'AI',
+    status: 'runnable',
+    presentationStatus: 'runnable',
+    source: { origin: 'imported', sourceId: sourcePath, version: entry.version || '1.0.0' },
+    legacy: {
+      sourceRepo: 'UMG-Block-Library',
+      sourcePath,
+      parentSourcePath: aiSubjectLibrarySourcePath,
+      libraryEntryId: entry.id,
+      original: entry
+    }
+  };
+};
 
 const importedAssets = readJson('data/imports/umg-block-library/imported-assets.json');
-const baseBlocks = readJson('data/library/normalized-blocks.json').filter((block) => block.sourceLayer !== 'HUMAN' && !String(block.legacy?.sourcePath ?? '').startsWith('HUMAN/MOLT-BLOCKS/instructions/') && String(block.legacy?.parentSourcePath ?? '') !== aiInstructionLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiInstructionLibrarySourcePath}#`));
+const baseBlocks = readJson('data/library/normalized-blocks.json').filter((block) => block.sourceLayer !== 'HUMAN' && !String(block.legacy?.sourcePath ?? '').startsWith('HUMAN/MOLT-BLOCKS/instructions/') && String(block.legacy?.parentSourcePath ?? '') !== aiInstructionLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiInstructionLibrarySourcePath}#`) && String(block.legacy?.parentSourcePath ?? '') !== aiSubjectLibrarySourcePath && !String(block.legacy?.sourcePath ?? '').startsWith(`${aiSubjectLibrarySourcePath}#`));
 const normalizedSleeves = readJson('data/library/normalized-sleeves.json');
 const existingReportRaw = readJson('data/library/migration-report.json');
 const { humanInstructionImport: _discardedHumanInstructionImport, ...existingReport } = existingReportRaw;
 const aiInstructionLibrary = JSON.parse(fs.readFileSync(aiInstructionLibraryPath, 'utf8'));
 const aiInstructionEntries = aiInstructionLibrary.entries ?? [];
 const aiInstructionBlocks = aiInstructionEntries.map((entry) => normalizeAIInstructionEntry(entry));
-const blocks = uniqBy([...baseBlocks, ...aiInstructionBlocks], (block) => block.id);
+const aiSubjectLibrary = JSON.parse(fs.readFileSync(aiSubjectLibraryPath, 'utf8'));
+const aiSubjectEntries = aiSubjectLibrary.entries ?? [];
+const aiSubjectBlocks = aiSubjectEntries.map((entry) => normalizeAISubjectEntry(entry));
+const blocks = uniqBy([...baseBlocks, ...aiInstructionBlocks, ...aiSubjectBlocks], (block) => block.id);
 const aiInstructionSourceAssets = aiInstructionEntries.map((entry) => ({ lane: 'AI', sourcePath: instructionEntrySourcePath(entry), data: entry }));
-const allSourceAssets = uniqBy([...importedAssets, ...aiInstructionSourceAssets], (asset) => asset.sourcePath);
+const aiSubjectSourceAssets = aiSubjectEntries.map((entry) => ({ lane: 'AI', sourcePath: subjectEntrySourcePath(entry), data: entry }));
+const allSourceAssets = uniqBy([...importedAssets, ...aiInstructionSourceAssets, ...aiSubjectSourceAssets], (asset) => asset.sourcePath);
 
 const neostacks = uniqBy(normalizedSleeves.flatMap((sleeve) => (sleeve.stacks ?? []).map((stack) => ({
   ...stack,
@@ -146,6 +198,7 @@ const missingFieldsDetected = blocks.flatMap((block) => (block.legacy?.migration
   .filter((warning) => /defaulted|inferred|missing|no runnable|weak content|fallback paragraph/i.test(warning))
   .map((warning) => ({ id: block.id, title: block.title, sourcePath: block.legacy?.sourcePath, warning })));
 const warningBearingAIInstructions = aiInstructionBlocks.filter((block) => block.presentationStatus === 'warning-bearing');
+const warningBearingAISubjects = aiSubjectBlocks.filter((block) => block.presentationStatus === 'warning-bearing');
 
 const nextReport = {
   ...existingReport,
@@ -177,6 +230,20 @@ const nextReport = {
     warningBearingImports: warningBearingAIInstructions.length,
     parseWarnings: warningBearingAIInstructions.map((block) => ({ id: block.id, sourcePath: block.sourcePath, warnings: block.legacy?.parseWarnings ?? [] }))
   },
+  aiSubjectImport: {
+    sourcePath: aiSubjectLibraryPath,
+    sourceAssetPath: aiSubjectLibrarySourcePath,
+    authoritativeSource: true,
+    sourceFormat: 'json',
+    libraryName: aiSubjectLibrary.library?.name,
+    declaredEntryCount: aiSubjectLibrary.library?.entry_count,
+    entriesScanned: aiSubjectEntries.length,
+    subjectBlocksImported: aiSubjectBlocks.length,
+    skippedEntries: aiSubjectEntries.length - aiSubjectBlocks.length,
+    skippedHumanMarkdown: true,
+    warningBearingImports: warningBearingAISubjects.length,
+    parseWarnings: warningBearingAISubjects.map((block) => ({ id: block.id, sourcePath: block.sourcePath, warnings: block.legacy?.parseWarnings ?? [] }))
+  },
   shelfCounts: {
     moltBlocks: blocks.length,
     neoBlocks: neoblocks.length,
@@ -191,4 +258,4 @@ writeJson('data/library/neostacks.json', neostacks);
 writeJson('data/library/sleeves.json', normalizedSleeves);
 writeJson('data/library/source-assets.json', sourceAudit);
 writeJson('data/library/migration-report.json', nextReport);
-console.log(JSON.stringify({ ...nextReport.shelfCounts, sourceAudit: sourceAudit.length, unaccountedCount: sourceAssetSummary.unaccountedCount, aiInstructionsImported: aiInstructionBlocks.length, aiInstructionWarnings: warningBearingAIInstructions.length }));
+console.log(JSON.stringify({ ...nextReport.shelfCounts, sourceAudit: sourceAudit.length, unaccountedCount: sourceAssetSummary.unaccountedCount, aiInstructionsImported: aiInstructionBlocks.length, aiInstructionWarnings: warningBearingAIInstructions.length, aiSubjectsImported: aiSubjectBlocks.length, aiSubjectWarnings: warningBearingAISubjects.length }));
