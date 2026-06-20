@@ -7,6 +7,7 @@ import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
+import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
 import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
@@ -1428,6 +1429,42 @@ describe('UMG Studio core engine', () => {
     expect(text).not.toContain('tool_results');
     expect(rows.filter((row) => row.nodeType === 'molt_block')).toHaveLength(2);
     expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+  });
+
+  it('builds a read-only RuntimeGate debug view from RuntimeGate, GateIRRow, trace, graph placement, and Glyph Matrix line without mutation or evaluation', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_debug_view_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const baseWorkspace: UMGWorkspace = { id: 'ws_gate_debug_base', title: 'Gate Debug Base', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const targetNode = baseWorkspace.graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+    const attached = attachRuntimeGateToGraph(baseWorkspace.graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+    const workspace: UMGWorkspace = { ...baseWorkspace, graph: attached.graph, runtimeGates: attached.runtimeGates };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const glyphMatrix = projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'compact' });
+    const sourceSnapshot = structuredClone({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph, runtimeGates: workspace.runtimeGates });
+
+    const debugView = buildRuntimeGateDebugView({ gateId: gate.id, workspace, compiled, glyphMatrix });
+
+    expect(debugView).toMatchObject({
+      gateId: gate.id,
+      sourceCardId: 'TRG.001',
+      title: 'Technical Analysis Request',
+      gateKind: 'trigger_gate',
+      sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md',
+      placement: { kind: 'node_boundary', targetId: targetNode.id, targetLabel: targetNode.label },
+      condition: 'User requests analysis of code, system, or technical architecture',
+      runtimeState: { state: 'inactive', passed: false, reason: 'Gate attached as control geometry; not evaluated yet.' },
+      gateIRRow: { nodeType: 'gate', state: 'inactive', routingDecision: 'not_evaluated', gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: [], requiredApproval: false },
+      traceEvent: { kind: 'gate_attached', evaluated: false, executed: false },
+      safety: { evaluated: false, routeSwitching: false, liveExecution: false, promptContentMutation: false }
+    });
+    expect(debugView?.routeControl).toEqual({ activates: [], dormants: [], suppresses: [], blocks: [] });
+    expect(debugView?.gateIRRow?.governedNodeIds).toContain(targetNode.id);
+    expect(debugView?.glyphLine?.text).toContain('( ) Gt.001 Technical Analysis Request -->');
+    expect(JSON.stringify(debugView)).not.toContain('tool_results');
+    expect(JSON.stringify({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph, runtimeGates: workspace.runtimeGates })).toBe(JSON.stringify(sourceSnapshot));
+    expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+    expect(buildAssetShelves({ blocks: normalizedLibraryBlocks as any[], neoblocks: [], neostacks: [], sleeves: [], gateSourceCards: Array.from({ length: 200 }, (_, index) => parseTriggerGateSourceMarkdown(`/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.${String(index + 1).padStart(3, '0')}-sample.md`, trg001Markdown.replace('TRG.001', `TRG.${String(index + 1).padStart(3, '0')}`))) }).find((shelf) => shelf.id === 'control_sources')?.items).toHaveLength(200);
   });
 
   it('exports safe Glyph Matrix projection in Hermes packets without API keys, tool results, or invented route truth', () => {
