@@ -37,6 +37,12 @@ export type GlyphMatrix = {
   };
   lines: GlyphMatrixLine[];
   warnings: string[];
+  routeState: {
+    active_paths: string[];
+    dormant_paths: string[];
+    suppressed_paths: string[];
+    blocked_paths: string[];
+  };
 };
 
 type RuntimeGateSummary = {
@@ -186,7 +192,7 @@ function gateLine(row: GateIRRow, orderIndex: number, gateIndex: number, graph?:
   const target = targetLabel([...row.activeTargetIds, ...row.dormantTargetIds, ...row.suppressedTargetIds, ...row.blockedTargetIds, ...row.governedNodeIds], graph);
   const objectTitle = row.title;
   const gateId = `${nodeClass}.${gateNumber(gateIndex)}`;
-  const details = ` ${target}; state: ${row.state} / ${row.routingDecision ?? 'not_evaluated'}${runtimeGate?.sourceCardId ? `; sourceCardId: ${runtimeGate.sourceCardId}` : ''}${runtimeGate?.sourcePath ? `; sourcePath: ${runtimeGate.sourcePath}` : ''}; gatePassed: ${String(row.gatePassed)}${row.reason ? `; reason: ${row.reason}` : ''}`;
+  const details = `${target}\n    state: ${row.state} / ${row.routingDecision ?? 'not_evaluated'}${runtimeGate?.sourceCardId ? `\n    sourceCardId: ${runtimeGate.sourceCardId}` : ''}${runtimeGate?.sourcePath ? `\n    sourcePath: ${runtimeGate.sourcePath}` : ''}\n    gatePassed: ${String(row.gatePassed)}${row.reason ? `\n    reason: ${row.reason}` : ''}`;
   return {
     lineId: `glyph_${row.rowId}`,
     orderIndex,
@@ -225,7 +231,7 @@ function gateContextLines(runtimeSpec: RuntimeSpecWithGateContext, gateRows: Gat
         objectId: String(gate.id ?? `gate_${index + 1}`),
         objectTitle: title,
         relationOut,
-        text: `${stateGlyph} ${gateId} ${title} ${relationOut} ${target}; state: ${gate.runtimeState?.state ?? 'inactive'} / not_evaluated; sourceCardId: ${gate.sourceCardId ?? 'n/a'}; gatePassed: ${String(gate.runtimeState?.passed === true)}`
+        text: `${stateGlyph} ${gateId} ${title} ${relationOut} ${target}\n    state: ${gate.runtimeState?.state ?? 'inactive'} / not_evaluated\n    sourceCardId: ${gate.sourceCardId ?? 'n/a'}\n    gatePassed: ${String(gate.runtimeState?.passed === true)}`
       };
     });
 }
@@ -256,6 +262,12 @@ export function projectGlyphMatrix(input: ProjectGlyphMatrixInput): GlyphMatrix 
   const warnings: string[] = [];
   const activeSleeveId = input.activeSleeveId ?? runtimeSpec.sleeveId;
   const activeRouteId = runtimeSpec.activeRouteId ?? runtimeSpec.gate_context?.route_state?.active_paths?.[0];
+  const routeState = {
+    active_paths: runtimeSpec.gate_context?.route_state?.active_paths ?? [],
+    dormant_paths: runtimeSpec.gate_context?.route_state?.dormant_paths ?? [],
+    suppressed_paths: runtimeSpec.gate_context?.route_state?.suppressed_paths ?? [],
+    blocked_paths: runtimeSpec.gate_context?.route_state?.blocked_paths ?? []
+  };
 
   lines.push({
     lineId: 'glyph_sleeve_active',
@@ -310,10 +322,36 @@ export function projectGlyphMatrix(input: ProjectGlyphMatrixInput): GlyphMatrix 
     viewMode,
     legend: glyphMatrixLegend,
     lines,
-    warnings
+    warnings,
+    routeState
   };
 }
 
+function renderArray(values: string[]) {
+  return `[${values.join(', ')}]`;
+}
+
 export function renderGlyphMatrixText(matrix: GlyphMatrix) {
-  return matrix.lines.map((line) => line.text).join('\n');
+  const header = [
+    'UMG_GLYPH_MATRIX.v0.1',
+    `ViewMode: ${matrix.viewMode}`,
+    'SourceTruth: RuntimeSpec + IR Matrix + GateIRRows + Trace',
+    'route switching: not implemented',
+    'gate evaluation: not implemented',
+    'Legend: [ ] dormant/off/inactive | ( ) candidate/attached but unevaluated | [#] active | [!] focus/requires approval | [~] compressed | [x] suppressed/blocked',
+    'Gates: Gt TriggerGate | Gr RoutingGate | Gv GovernanceGate | Ga ActionGate',
+    '',
+    'GlyphLines:',
+    ...matrix.lines.map((line) => line.text),
+    '',
+    'RouteState:',
+    `    active_paths: ${renderArray(matrix.routeState.active_paths)}`,
+    `    dormant_paths: ${renderArray(matrix.routeState.dormant_paths)}`,
+    `    suppressed_paths: ${renderArray(matrix.routeState.suppressed_paths)}`,
+    `    blocked_paths: ${renderArray(matrix.routeState.blocked_paths)}`
+  ];
+  if (matrix.warnings.length) {
+    header.push('', 'Warnings:', ...matrix.warnings.map((warning) => `    ${warning}`));
+  }
+  return header.join('\n');
 }
