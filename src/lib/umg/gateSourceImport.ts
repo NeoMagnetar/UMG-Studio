@@ -128,12 +128,12 @@ export function buildTriggerGateSourceInspectorViews(card: TriggerGateSourceCard
       defaultState: 'inactive/candidate',
       promptContent: false,
       liveExecution: false,
-      note: 'Attach Gate / RuntimeGate insertion is future work and is disabled in this read-only lane.'
+      note: 'Source card can be attached as inert RuntimeGate control geometry; it remains not prompt content and does not execute tools.'
     },
     nl: `TriggerGate Source ${card.id}: ${card.title}\nGate kind: TriggerGate\nCategory: ${card.category} / ${card.subcategory}\nCondition: ${card.activation.conditionSummary}\nThis source card is not prompt content and does not execute tools.`,
     json: card,
     legacySource: record,
-    attachPlacementPreview: { enabled: false, reason: 'Attach Gate / build insertion is not implemented in this lane.' },
+    attachPlacementPreview: { enabled: true, actionLabel: 'Attach Gate', placement: 'selected node boundary or selected edge', defaultState: 'inactive/candidate', liveExecution: false, promptContent: false },
     traceIrPreview: { createsGateIRRowNow: false, reason: 'GateIRRow is created only after a future RuntimeGate insertion lane.' }
   };
 }

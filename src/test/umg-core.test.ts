@@ -6,7 +6,7 @@ import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
-import { buildGateIRRow, buildRuntimeGate, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
+import { attachRuntimeGateToGraph, buildGateIRRow, buildRuntimeGate, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { buildFullGateSourceRecord, buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards, parseTriggerGateSourceMarkdown } from '../lib/umg/gateSourceImport';
@@ -1268,8 +1268,60 @@ describe('UMG Studio core engine', () => {
     expect(views.json).toMatchObject({ type: 'TriggerGateSourceCard', id: 'TRG.001' });
     expect(views.legacySource.legacyOriginal.markdown).toBe(trg001Markdown);
     expect(views.runtimePreview).toMatchObject({ wouldBecome: 'RuntimeGate', defaultState: 'inactive/candidate', promptContent: false, liveExecution: false });
-    expect(views.attachPlacementPreview.enabled).toBe(false);
+    expect(views.attachPlacementPreview).toMatchObject({ enabled: true, actionLabel: 'Attach Gate', liveExecution: false, promptContent: false });
     expect(views.traceIrPreview.createsGateIRRowNow).toBe(false);
+  });
+
+  it('attaches TRG.001 as an inert RuntimeGate to selected graph node control geometry without creating MOLT blocks', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_instance_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const graph = buildGraphFromSleeve(sleeve);
+    const targetNode = graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+    const attached = attachRuntimeGateToGraph(graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+    const governedNode = attached.graph.nodes.find((node) => node.id === targetNode.id)!;
+
+    expect(gate).toMatchObject({
+      type: 'RuntimeGate',
+      id: 'gate_trg_001_instance_test',
+      sourceCardId: 'TRG.001',
+      sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md',
+      title: 'Technical Analysis Request',
+      gateKind: 'trigger_gate',
+      condition: 'User requests analysis of code, system, or technical architecture',
+      routeControl: { activates: [], dormants: [], suppresses: [], blocks: [] },
+      runtimeState: { state: 'inactive', passed: false, reason: 'Gate attached as control geometry; not evaluated yet.' },
+      priorityOrder: { priorityMeaning: 'hierarchy_order_only' },
+      traceRefs: []
+    });
+    expect(governedNode.governingGateIds).toContain('gate_trg_001_instance_test');
+    expect(governedNode.gateKind).toBe('trigger_gate');
+    expect(governedNode.gateLabel).toBe('Gt: Technical Analysis Request');
+    expect(gateVisualMetadataForNode(governedNode)).toMatchObject({ renderGateBadge: true, label: 'Gt: Technical Analysis Request' });
+    expect((gate as any).type).not.toBe('molt_block');
+    expect((gate as any).role).toBeUndefined();
+    expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger')).toHaveLength(0);
+  });
+
+  it('attaches a TriggerGate RuntimeGate to selected edge strip metadata without compiler prompt-content mutation or live execution', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_edge_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const graph = buildGraphFromSleeve(sleeve);
+    const targetEdge = graph.edges[0];
+    const attached = attachRuntimeGateToGraph(graph, gate, { kind: 'edge', edgeId: targetEdge.id });
+    const governedEdge = attached.graph.edges.find((edge) => edge.id === targetEdge.id)!;
+    const workspace: UMGWorkspace = { id: 'ws_attached_gate', title: 'Attached Gate Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: attached.graph, runtimeGates: attached.runtimeGates };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+
+    expect(governedEdge).toMatchObject({ governingGateId: 'gate_trg_001_edge_test', gateKind: 'trigger_gate', gateLabel: 'Gt: Technical Analysis Request' });
+    expect(gateVisualMetadataForEdge(governedEdge)).toMatchObject({ renderGateStrip: true, label: 'Gt: Technical Analysis Request' });
+    expect(workspace.runtimeGates).toHaveLength(1);
+    expect(workspace.runtimeGates?.[0].sourceCardId).toBe('TRG.001');
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.every((row) => row.nodeType === 'molt_block')).toBe(true);
+    expect(compiled.promptPreview).not.toContain('TRG.001');
+    expect(JSON.stringify(compiled.runtimeSpec)).not.toContain('tool_results');
   });
 
   it('keeps TriggerGate source-card visibility inert for compose, real compile, IR Matrix, and live tool execution', () => {

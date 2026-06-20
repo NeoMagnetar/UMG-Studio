@@ -16,6 +16,7 @@ import { generateWithHermes, redactKey, testHermesConnection } from './lib/herme
 import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceAuditItem } from './lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from './lib/umg/blockViews';
 import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards } from './lib/umg/gateSourceImport';
+import { buildRuntimeGateFromSourceCard, attachRuntimeGateToGraph } from './lib/umg/gateRuntime';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
@@ -105,7 +106,20 @@ export default function App() {
 
   const addAsset = (item: ShelfAsset) => {
     if (item.kind === 'source_asset') { setInspected(item.asset); setInspectorTab('Legacy Source'); return; }
-    if (item.kind === 'trigger_gate_source') { setInspected(item.asset); setInspectorTab('Attach / Placement Preview'); setStatus('Attach Gate is future work; TriggerGate source card remains read-only'); return; }
+    if (item.kind === 'trigger_gate_source') {
+      const card = item.asset as TriggerGateSourceCard;
+      setInspected(card);
+      setInspectorTab('Attach / Placement Preview');
+      if (!workspace) return setStatus('compose a workspace before attaching TriggerGate source cards');
+      if (!selected) return setStatus('select a graph node before attaching a TriggerGate source card');
+      const gate = buildRuntimeGateFromSourceCard(card, { id: `gate_${card.id.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${Date.now()}` });
+      const attached = attachRuntimeGateToGraph(workspace.graph, gate, { kind: 'node_boundary', nodeId: selected.id }, workspace.runtimeGates ?? []);
+      setWorkspace({ ...workspace, graph: attached.graph, runtimeGates: attached.runtimeGates });
+      setCompiled(undefined);
+      setSelected(attached.graph.nodes.find((node) => node.id === selected.id));
+      setStatus(`gate attached as candidate control geometry: ${card.id}; not evaluated, not prompt content, no live execution`);
+      return;
+    }
     if (item.kind === 'sleeve') {
       const sleeve = structuredClone(item.asset as Sleeve);
       const nextWorkspace: UMGWorkspace = { id: `ws_${sleeve.id}`, title: sleeve.title, activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
@@ -202,7 +216,7 @@ function AuditShelfBanner({ total }: { total: number }) {
 }
 
 function ControlSourcesBanner({ total }: { total: number }) {
-  return <div className="shelfHero controlHero"><b>Control Sources</b><span>TriggerGate Sources: {total}</span><span>Read-only source-control cards — not MOLT prompt blocks.</span><span>Trigger MOLT remains 0; Attach Gate is future work.</span></div>;
+  return <div className="shelfHero controlHero"><b>Control Sources</b><span>TriggerGate Sources: {total}</span><span>Attach Gate creates inert control geometry, not MOLT prompt blocks.</span><span>Trigger MOLT remains 0; no live execution.</span></div>;
 }
 
 function SourceAuditTable({ items, onInspect }: { items: ShelfAsset[]; onInspect: (item: ShelfAsset) => void }) {
@@ -216,7 +230,7 @@ function AssetCards({ items, onAdd, onInspect }: { items: ShelfAsset[]; onAdd: (
     const isGateSource = item.kind === 'trigger_gate_source';
     const instId = item.kind === 'molt_block' ? block.legacy?.libraryEntryId : isGateSource ? gateCard.id : undefined;
     const category = item.kind === 'molt_block' ? block.category : isGateSource ? `${gateCard.category} / ${gateCard.subcategory}` : undefined;
-    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}{isGateSource && <p>activation: {gateCard.activation.conditionSummary}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)} disabled={isGateSource}>{isGateSource ? 'Attach Gate — future' : item.kind === 'sleeve' ? 'Open Sleeve' : 'Add to Workspace'}</button><button onClick={() => onInspect(item)}>{isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source'}</button></div></div>;
+    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}{isGateSource && <p>activation: {gateCard.activation.conditionSummary}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)}>{isGateSource ? 'Attach Gate' : item.kind === 'sleeve' ? 'Open Sleeve' : 'Add to Workspace'}</button><button onClick={() => onInspect(item)}>{isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source'}</button></div></div>;
   })}</div>;
 }
 
@@ -260,7 +274,7 @@ function BlockInspector({ views, fallback, activeTab, setActiveTab }: { views?: 
     : activeTab === 'Trace / IR Preview' ? views.traceIrPreview
     : activeTab === 'Trace' ? views.trace ?? []
     : views.irRow ?? { message: 'Compile to populate IR Row from IR Matrix source of truth.' };
-  return <div className="blockInspector"><div className="tabs inspectorTabs">{inspectorTabs.map((tab) => <button key={tab} className={activeTab === tab ? 'hot' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div><div className="report"><span>model SearchCard / RuntimeBlock / FullSourceRecord / TriggerGateSourceCard</span><span>NL/JSON sync rule: derived from the same normalized source</span><span>IR Matrix source of truth; Glyph Matrix graph projection layer</span><span>TriggerGate source cards are not prompt content; Attach Gate is future work.</span></div>{activeTab === 'NL' ? <pre>{String(body)}</pre> : <pre>{JSON.stringify(body, null, 2)}</pre>}</div>;
+  return <div className="blockInspector"><div className="tabs inspectorTabs">{inspectorTabs.map((tab) => <button key={tab} className={activeTab === tab ? 'hot' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div><div className="report"><span>model SearchCard / RuntimeBlock / FullSourceRecord / TriggerGateSourceCard</span><span>NL/JSON sync rule: derived from the same normalized source</span><span>IR Matrix source of truth; Glyph Matrix graph projection layer</span><span>TriggerGate source cards attach as inert control geometry; not prompt content; no live execution.</span></div>{activeTab === 'NL' ? <pre>{String(body)}</pre> : <pre>{JSON.stringify(body, null, 2)}</pre>}</div>;
 }
 
 function isUMGBlock(value: unknown): value is UMGBlock {
@@ -280,7 +294,7 @@ function findWorkspaceBlock(workspace: UMGWorkspace | undefined, sourceId: strin
 }
 
 function renderRuntime(workspace?: UMGWorkspace, compiled?: CompileResult, output?: string) {
-  return JSON.stringify({ workspace: workspace?.sleeves[0], runtimeSpec: compiled?.runtimeSpec, trace: compiled?.trace, diagnostics: compiled?.diagnostics, irMatrix: compiled?.irMatrix, output }, null, 2);
+  return JSON.stringify({ workspace: workspace?.sleeves[0], runtimeGates: workspace?.runtimeGates ?? [], graph: workspace?.graph, runtimeSpec: compiled?.runtimeSpec, trace: compiled?.trace, diagnostics: compiled?.diagnostics, irMatrix: compiled?.irMatrix, output }, null, 2);
 }
 
 function labelDisplayType(value: string) {
