@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
-import { applyCompileResultToGraph, applyManualLayout, applySnapLayout, buildGraphFromSleeve, focusGraph, openSelectedAsFocus, selectGraphNode } from '../lib/umg/graphBuilder';
+import { applyCompileResultToGraph, applyManualLayout, applySnapLayout, buildGraphFromSleeve, focusGraph, openSelectedAsFocus, projectGateRowsToGraph, selectGraphNode } from '../lib/umg/graphBuilder';
 import { DISPLAY_TYPE_ORDER, MOLT_ROLE_ORDER, addWorkbenchBlockByRole, saveWorkbenchBlockToLibrary, toggleWorkbenchBlock, updateWorkbenchBlockContent, validateHermesWorkbenchGeneration } from '../lib/umg/moltWorkbench';
 import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from '../lib/umg/workbenchLayout';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
@@ -1256,6 +1256,71 @@ describe('UMG Studio core engine', () => {
     expect(gateRow.blockedTargetIds).toEqual(['proposal_schedule_tool']);
     expect(moltRow.nodeType).toBe('molt_block');
     expect(moltRow).toMatchObject({ pathState: 'active', governingGateIds: ['gate_service_route'] });
+  });
+
+  it('projects GateIRRow path states onto graph nodes and edges without mutating the GateIRRow source of truth', () => {
+    const graph = {
+      nodes: [
+        { id: 'node_stack_service', sourceId: 'stack_service', nodeType: 'neostack' as const, label: 'Service NeoStack', position: { x: 320, y: 80 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+        { id: 'node_stack_sales', sourceId: 'stack_sales', nodeType: 'neostack' as const, label: 'Sales NeoStack', position: { x: 320, y: 260 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+        { id: 'node_block_marketing_upsell', sourceId: 'block_marketing_upsell', nodeType: 'molt_block' as const, label: 'Marketing Upsell', position: { x: 940, y: 260 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+        { id: 'node_route_blocked', sourceId: 'route_blocked', nodeType: 'neostack' as const, label: 'Blocked Path', position: { x: 320, y: 420 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+        { id: 'node_proposal_schedule_tool', sourceId: 'proposal_schedule_tool', nodeType: 'gate' as const, label: 'Schedule Tool Proposal', position: { x: 620, y: 420 }, state: { selected: false, active: false, off: false, triggered: false, invalid: false } }
+      ],
+      edges: [
+        { id: 'edge_service', source: 'node_sleeve', target: 'node_stack_service', type: 'activates' as const },
+        { id: 'edge_sales', source: 'node_sleeve', target: 'node_stack_sales', type: 'activates' as const },
+        { id: 'edge_upsell', source: 'node_stack_sales', target: 'node_block_marketing_upsell', type: 'contains' as const },
+        { id: 'edge_blocked', source: 'node_sleeve', target: 'node_route_blocked', type: 'conflicts_with' as const },
+        { id: 'edge_tool', source: 'node_route_blocked', target: 'node_proposal_schedule_tool', type: 'activates' as const }
+      ]
+    };
+    const gateRows = [
+      { rowId: 'gate_ir_service', nodeId: 'gate_service', nodeType: 'gate' as const, gateKind: 'trigger_gate' as const, title: 'Service intent', state: 'passed' as const, gatePassed: true, selectedRouteIds: ['route_service'], activeTargetIds: ['stack_service'], dormantTargetIds: ['stack_sales'], suppressedTargetIds: ['block_marketing_upsell'], blockedTargetIds: ['route_blocked'], governedNodeIds: ['stack_service', 'stack_sales', 'block_marketing_upsell', 'route_blocked'], requiredApproval: false, routingDecision: 'service_path', reason: 'repair intent matched', traceEventIds: ['trace_service'] },
+      { rowId: 'gate_ir_action', nodeId: 'gate_action', nodeType: 'gate' as const, gateKind: 'action_gate' as const, title: 'Tool approval', state: 'requires_approval' as const, gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: ['proposal_schedule_tool'], governedNodeIds: ['proposal_schedule_tool'], requiredApproval: true, reason: 'tool proposal requires approval; no execution', traceEventIds: [] }
+    ];
+    const sourceRows = structuredClone(gateRows);
+
+    const projected = projectGateRowsToGraph(graph, gateRows);
+
+    expect(projected).not.toBe(graph);
+    expect(gateRows).toEqual(sourceRows);
+    expect(projected.nodes.find((node) => node.sourceId === 'stack_service')).toMatchObject({ pathState: 'active', governingGateIds: ['gate_service'], gateKind: 'trigger_gate', gateLabel: 'Gt: Service intent' });
+    expect(projected.nodes.find((node) => node.sourceId === 'stack_sales')?.pathState).toBe('dormant');
+    expect(projected.nodes.find((node) => node.sourceId === 'block_marketing_upsell')?.pathState).toBe('suppressed');
+    const blocked = projected.nodes.find((node) => node.sourceId === 'route_blocked');
+    expect(blocked).toMatchObject({ pathState: 'blocked', state: { invalid: false } });
+    expect(projected.nodes.find((node) => node.sourceId === 'proposal_schedule_tool')).toMatchObject({ pathState: 'requires_approval', gateKind: 'action_gate', debugExpandable: true });
+    expect(projected.edges.find((edge) => edge.id === 'edge_service')).toMatchObject({ pathState: 'active', governingGateId: 'gate_service', gateKind: 'trigger_gate' });
+    expect(projected.edges.find((edge) => edge.id === 'edge_sales')?.pathState).toBe('dormant');
+    expect(projected.edges.find((edge) => edge.id === 'edge_upsell')?.pathState).toBe('suppressed');
+    expect(projected.edges.find((edge) => edge.id === 'edge_blocked')).toMatchObject({ pathState: 'blocked', governanceOverride: false });
+    expect(projected.edges.find((edge) => edge.id === 'edge_tool')).toMatchObject({ pathState: 'requires_approval', governanceOverride: true });
+  });
+
+  it('keeps gate visual projection inert for existing MOLT counts, HUMAN/GATES exclusions, Trigger imports, compose, real compile, and IR Matrix behavior', () => {
+    const blocks = normalizedLibraryBlocks as Array<{ role?: string; sourceLayer?: string; sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }>;
+    const pathOf = (block: { sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }) => `${block.sourcePath ?? ''} ${block.legacy?.sourcePath ?? ''} ${block.legacy?.parentSourcePath ?? ''}`;
+    const aiCount = (role: string, parentPath: string) => blocks.filter((block) => block.role === role && block.sourceLayer === 'AI' && block.legacy?.parentSourcePath === parentPath).length;
+    const activeBlocks = blocks.filter((block) => block.sourceLayer === 'AI' || !block.sourceLayer) as any[];
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, activeBlocks).draft_sleeve;
+    const workspace = { id: 'ws_gate_projection', title: 'Gate Projection Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const projected = projectGateRowsToGraph(applyCompileResultToGraph(workspace.graph, compiled), []);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(aiCount('instruction', 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json')).toBe(300);
+    expect(aiCount('subject', 'AI/MOLT-BLOCKS/subjects/library.v1.0.0.json')).toBe(200);
+    expect(aiCount('primary', 'AI/MOLT-BLOCKS/primary/library.v1.0.0.json')).toBe(200);
+    expect(aiCount('directive', 'AI/MOLT-BLOCKS/directives/library.v1.0.0.json')).toBe(200);
+    expect(aiCount('philosophy', 'AI/MOLT-BLOCKS/philosophy/library.v1.0.0.json')).toBe(270);
+    expect(aiCount('blueprint', 'AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json')).toBe(200);
+    expect(blocks.filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+    expect(blocks.some((block) => pathOf(block).includes('HUMAN/GATES'))).toBe(false);
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.every((row) => row.nodeType === 'molt_block')).toBe(true);
+    for (const row of activeRows) expect(projected.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+    expect(projected.nodes.every((node) => node.pathState === undefined)).toBe(true);
   });
 
   it('documents IR Matrix as source of truth and Glyph Matrix as projection for gate state', () => {

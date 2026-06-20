@@ -208,8 +208,17 @@ function AssetCards({ items, onAdd, onInspect }: { items: ShelfAsset[]; onAdd: (
   })}</div>;
 }
 
+function nodePathClass(pathState?: GraphNode['pathState']) {
+  return pathState ? `path-${pathState.replace('_', '-')}` : '';
+}
+
+function edgePathClass(edge: any) {
+  const routeClass = edge.pathState ? `edge-${String(edge.pathState).replace('_', '-')}${edge.pathState === 'active' || edge.pathState === 'dormant' || edge.pathState === 'suppressed' || edge.pathState === 'blocked' || edge.pathState === 'candidate' ? '-route' : ''}` : '';
+  return `${routeClass} ${edge.governanceOverride ? 'edge-governance-override' : ''}`.trim();
+}
+
 function Graph({ nodes, edges, selected, onPick }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void }) {
-  return <div className="canvas">{edges.map((edge) => <svg key={edge.id} className="edge" style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} stroke="#4b5563" /></svg>)}{nodes.map((node) => <button key={node.id} className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''}`} style={{ left: node.position.x, top: node.position.y }} onClick={() => onPick(node)}><b>{node.label}</b><small>{node.nodeType}</small>{node.state.warning && <em>{node.state.warning}</em>}</button>)}</div>;
+  return <div className="canvas">{edges.map((edge) => <svg key={edge.id} className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>)}{nodes.map((node) => <button key={node.id} className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`} style={{ left: node.position.x, top: node.position.y }} onClick={() => onPick(node)}><b>{node.label}</b><small>{node.gateLabel ?? node.nodeType}</small>{node.state.warning && <em>{node.state.warning}</em>}</button>)}</div>;
 }
 
 function BlockInspector({ views, fallback, activeTab, setActiveTab }: { views?: ReturnType<typeof buildBlockInspectorViews>; fallback?: unknown; activeTab: InspectorTab; setActiveTab: (tab: InspectorTab) => void }) {

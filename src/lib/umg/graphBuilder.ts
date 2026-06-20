@@ -1,4 +1,4 @@
-import { CompileResult, GraphEdge, GraphFocus, GraphLayoutItem, GraphNode, IRMatrixRow, Sleeve } from './types';
+import { CompileResult, GateIRRow, GateKind, GateVisualPathState, GraphEdge, GraphFocus, GraphLayoutItem, GraphNode, IRMatrixRow, Sleeve } from './types';
 
 const active = (off: boolean) => ({ selected: false, active: !off, off, triggered: false, invalid: false });
 
@@ -33,6 +33,109 @@ export function buildGraphFromSleeve(sleeve: Sleeve) {
   const leaves = nodes.filter((n) => n.nodeType === 'molt_block' && !n.state.off);
   leaves.slice(-2).forEach((n) => edges.push({ id: `e_${n.id}_out`, source: n.id, target: `node_output_${sleeve.id}`, type: 'compiles_to' }));
   return { nodes, edges };
+}
+
+const gatePrefix: Record<GateKind, string> = {
+  trigger_gate: 'Gt',
+  routing_gate: 'Gr',
+  governance_gate: 'Gv',
+  action_gate: 'Ga'
+};
+
+const pathPriority: Record<GateVisualPathState, number> = {
+  active: 1,
+  candidate: 2,
+  dormant: 3,
+  evaluating: 4,
+  suppressed: 5,
+  requires_approval: 6,
+  blocked: 7
+};
+
+type GateProjection = {
+  pathState: GateVisualPathState;
+  governingGateId: string;
+  gateKind: GateKind;
+  gateLabel: string;
+  glyphId: string;
+  governanceOverride: boolean;
+};
+
+function chooseProjection(current: GateProjection | undefined, candidate: GateProjection) {
+  if (!current) return candidate;
+  return pathPriority[candidate.pathState] >= pathPriority[current.pathState] ? candidate : current;
+}
+
+function addProjection(map: Map<string, GateProjection>, targetId: string, projection: GateProjection) {
+  map.set(targetId, chooseProjection(map.get(targetId), projection));
+}
+
+function labelForGate(row: GateIRRow) {
+  return `${gatePrefix[row.gateKind]}: ${row.title}`;
+}
+
+function glyphForGate(row: GateIRRow, index: number) {
+  return `${gatePrefix[row.gateKind]}.${String(index + 1).padStart(3, '0')}`;
+}
+
+function collectGateProjections(gateRows: GateIRRow[]) {
+  const projections = new Map<string, GateProjection>();
+  gateRows.forEach((row, index) => {
+    const base = { governingGateId: row.nodeId, gateKind: row.gateKind, gateLabel: labelForGate(row), glyphId: glyphForGate(row, index) };
+    row.activeTargetIds.forEach((targetId) => addProjection(projections, targetId, { ...base, pathState: 'active', governanceOverride: false }));
+    row.dormantTargetIds.forEach((targetId) => addProjection(projections, targetId, { ...base, pathState: 'dormant', governanceOverride: false }));
+    row.suppressedTargetIds.forEach((targetId) => addProjection(projections, targetId, { ...base, pathState: 'suppressed', governanceOverride: row.gateKind === 'governance_gate' }));
+    row.blockedTargetIds.forEach((targetId) => addProjection(projections, targetId, { ...base, pathState: row.requiredApproval || row.state === 'requires_approval' ? 'requires_approval' : 'blocked', governanceOverride: row.gateKind === 'governance_gate' || row.gateKind === 'action_gate' || row.requiredApproval }));
+  });
+  return projections;
+}
+
+function nodeLookup(nodes: GraphNode[]) {
+  const ids = new Map<string, GraphNode>();
+  nodes.forEach((node) => {
+    ids.set(node.id, node);
+    ids.set(node.sourceId, node);
+  });
+  return ids;
+}
+
+function edgeProjection(edge: GraphEdge, nodesById: Map<string, GraphNode>, projections: Map<string, GateProjection>) {
+  const target = nodesById.get(edge.target);
+  const source = nodesById.get(edge.source);
+  return projections.get(edge.routeId ?? '') ?? projections.get(target?.sourceId ?? '') ?? projections.get(target?.id ?? '') ?? projections.get(source?.sourceId ?? '') ?? projections.get(source?.id ?? '');
+}
+
+export function projectGateRowsToGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, gateRows: GateIRRow[]) {
+  if (gateRows.length === 0) return { ...graph, nodes: graph.nodes.map((node) => ({ ...node })), edges: graph.edges.map((edge) => ({ ...edge })) };
+  const projections = collectGateProjections(gateRows);
+  const nodes = graph.nodes.map((node) => {
+    const projection = projections.get(node.sourceId) ?? projections.get(node.id);
+    if (!projection) return { ...node };
+    const governingGateIds = [...new Set([...(node.governingGateIds ?? []), projection.governingGateId])];
+    return {
+      ...node,
+      pathState: projection.pathState,
+      governingGateIds,
+      gateKind: projection.gateKind,
+      gateLabel: projection.gateLabel,
+      glyphId: projection.glyphId,
+      debugExpandable: true,
+      state: { ...node.state, invalid: node.state.invalid }
+    };
+  });
+  const nodesById = nodeLookup(nodes);
+  const edges = graph.edges.map((edge) => {
+    const projection = edgeProjection(edge, nodesById, projections);
+    if (!projection) return { ...edge };
+    return {
+      ...edge,
+      pathState: projection.pathState,
+      governingGateId: projection.governingGateId,
+      gateKind: projection.gateKind,
+      governanceOverride: projection.governanceOverride
+    };
+  });
+  return { ...graph, nodes, edges };
 }
 
 function eventNodeIds(event: Record<string, unknown>) {
