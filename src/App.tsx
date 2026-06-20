@@ -9,7 +9,7 @@ import migrationReport from '../data/library/migration-report.json';
 import sourceAuditData from '../data/library/source-assets.json';
 import { normalizeImportedBlocks, classifyLibraryDisplay, sectionLibraryByDisplayType } from './lib/umg/migrateLibrary';
 import { composeBlocks } from './lib/umg/composeBlocks';
-import { applyCompileResultToGraph, buildGraphFromSleeve } from './lib/umg/graphBuilder';
+import { applyCompileResultToGraph, buildGraphFromSleeve, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { generateWithHermes, redactKey, testHermesConnection } from './lib/hermes/hermesClient';
@@ -217,8 +217,22 @@ function edgePathClass(edge: any) {
   return `${routeClass} ${edge.governanceOverride ? 'edge-governance-override' : ''}`.trim();
 }
 
+function gateStripStyle(edge: any) {
+  const x1 = edge.sourcePosition?.x ?? 40;
+  const y1 = edge.sourcePosition?.y ?? 40;
+  const x2 = edge.targetPosition?.x ?? 180;
+  const y2 = edge.targetPosition?.y ?? 120;
+  return { left: (x1 + x2) / 2, top: (y1 + y2) / 2 };
+}
+
 function Graph({ nodes, edges, selected, onPick }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void }) {
-  return <div className="canvas">{edges.map((edge) => <svg key={edge.id} className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>)}{nodes.map((node) => <button key={node.id} className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`} style={{ left: node.position.x, top: node.position.y }} onClick={() => onPick(node)}><b>{node.label}</b><small>{node.gateLabel ?? node.nodeType}</small>{node.state.warning && <em>{node.state.warning}</em>}</button>)}</div>;
+  return <div className="canvas">{edges.map((edge) => {
+    const gateStrip = gateVisualMetadataForEdge(edge);
+    return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
+  })}{nodes.map((node) => {
+    const gateBadge = gateVisualMetadataForNode(node);
+    return <button key={node.id} className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`} style={{ left: node.position.x, top: node.position.y }} onClick={() => onPick(node)}><b>{node.label}</b><small>{node.nodeType}</small>{gateBadge.renderGateBadge && <span className={gateBadge.className}>{gateBadge.label}</span>}{node.state.warning && <em>{node.state.warning}</em>}</button>;
+  })}</div>;
 }
 
 function BlockInspector({ views, fallback, activeTab, setActiveTab }: { views?: ReturnType<typeof buildBlockInspectorViews>; fallback?: unknown; activeTab: InspectorTab; setActiveTab: (tab: InspectorTab) => void }) {

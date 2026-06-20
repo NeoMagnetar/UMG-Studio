@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { composeBlocks } from '../lib/umg/composeBlocks';
-import { applyCompileResultToGraph, applyManualLayout, applySnapLayout, buildGraphFromSleeve, focusGraph, openSelectedAsFocus, projectGateRowsToGraph, selectGraphNode } from '../lib/umg/graphBuilder';
+import { applyCompileResultToGraph, applyManualLayout, applySnapLayout, buildGraphFromSleeve, focusGraph, gateVisualMetadataForEdge, gateVisualMetadataForNode, openSelectedAsFocus, projectGateRowsToGraph, selectGraphNode } from '../lib/umg/graphBuilder';
 import { DISPLAY_TYPE_ORDER, MOLT_ROLE_ORDER, addWorkbenchBlockByRole, saveWorkbenchBlockToLibrary, toggleWorkbenchBlock, updateWorkbenchBlockContent, validateHermesWorkbenchGeneration } from '../lib/umg/moltWorkbench';
 import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from '../lib/umg/workbenchLayout';
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
@@ -1296,6 +1296,32 @@ describe('UMG Studio core engine', () => {
     expect(projected.edges.find((edge) => edge.id === 'edge_upsell')?.pathState).toBe('suppressed');
     expect(projected.edges.find((edge) => edge.id === 'edge_blocked')).toMatchObject({ pathState: 'blocked', governanceOverride: false });
     expect(projected.edges.find((edge) => edge.id === 'edge_tool')).toMatchObject({ pathState: 'requires_approval', governanceOverride: true });
+  });
+
+  it('exposes compact gate strip and badge visual metadata only when graph projection metadata exists', () => {
+    const triggerEdge = { id: 'edge_trigger', source: 'node_sleeve', target: 'node_stack_service', type: 'activates' as const, gateKind: 'trigger_gate' as const, governingGateId: 'gate_service', gateLabel: 'Gt: service_intent', pathState: 'active' as const };
+    const routingEdge = { id: 'edge_routing', source: 'node_sleeve', target: 'node_stack_sales', type: 'activates' as const, gateKind: 'routing_gate' as const, governingGateId: 'gate_route', gateLabel: 'Gr: route_sales_vs_service', pathState: 'dormant' as const };
+    const governedNode = { id: 'node_stack_service', sourceId: 'stack_service', nodeType: 'neostack' as const, label: 'Service NeoStack', position: { x: 320, y: 80 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false }, gateKind: 'trigger_gate' as const, gateLabel: 'Gt: service_intent', pathState: 'active' as const };
+    const plainEdge = { id: 'edge_plain', source: 'node_sleeve', target: 'node_stack_plain', type: 'contains' as const };
+    const plainNode = { id: 'node_plain', sourceId: 'plain', nodeType: 'molt_block' as const, label: 'Plain Block', position: { x: 1, y: 1 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } };
+
+    expect(gateVisualMetadataForEdge(triggerEdge)).toMatchObject({ renderGateStrip: true, className: 'gate-strip gate-strip-trigger', label: 'Gt: service_intent' });
+    expect(gateVisualMetadataForEdge(routingEdge)).toMatchObject({ renderGateStrip: true, className: 'gate-strip gate-strip-routing', label: 'Gr: route_sales_vs_service' });
+    expect(gateVisualMetadataForNode(governedNode)).toMatchObject({ renderGateBadge: true, className: 'gate-badge gate-badge-trigger', label: 'Gt: service_intent' });
+    expect(gateVisualMetadataForEdge(plainEdge)).toMatchObject({ renderGateStrip: false });
+    expect(gateVisualMetadataForNode(plainNode)).toMatchObject({ renderGateBadge: false });
+  });
+
+  it('keeps visual gate strip and badge scaffolding inert for Trigger imports and ActionGate execution', () => {
+    const actionEdge = { id: 'edge_tool', source: 'node_route_blocked', target: 'node_proposal_schedule_tool', type: 'activates' as const, gateKind: 'action_gate' as const, governingGateId: 'gate_action', gateLabel: 'Ga: tool_approval', pathState: 'requires_approval' as const, governanceOverride: true };
+    const actionNode = { id: 'node_proposal_schedule_tool', sourceId: 'proposal_schedule_tool', nodeType: 'gate' as const, label: 'Schedule Tool Proposal', position: { x: 620, y: 420 }, state: { selected: false, active: false, off: false, triggered: false, invalid: false }, gateKind: 'action_gate' as const, gateLabel: 'Ga: tool_approval', pathState: 'requires_approval' as const };
+    const blocks = normalizedLibraryBlocks as Array<{ role?: string; sourceLayer?: string; sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }>;
+    const pathOf = (block: { sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }) => `${block.sourcePath ?? ''} ${block.legacy?.sourcePath ?? ''} ${block.legacy?.parentSourcePath ?? ''}`;
+
+    expect(gateVisualMetadataForEdge(actionEdge)).toMatchObject({ renderGateStrip: true, label: 'Ga: tool_approval', className: 'gate-strip gate-strip-action' });
+    expect(gateVisualMetadataForNode(actionNode)).toMatchObject({ renderGateBadge: true, className: 'gate-badge gate-badge-action' });
+    expect(blocks.filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+    expect(blocks.some((block) => pathOf(block).includes('HUMAN/GATES'))).toBe(false);
   });
 
   it('keeps gate visual projection inert for existing MOLT counts, HUMAN/GATES exclusions, Trigger imports, compose, real compile, and IR Matrix behavior', () => {

@@ -52,6 +52,33 @@ const pathPriority: Record<GateVisualPathState, number> = {
   blocked: 7
 };
 
+const gateClassSuffix: Record<GateKind, string> = {
+  trigger_gate: 'trigger',
+  routing_gate: 'routing',
+  governance_gate: 'governance',
+  action_gate: 'action'
+};
+
+export function gateVisualMetadataForEdge(edge: Partial<GraphEdge>) {
+  if (!edge.gateKind && !edge.gateLabel && !edge.governingGateId) return { renderGateStrip: false as const, label: '', className: '' };
+  const gateKind = edge.gateKind ?? 'trigger_gate';
+  return {
+    renderGateStrip: true as const,
+    label: edge.gateLabel ?? `${gatePrefix[gateKind]}: ${edge.governingGateId ?? 'gate'}`,
+    className: `gate-strip gate-strip-${gateClassSuffix[gateKind]}`
+  };
+}
+
+export function gateVisualMetadataForNode(node: Partial<GraphNode>) {
+  if (!node.gateKind && !node.gateLabel && !(node.governingGateIds?.length)) return { renderGateBadge: false as const, label: '', className: '' };
+  const gateKind = node.gateKind ?? 'trigger_gate';
+  return {
+    renderGateBadge: true as const,
+    label: node.gateLabel ?? `${gatePrefix[gateKind]}: ${node.governingGateIds?.[0] ?? 'gate'}`,
+    className: `gate-badge gate-badge-${gateClassSuffix[gateKind]}`
+  };
+}
+
 type GateProjection = {
   pathState: GateVisualPathState;
   governingGateId: string;
@@ -132,6 +159,7 @@ export function projectGateRowsToGraph(graph: { nodes: GraphNode[]; edges: Graph
       pathState: projection.pathState,
       governingGateId: projection.governingGateId,
       gateKind: projection.gateKind,
+      gateLabel: projection.gateLabel,
       governanceOverride: projection.governanceOverride
     };
   });
