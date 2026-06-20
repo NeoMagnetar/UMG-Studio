@@ -9,6 +9,7 @@ import { exportHermesPacket } from '../lib/umg/exporters';
 import { buildGateIRRow, buildRuntimeGate, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
+import { buildFullGateSourceRecord, buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards, parseTriggerGateSourceMarkdown } from '../lib/umg/gateSourceImport';
 import normalizedLibraryBlocks from '../../data/library/normalized-blocks.json';
 import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/aiInstructionImport';
 import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubjectImport';
@@ -17,6 +18,37 @@ import { normalizeAIDirectiveEntry, stableAIDirectiveId } from '../lib/umg/aiDir
 import { normalizeAIPhilosophyEntry, stableAIPhilosophyId } from '../lib/umg/aiPhilosophyImport';
 import { normalizeAIBlueprintEntry, stableAIBlueprintId } from '../lib/umg/aiBlueprintImport';
 import { NeoBlock, NeoStack, Sleeve, UMGWorkspace } from '../lib/umg/types';
+
+const trg001Markdown = `# TRG.001 ? Technical Analysis Request
+
+**Type:** TRIGGER
+**Category:** general
+**Subcategory:** analytical_requests
+**Status:** active
+
+## Summary
+Technical Analysis Request
+
+## Activation
+User requests analysis of code, system, or technical architecture
+
+## Tags
+trigger, analytical-requests
+`;
+
+const trg020Markdown = `# TRG.020 - Option Generation
+
+**Type:** TRIGGER
+**Category:** general
+**Subcategory:** decision_support
+**Status:** active
+
+## Summary
+Option Generation
+
+## Tags
+trigger, decision-support
+`;
 
 const rawBlocks = [
   { name: 'Chatbot Trigger', moltType: 'Trigger', tags: ['chatbot', 'intake'], content: 'Start when a visitor asks for service help.' },
@@ -760,7 +792,7 @@ describe('UMG Studio core engine', () => {
     const savedSleeve: Sleeve = { id: 'tagged_sleeve', title: 'Tagged Sleeve', type: 'sleeve', version: '0.1', tags: ['sleeve-tag'], stacks: [savedNeoStack], runtimeConfig: { active: true, depth: 'balanced', hermesEnabled: false, runtimeAdaptation: false, showRuntimeTrace: true } };
     const shelves = buildAssetShelves({ blocks, neoblocks: [savedNeoBlock], neostacks: [savedNeoStack], sleeves: [savedSleeve] });
 
-    expect(shelves.map((shelf) => shelf.id)).toEqual(['molt_blocks', 'neoblocks', 'neostacks', 'sleeves', 'source_audit']);
+    expect(shelves.map((shelf) => shelf.id)).toEqual(['molt_blocks', 'neoblocks', 'neostacks', 'sleeves', 'control_sources', 'source_audit']);
     expect(shelves[0].items.every((item) => item.kind === 'molt_block')).toBe(true);
     expect(shelves[1].items.every((item) => item.kind === 'neoblock')).toBe(true);
     expect(shelves[2].items.every((item) => item.kind === 'neostack')).toBe(true);
@@ -826,7 +858,7 @@ describe('UMG Studio core engine', () => {
     const shelves = buildAssetShelves({ blocks: [blocks[0]], neoblocks: [], neostacks: [], sleeves: [], sourceAuditItems: audit.items });
     const auditShelf = shelves.find((shelf) => shelf.id === 'source_audit');
 
-    expect(shelves.map((shelf) => shelf.id)).toEqual(['molt_blocks', 'neoblocks', 'neostacks', 'sleeves', 'source_audit']);
+    expect(shelves.map((shelf) => shelf.id)).toEqual(['molt_blocks', 'neoblocks', 'neostacks', 'sleeves', 'control_sources', 'source_audit']);
     expect(auditShelf?.items).toHaveLength(2);
     expect(searchShelfAssets(auditShelf!.items, { query: 'skipped' })).toHaveLength(1);
     expect(searchShelfAssets(auditShelf!.items, { query: '', tags: [] })).toHaveLength(2);
@@ -864,7 +896,7 @@ describe('UMG Studio core engine', () => {
     expect(searchShelfAssets(shelves[0].items, { query: 'break components' }).map((item) => item.id)).toContain('inst_001');
     expect(searchShelfAssets(shelves[0].items, { query: 'trace causality' }).map((item) => item.id)).toContain('inst_003');
     expect(searchShelfAssets(shelves[0].items, { tags: ['instruction'] }).length).toBeGreaterThanOrEqual(2);
-    expect(searchShelfAssets(shelves[4].items, { query: 'INST.001' })).toHaveLength(1);
+    expect(searchShelfAssets(shelves[5].items, { query: 'INST.001' })).toHaveLength(1);
 
     const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
     const selectedAIInstructions = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('inst_'));
@@ -918,7 +950,7 @@ describe('UMG Studio core engine', () => {
     expect(searchShelfAssets(shelves[0].items, { query: 'raw data' }).map((item) => item.id)).toContain('subj_001');
     expect(searchShelfAssets(shelves[0].items, { query: 'customer request' }).map((item) => item.id)).toContain('subj_010');
     expect(searchShelfAssets(shelves[0].items, { tags: ['subject'] }).length).toBeGreaterThanOrEqual(2);
-    expect(searchShelfAssets(shelves[4].items, { query: 'SUBJ.001' })).toHaveLength(1);
+    expect(searchShelfAssets(shelves[5].items, { query: 'SUBJ.001' })).toHaveLength(1);
 
     const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
     const selectedAISubjects = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('subj_'));
@@ -971,7 +1003,7 @@ describe('UMG Studio core engine', () => {
     expect(sections.find((section) => section.type === 'primary')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['prim_001', 'prim_010']));
     expect(searchShelfAssets(shelves[0].items, { query: 'factual accuracy' }).map((item) => item.id)).toContain('prim_001');
     expect(searchShelfAssets(shelves[0].items, { tags: ['customer-satisfaction'] }).map((item) => item.id)).toContain('prim_010');
-    expect(searchShelfAssets(shelves[4].items, { query: 'PRIM.001' })).toHaveLength(1);
+    expect(searchShelfAssets(shelves[5].items, { query: 'PRIM.001' })).toHaveLength(1);
 
     const composed = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks);
     const selectedAIPrimaries = composed.selected_nodes.filter((node) => node.sourceLayer === 'AI' && node.id.startsWith('prim_'));
@@ -1027,7 +1059,7 @@ describe('UMG Studio core engine', () => {
     expect(sections.find((section) => section.type === 'directive')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['dir_001', 'dir_010']));
     expect(searchShelfAssets(shelves[0].items, { query: 'assess accurately' }).map((item) => item.id)).toContain('dir_001');
     expect(searchShelfAssets(shelves[0].items, { tags: ['mobile-detailing'] }).map((item) => item.id)).toContain('dir_010');
-    expect(searchShelfAssets(shelves[4].items, { query: 'DIR.001' })).toHaveLength(1);
+    expect(searchShelfAssets(shelves[5].items, { query: 'DIR.001' })).toHaveLength(1);
     expect(views.card.type).toBe('SearchCard');
     expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'directive', compiler: { source: 'compiler_aligned_json', moltType: 'directive' } });
     expect(views.nl).toContain('role: Directive');
@@ -1088,7 +1120,7 @@ describe('UMG Studio core engine', () => {
     expect(sections.find((section) => section.type === 'philosophy')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['phil_001', 'phil_010']));
     expect(searchShelfAssets(shelves[0].items, { query: 'platonism' }).map((item) => item.id)).toContain('phil_001');
     expect(searchShelfAssets(shelves[0].items, { tags: ['mobile-detailing'] }).map((item) => item.id)).toContain('phil_010');
-    expect(searchShelfAssets(shelves[4].items, { query: 'PHIL.001' })).toHaveLength(1);
+    expect(searchShelfAssets(shelves[5].items, { query: 'PHIL.001' })).toHaveLength(1);
     expect(views.card.type).toBe('SearchCard');
     expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'philosophy', compiler: { source: 'compiler_aligned_json', moltType: 'philosophy' } });
     expect(views.nl).toContain('role: Philosophy');
@@ -1149,7 +1181,7 @@ describe('UMG Studio core engine', () => {
     expect(sections.find((section) => section.type === 'blueprint')?.blocks.map((block) => block.id)).toEqual(expect.arrayContaining(['bp_001', 'bp_010']));
     expect(searchShelfAssets(shelves[0].items, { query: 'python' }).map((item) => item.id)).toContain('bp_001');
     expect(searchShelfAssets(shelves[0].items, { tags: ['mobile-detailing'] }).map((item) => item.id)).toContain('bp_010');
-    expect(searchShelfAssets(shelves[4].items, { query: 'BP.001' })).toHaveLength(1);
+    expect(searchShelfAssets(shelves[5].items, { query: 'BP.001' })).toHaveLength(1);
     expect(views.card.type).toBe('SearchCard');
     expect(views.runtime).toMatchObject({ type: 'RuntimeBlock', role: 'blueprint', compiler: { source: 'compiler_aligned_json', moltType: 'blueprint' } });
     expect(views.nl).toContain('role: Blueprint');
@@ -1176,6 +1208,84 @@ describe('UMG Studio core engine', () => {
     expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
     expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_use') && row.active)).toBe(false);
     for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+  });
+
+  it('parses HUMAN/GATES TRG markdown into stable read-only TriggerGate source cards without creating MOLT blocks', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const record = buildFullGateSourceRecord(card);
+
+    expect(card).toMatchObject({
+      type: 'TriggerGateSourceCard',
+      id: 'TRG.001',
+      title: 'Technical Analysis Request',
+      gateKind: 'trigger_gate',
+      sourceType: 'HUMAN_GATE_SOURCE',
+      sourceLayer: 'HUMAN',
+      sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md',
+      status: 'active',
+      category: 'general',
+      subcategory: 'analytical_requests',
+      summary: 'Technical Analysis Request',
+      activation: { mode: 'source_condition', hasExplicitActivation: true, conditionSummary: 'User requests analysis of code, system, or technical architecture' },
+      card: { displayType: 'trigger_gate_source', badge: 'Gt', familyLabel: 'TriggerGate Source', runnableAsPromptContent: false, addActionLabel: 'Attach Gate' }
+    });
+    expect(card.tags).toEqual(['trigger', 'analytical-requests']);
+    expect((card as any).role).toBeUndefined();
+    expect((card as any).content).toBeUndefined();
+    expect(record).toMatchObject({ type: 'FullGateSourceRecord', sourceLayer: 'HUMAN', sourceFamily: 'HUMAN/GATES', parserVersion: 'trigger-gate-source-card.v0.1', normalized: { id: 'TRG.001' } });
+    expect(record.legacyOriginal.markdown).toBe(trg001Markdown);
+  });
+
+  it('uses manual/candidate activation fallback for TRG files without Activation sections', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.020-option-generation.md', trg020Markdown);
+
+    expect(card).toMatchObject({ id: 'TRG.020', title: 'Option Generation', category: 'general', subcategory: 'decision_support', status: 'active' });
+    expect(card.activation).toEqual({ mode: 'manual_candidate', conditionSummary: 'Activation not specified; treat as candidate/manual gate until configured.', rawActivation: undefined, hasExplicitActivation: false });
+    expect(card.legacy.parseWarnings).toContain('Activation not specified; treat as candidate/manual gate until configured.');
+  });
+
+  it('exposes TriggerGate source cards in a separate Control Sources shelf while preserving MOLT counts and read-only inspector views', () => {
+    const sourceCards = normalizeTriggerGateSourceCards([
+      { sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', markdown: trg001Markdown },
+      { sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.020-option-generation.md', markdown: trg020Markdown }
+    ]);
+    const blocks = normalizedLibraryBlocks as Array<{ role?: string; displayType?: string; sourceLayer?: string; sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }>;
+    const shelves = buildAssetShelves({ blocks: blocks as any[], neoblocks: [], neostacks: [], sleeves: [], gateSourceCards: sourceCards });
+    const controlShelf = shelves.find((shelf) => shelf.id === 'control_sources');
+    const moltShelf = shelves.find((shelf) => shelf.id === 'molt_blocks');
+    const trg001Asset = controlShelf?.items.find((item) => item.id === 'TRG.001');
+    const views = buildTriggerGateSourceInspectorViews(sourceCards[0]);
+
+    expect(controlShelf).toMatchObject({ id: 'control_sources', label: 'Control Sources' });
+    expect(controlShelf?.items).toHaveLength(2);
+    expect(trg001Asset).toMatchObject({ kind: 'trigger_gate_source', title: 'Technical Analysis Request', status: 'active', displayType: undefined, containedRoles: ['trigger_gate_source', 'trigger_gate', 'source_control'] });
+    expect((trg001Asset?.asset as any).type).toBe('TriggerGateSourceCard');
+    expect((trg001Asset?.asset as any).type).not.toBe('molt_block');
+    expect(moltShelf?.items.filter((item) => (item.asset as any).role === 'trigger')).toHaveLength(0);
+    expect(blocks.filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+    expect(views.card).toMatchObject({ type: 'TriggerGateSourceCardView', id: 'TRG.001', gateKind: 'trigger_gate', runnableAsPromptContent: false });
+    expect(views.nl).toContain('TriggerGate Source TRG.001');
+    expect(views.json).toMatchObject({ type: 'TriggerGateSourceCard', id: 'TRG.001' });
+    expect(views.legacySource.legacyOriginal.markdown).toBe(trg001Markdown);
+    expect(views.runtimePreview).toMatchObject({ wouldBecome: 'RuntimeGate', defaultState: 'inactive/candidate', promptContent: false, liveExecution: false });
+    expect(views.attachPlacementPreview.enabled).toBe(false);
+    expect(views.traceIrPreview.createsGateIRRowNow).toBe(false);
+  });
+
+  it('keeps TriggerGate source-card visibility inert for compose, real compile, IR Matrix, and live tool execution', () => {
+    const sourceCards = Array.from({ length: 200 }, (_, index) => parseTriggerGateSourceMarkdown(`/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.${String(index + 1).padStart(3, '0')}-sample.md`, trg001Markdown.replace('TRG.001', `TRG.${String(index + 1).padStart(3, '0')}`)));
+    const blocks = normalizedLibraryBlocks as Array<{ role?: string; sourceLayer?: string; legacy?: { parentSourcePath?: string } }>;
+    const shelves = buildAssetShelves({ blocks: blocks as any[], neoblocks: [], neostacks: [], sleeves: [], gateSourceCards: sourceCards });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks as any[]).draft_sleeve;
+    const workspace = { id: 'ws_gate_sources', title: 'Gate Source Read-only Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+
+    expect(shelves.find((shelf) => shelf.id === 'control_sources')?.items).toHaveLength(200);
+    expect(blocks.filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.every((row) => row.nodeType === 'molt_block')).toBe(true);
+    expect(JSON.stringify(compiled.runtimeSpec)).not.toContain('RuntimeGate');
+    expect(JSON.stringify(compiled.runtimeSpec)).not.toContain('tool_results');
   });
 
   it('formalizes TriggerGate as a gate subtype that selectively controls runtime path states without creating MOLT trigger blocks', () => {

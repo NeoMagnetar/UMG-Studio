@@ -1,9 +1,9 @@
 import { buildGraphFromSleeve } from './graphBuilder';
 import { classifyLibraryDisplay, detectUnsupportedRole, SourceAsset } from './migrateLibrary';
-import { GraphFocusMode, MOLTDisplayType, NeoBlock, NeoStack, Sleeve, UMGBlock, UMGWorkspace } from './types';
+import { GraphFocusMode, MOLTDisplayType, NeoBlock, NeoStack, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './types';
 
-type ShelfKind = 'molt_block' | 'neoblock' | 'neostack' | 'sleeve' | 'source_asset';
-export type AssetShelfId = 'molt_blocks' | 'neoblocks' | 'neostacks' | 'sleeves' | 'source_audit';
+type ShelfKind = 'molt_block' | 'neoblock' | 'neostack' | 'sleeve' | 'source_asset' | 'trigger_gate_source';
+export type AssetShelfId = 'molt_blocks' | 'neoblocks' | 'neostacks' | 'sleeves' | 'source_audit' | 'control_sources';
 export type SourceAssetOutcome = 'runnable_molt' | 'meta' | 'neoblock' | 'neostack' | 'sleeve' | 'skipped' | 'duplicate' | 'unsupported' | 'reference_only' | 'warning';
 export type SourceAuditItem = {
   id: string;
@@ -28,7 +28,7 @@ export type ShelfAsset = {
   displayType?: MOLTDisplayType;
   containedRoles: string[];
   containedTitles: string[];
-  asset: UMGBlock | NeoBlock | NeoStack | Sleeve | SourceAuditItem;
+  asset: UMGBlock | NeoBlock | NeoStack | Sleeve | SourceAuditItem | TriggerGateSourceCard;
 };
 export type AssetShelf = { id: AssetShelfId; label: string; items: ShelfAsset[] };
 export type InsertContext = { mode: GraphFocusMode; selectedStackId?: string; selectedNeoBlockId?: string };
@@ -224,12 +224,17 @@ function sourceAuditAsset(item: SourceAuditItem): ShelfAsset {
   return { id: item.id, kind: 'source_asset', title: item.title, tags: item.tags, sourcePath: item.sourcePath, status: item.outcome, displayType: item.outcome === 'runnable_molt' ? undefined : 'meta', containedRoles: [item.normalizedRole, item.detectedType, item.outcome].filter(Boolean) as string[], containedTitles: [item.reason ?? '', item.sourcePath], asset: item };
 }
 
-export function buildAssetShelves(input: { blocks: UMGBlock[]; neoblocks: NeoBlock[]; neostacks: NeoStack[]; sleeves: Sleeve[]; sourceAuditItems?: SourceAuditItem[] }): AssetShelf[] {
+function triggerGateSourceAsset(card: TriggerGateSourceCard): ShelfAsset {
+  return { id: card.id, kind: 'trigger_gate_source', title: card.title, tags: card.tags, sourcePath: card.sourcePath, status: card.status, displayType: undefined, containedRoles: ['trigger_gate_source', card.gateKind, 'source_control'], containedTitles: [card.summary, card.activation.conditionSummary], asset: card };
+}
+
+export function buildAssetShelves(input: { blocks: UMGBlock[]; neoblocks: NeoBlock[]; neostacks: NeoStack[]; sleeves: Sleeve[]; sourceAuditItems?: SourceAuditItem[]; gateSourceCards?: TriggerGateSourceCard[] }): AssetShelf[] {
   return [
     { id: 'molt_blocks', label: 'MOLT Blocks', items: input.blocks.map(blockAsset) },
     { id: 'neoblocks', label: 'NeoBlocks', items: input.neoblocks.map(neoblockAsset) },
     { id: 'neostacks', label: 'NeoStacks', items: input.neostacks.map(neostackAsset) },
     { id: 'sleeves', label: 'Sleeves', items: input.sleeves.map(sleeveAsset) },
+    { id: 'control_sources', label: 'Control Sources', items: (input.gateSourceCards ?? []).map(triggerGateSourceAsset) },
     { id: 'source_audit', label: 'Source Assets / Audit — audit only', items: (input.sourceAuditItems ?? []).map(sourceAuditAsset) }
   ];
 }

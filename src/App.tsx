@@ -15,13 +15,15 @@ import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { generateWithHermes, redactKey, testHermesConnection } from './lib/hermes/hermesClient';
 import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceAuditItem } from './lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from './lib/umg/blockViews';
-import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, UMGBlock, UMGWorkspace } from './lib/umg/types';
+import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards } from './lib/umg/gateSourceImport';
+import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
 const statuses = ['all', 'runnable', 'warning-bearing', 'meta', 'reference-only', 'unsupported'];
 const defaultStatusFilter = 'runnable';
-const inspectorTabs = ['Card', 'Runtime', 'NL', 'JSON', 'Legacy Source', 'Trace', 'IR Row'] as const;
+const inspectorTabs = ['Card', 'Runtime', 'Runtime Preview', 'NL', 'JSON', 'Legacy Source', 'Attach / Placement Preview', 'Trace / IR Preview', 'Trace', 'IR Row'] as const;
+const triggerGateSourceModules = import.meta.glob('../../umg-block-library/HUMAN/GATES/TRG.*.md', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 type InspectorTab = typeof inspectorTabs[number];
 
@@ -51,9 +53,10 @@ export default function App() {
     const classification = classifyLibraryDisplay(block);
     return { ...block, displayType: classification.displayType, presentationStatus: classification.status };
   }), [library]);
+  const triggerGateSourceCards = useMemo(() => normalizeTriggerGateSourceCards(Object.entries(triggerGateSourceModules).map(([sourcePath, markdown]) => ({ sourcePath, markdown }))), []);
   const sections = useMemo(() => sectionLibraryByDisplayType(libraryWithStatus), [libraryWithStatus]);
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
-  const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: savedNeoBlocks as NeoBlock[], neostacks: savedNeoStacks as NeoStack[], sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[] }), [libraryWithStatus]);
+  const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: savedNeoBlocks as NeoBlock[], neostacks: savedNeoStacks as NeoStack[], sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, triggerGateSourceCards]);
   const currentShelf = shelves.find((shelf) => shelf.id === activeShelf) ?? shelves[0];
   const visibleItems = useMemo(() => {
     let items = searchShelfAssets(currentShelf.items, { query: search, tags: tagFilters });
@@ -69,12 +72,13 @@ export default function App() {
   const graph = workspace?.graph;
   const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
+  const inspectedGateSource = isTriggerGateSourceCard(inspected) ? inspected : undefined;
   const inspectorBlock = inspectedBlock ?? selectedBlock;
-  const inspectorViews = useMemo(() => inspectorBlock ? buildBlockInspectorViews(inspectorBlock, {
+  const inspectorViews = useMemo(() => inspectedGateSource ? buildTriggerGateSourceInspectorViews(inspectedGateSource) : inspectorBlock ? buildBlockInspectorViews(inspectorBlock, {
     graphNode: selected?.sourceId === inspectorBlock.id ? selected : undefined,
     irRow: compiled?.irMatrix.find((row) => row.nodeId === inspectorBlock.id),
     trace: compiled?.trace
-  }) : undefined, [inspectorBlock, selected, compiled]);
+  }) : undefined, [inspectedGateSource, inspectorBlock, selected, compiled]);
 
   const compose = () => {
     const composition = composeBlocks({ freeform_request: request, target_type: target as any, depth }, libraryWithStatus);
@@ -101,6 +105,7 @@ export default function App() {
 
   const addAsset = (item: ShelfAsset) => {
     if (item.kind === 'source_asset') { setInspected(item.asset); setInspectorTab('Legacy Source'); return; }
+    if (item.kind === 'trigger_gate_source') { setInspected(item.asset); setInspectorTab('Attach / Placement Preview'); setStatus('Attach Gate is future work; TriggerGate source card remains read-only'); return; }
     if (item.kind === 'sleeve') {
       const sleeve = structuredClone(item.asset as Sleeve);
       const nextWorkspace: UMGWorkspace = { id: `ws_${sleeve.id}`, title: sleeve.title, activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
@@ -157,6 +162,7 @@ export default function App() {
         <ShelfControls shelves={shelves} activeShelf={activeShelf} setActiveShelf={(shelf: ShelfMode) => { setActiveShelf(shelf); setTagFilters([]); }} search={search} setSearch={setSearch} tagFilters={tagFilters} setTagFilters={setTagFilters} visibleTags={visibleTags} filtered={Boolean(search || tagFilters.length || roleFilter !== 'all' || statusFilter !== defaultStatusFilter)} shown={visibleItems.length} total={currentShelf.items.length} clear={() => { setSearch(''); setTagFilters([]); setRoleFilter('all'); setStatusFilter(defaultStatusFilter); }} />
         {activeShelf === 'molt_blocks' && <BuilderShelfHeader roleFilter={roleFilter} statusFilter={statusFilter} shown={visibleItems.length} total={currentShelf.items.length} aiInstructionCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'instruction').length} aiSubjectCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'subject').length} aiPrimaryCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'primary').length} aiDirectiveCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'directive').length} aiPhilosophyCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'philosophy').length} aiBlueprintCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'blueprint').length} />}
         {activeShelf === 'source_audit' && <AuditShelfBanner total={currentShelf.items.length} />}
+        {activeShelf === 'control_sources' && <ControlSourcesBanner total={currentShelf.items.length} />}
         {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Role filter</b><div className="filterBar roleSubsections"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => setRoleFilter('all')}>All MOLT + Meta ({libraryWithStatus.length})</button>{roles.map((role) => <button key={role} className={roleFilter === role ? 'hot roleHot' : ''} onClick={() => setRoleFilter(role)}>{labelDisplayType(role)} ({libraryWithStatus.filter((block) => block.displayType === role).length})</button>)}<button className={roleFilter === 'meta' ? 'hot metaHot roleHot' : ''} onClick={() => setRoleFilter('meta')}>Meta ({libraryWithStatus.filter((block) => block.displayType === 'meta').length})</button></div></div>}
         {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Status filter</b><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? libraryWithStatus.length : statusCounts[s] ?? 0)}</button>)}</div></div>}
         {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <AssetCards items={visibleItems} onAdd={addAsset} onInspect={inspectAsset} />}
@@ -180,7 +186,7 @@ function LibraryAudit({ report }: { report: any }) {
 
 function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, visibleTags, filtered, shown, total, clear }: any) {
   const toggleTag = (tag: string) => setTagFilters(tagFilters.includes(tag) ? tagFilters.filter((t: string) => t !== tag) : [...tagFilters, tag]);
-  const searchLabel = activeShelf === 'source_audit' ? 'Search audit accountability rows' : 'Search active builder shelf first';
+  const searchLabel = activeShelf === 'source_audit' ? 'Search audit accountability rows' : activeShelf === 'control_sources' ? 'Search TriggerGate source cards' : 'Search active builder shelf first';
   return <><div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelf.items.length})</button>)}</div><label className="searchLabel">{searchLabel}<input placeholder="title, INST id, tags, sourcePath, role/status" value={search} onChange={(event) => setSearch(event.target.value)} /></label>{filtered && <div className="filterNotice"><b>Filtered view active</b><span>{shown} of {total} shown</span><button onClick={clear}>Clear filters</button></div>}{tagFilters.length > 0 && <div className="activeTags"><b>Active filters</b>{tagFilters.map((tag: string) => <button key={tag} className="tag active" onClick={() => toggleTag(tag)}>{tag} ×</button>)}</div>}<div className="tagCloud">{visibleTags.map((tag: string) => <button key={tag} className={`tag ${tagFilters.includes(tag) ? 'active' : ''}`} onClick={() => toggleTag(tag)}>{tag}</button>)}</div></>;
 }
 
@@ -195,6 +201,10 @@ function AuditShelfBanner({ total }: { total: number }) {
   return <div className="shelfHero auditHero"><b>Source Assets / Audit</b><span>Audit only — not builder shelf</span><span>Import accountability rows: {total}</span><span>Use MOLT Blocks → Instruction for editable builder cards.</span></div>;
 }
 
+function ControlSourcesBanner({ total }: { total: number }) {
+  return <div className="shelfHero controlHero"><b>Control Sources</b><span>TriggerGate Sources: {total}</span><span>Read-only source-control cards — not MOLT prompt blocks.</span><span>Trigger MOLT remains 0; Attach Gate is future work.</span></div>;
+}
+
 function SourceAuditTable({ items, onInspect }: { items: ShelfAsset[]; onInspect: (item: ShelfAsset) => void }) {
   return <div className="auditTable"><div className="auditHeader"><span>title</span><span>detected type</span><span>role</span><span>outcome</span><span>source / reason</span></div>{items.map((item, index) => { const audit = item.asset as SourceAuditItem; return <div key={`${item.id}:${index}`} className={`auditRow outcome-${audit.outcome}`}><span><b>{audit.title}</b><small>{audit.tags.join(', ') || 'no tags'}</small></span><span>{audit.detectedType}</span><span>{audit.normalizedRole ?? 'n/a'}</span><span className="badge">{audit.outcome}</span><span><code>{audit.sourcePath}</code><small>{audit.reason ?? 'accounted'}</small><button onClick={() => onInspect(item)}>Inspect JSON / Legacy Source</button></span></div>; })}</div>;
 }
@@ -202,9 +212,11 @@ function SourceAuditTable({ items, onInspect }: { items: ShelfAsset[]; onInspect
 function AssetCards({ items, onAdd, onInspect }: { items: ShelfAsset[]; onAdd: (item: ShelfAsset) => void; onInspect: (item: ShelfAsset) => void }) {
   return <div className="cards builderCards">{items.map((item, index) => {
     const block = item.asset as UMGBlock;
-    const instId = item.kind === 'molt_block' ? block.legacy?.libraryEntryId : undefined;
-    const category = item.kind === 'molt_block' ? block.category : undefined;
-    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)}>{item.kind === 'sleeve' ? 'Open Sleeve' : 'Add to Workspace'}</button><button onClick={() => onInspect(item)}>Inspect JSON / Legacy Source</button></div></div>;
+    const gateCard = item.asset as TriggerGateSourceCard;
+    const isGateSource = item.kind === 'trigger_gate_source';
+    const instId = item.kind === 'molt_block' ? block.legacy?.libraryEntryId : isGateSource ? gateCard.id : undefined;
+    const category = item.kind === 'molt_block' ? block.category : isGateSource ? `${gateCard.category} / ${gateCard.subcategory}` : undefined;
+    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}{isGateSource && <p>activation: {gateCard.activation.conditionSummary}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)} disabled={isGateSource}>{isGateSource ? 'Attach Gate — future' : item.kind === 'sleeve' ? 'Open Sleeve' : 'Add to Workspace'}</button><button onClick={() => onInspect(item)}>{isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source'}</button></div></div>;
   })}</div>;
 }
 
@@ -235,21 +247,28 @@ function Graph({ nodes, edges, selected, onPick }: { nodes: GraphNode[]; edges: 
   })}</div>;
 }
 
-function BlockInspector({ views, fallback, activeTab, setActiveTab }: { views?: ReturnType<typeof buildBlockInspectorViews>; fallback?: unknown; activeTab: InspectorTab; setActiveTab: (tab: InspectorTab) => void }) {
-  if (!views && !fallback) return <div className="empty">Select or inspect a block to view Card / Runtime / NL / JSON / Legacy Source.</div>;
+function BlockInspector({ views, fallback, activeTab, setActiveTab }: { views?: any; fallback?: unknown; activeTab: InspectorTab; setActiveTab: (tab: InspectorTab) => void }) {
+  if (!views && !fallback) return <div className="empty">Select or inspect a block/source card to view Card / Runtime / NL / JSON / Legacy Source.</div>;
   if (!views) return <><h3>Inspect JSON / Legacy Source</h3><pre>{JSON.stringify(fallback, null, 2)}</pre></>;
   const body = activeTab === 'Card' ? views.card
-    : activeTab === 'Runtime' ? views.runtime.runtimeState
+    : activeTab === 'Runtime' ? views.runtime?.runtimeState ?? views.runtimePreview
+    : activeTab === 'Runtime Preview' ? views.runtimePreview ?? views.runtime?.runtimeState
     : activeTab === 'NL' ? views.nl
-    : activeTab === 'JSON' ? views.compilerJson
+    : activeTab === 'JSON' ? views.compilerJson ?? views.json
     : activeTab === 'Legacy Source' ? views.legacySource
+    : activeTab === 'Attach / Placement Preview' ? views.attachPlacementPreview
+    : activeTab === 'Trace / IR Preview' ? views.traceIrPreview
     : activeTab === 'Trace' ? views.trace ?? []
     : views.irRow ?? { message: 'Compile to populate IR Row from IR Matrix source of truth.' };
-  return <div className="blockInspector"><div className="tabs inspectorTabs">{inspectorTabs.map((tab) => <button key={tab} className={activeTab === tab ? 'hot' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div><div className="report"><span>model SearchCard / RuntimeBlock / FullSourceRecord</span><span>NL/JSON sync rule: derived from the same normalized block</span><span>IR Matrix source of truth; Glyph Matrix graph projection layer</span><span>Off is runtime state; Merge is action/synthesis, not MOLT type</span></div>{activeTab === 'NL' ? <pre>{String(body)}</pre> : <pre>{JSON.stringify(body, null, 2)}</pre>}</div>;
+  return <div className="blockInspector"><div className="tabs inspectorTabs">{inspectorTabs.map((tab) => <button key={tab} className={activeTab === tab ? 'hot' : ''} onClick={() => setActiveTab(tab)}>{tab}</button>)}</div><div className="report"><span>model SearchCard / RuntimeBlock / FullSourceRecord / TriggerGateSourceCard</span><span>NL/JSON sync rule: derived from the same normalized source</span><span>IR Matrix source of truth; Glyph Matrix graph projection layer</span><span>TriggerGate source cards are not prompt content; Attach Gate is future work.</span></div>{activeTab === 'NL' ? <pre>{String(body)}</pre> : <pre>{JSON.stringify(body, null, 2)}</pre>}</div>;
 }
 
 function isUMGBlock(value: unknown): value is UMGBlock {
   return Boolean(value && typeof value === 'object' && (value as UMGBlock).type === 'molt_block' && (value as UMGBlock).role && (value as UMGBlock).content !== undefined);
+}
+
+function isTriggerGateSourceCard(value: unknown): value is TriggerGateSourceCard {
+  return Boolean(value && typeof value === 'object' && (value as TriggerGateSourceCard).type === 'TriggerGateSourceCard');
 }
 
 function findWorkspaceBlock(workspace: UMGWorkspace | undefined, sourceId: string) {
