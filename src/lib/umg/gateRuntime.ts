@@ -1,4 +1,4 @@
-import { GateIRRow, GateKind, GateRouteControl, GateScopeTarget, GraphEdge, GraphNode, RuntimeGate, TriggerGateSourceCard } from './types';
+import { GateIRRow, GateKind, GateRouteControl, GateScopeTarget, GraphEdge, GraphNode, RuntimeGate, RuntimeGateContext, TriggerGateSourceCard, UMGWorkspace } from './types';
 
 export const GATE_KINDS: GateKind[] = ['trigger_gate', 'routing_gate', 'governance_gate', 'action_gate'];
 
@@ -26,7 +26,8 @@ export function buildRuntimeGate(input: Omit<RuntimeGate, 'type' | 'routeControl
     priorityOrder: input.priorityOrder ?? { priorityMeaning: 'hierarchy_order_only' },
     traceRefs: input.traceRefs ?? [],
     sourcePath: input.sourcePath,
-    sourceCardId: input.sourceCardId
+    sourceCardId: input.sourceCardId,
+    placement: input.placement
   };
 }
 
@@ -59,6 +60,7 @@ export function buildRuntimeGateFromSourceCard(card: TriggerGateSourceCard, opti
 
 export function attachRuntimeGateToGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, gate: RuntimeGate, placement: GateAttachmentPlacement, existingRuntimeGates: RuntimeGate[] = []) {
   const gateLabel = compactGateLabel(gate);
+  const placedGate: RuntimeGate = { ...gate, placement: placement.kind === 'edge' ? { kind: 'edge', targetId: placement.edgeId } : { kind: 'node_boundary', targetId: placement.nodeId } };
   const nodes = graph.nodes.map((node) => {
     if (placement.kind !== 'node_boundary' || node.id !== placement.nodeId) return { ...node };
     return {
@@ -74,10 +76,10 @@ export function attachRuntimeGateToGraph(graph: { nodes: GraphNode[]; edges: Gra
     if (placement.kind !== 'edge' || edge.id !== placement.edgeId) return { ...edge };
     return { ...edge, governingGateId: gate.id, gateKind: gate.gateKind, gateLabel, pathState: edge.pathState ?? 'candidate' as const };
   });
-  return { graph: { ...graph, nodes, edges }, runtimeGates: [...existingRuntimeGates, gate] };
+  return { graph: { ...graph, nodes, edges }, runtimeGates: [...existingRuntimeGates, placedGate] };
 }
 
-export function buildGateIRRow(gate: RuntimeGate, options: { rowId?: string; selectedRouteIds?: string[]; routingDecision?: string; requiredApproval?: boolean } = {}): GateIRRow {
+export function buildGateIRRow(gate: RuntimeGate, options: { rowId?: string; selectedRouteIds?: string[]; routingDecision?: string; requiredApproval?: boolean; governedNodeIds?: string[] } = {}): GateIRRow {
   const activeTargetIds = targetIds(gate.routeControl.activates);
   const dormantTargetIds = targetIds(gate.routeControl.dormants);
   const suppressedTargetIds = targetIds(gate.routeControl.suppresses);
@@ -88,6 +90,12 @@ export function buildGateIRRow(gate: RuntimeGate, options: { rowId?: string; sel
     nodeType: 'gate',
     gateKind: gate.gateKind,
     title: gate.title,
+    selected: false,
+    active: false,
+    off: false,
+    triggered: false,
+    required: false,
+    tagsMatched: [],
     state: gate.runtimeState.state,
     gatePassed: gate.runtimeState.passed,
     selectedRouteIds: options.selectedRouteIds ?? [],
@@ -95,10 +103,61 @@ export function buildGateIRRow(gate: RuntimeGate, options: { rowId?: string; sel
     dormantTargetIds,
     suppressedTargetIds,
     blockedTargetIds,
-    governedNodeIds: [...new Set([...activeTargetIds, ...dormantTargetIds, ...suppressedTargetIds, ...blockedTargetIds])],
+    governedNodeIds: options.governedNodeIds ?? [...new Set([...activeTargetIds, ...dormantTargetIds, ...suppressedTargetIds, ...blockedTargetIds])],
     requiredApproval: options.requiredApproval ?? gate.runtimeState.state === 'requires_approval',
     routingDecision: options.routingDecision,
     reason: gate.runtimeState.reason,
     traceEventIds: gate.traceRefs
   };
+}
+
+function emptyRouteState() {
+  return { active_paths: [], dormant_paths: [], suppressed_paths: [], blocked_paths: [] };
+}
+
+function governedNodeIdsForGate(workspace: UMGWorkspace, gate: RuntimeGate) {
+  const nodeIds = workspace.graph.nodes.filter((node) => node.governingGateIds?.includes(gate.id)).map((node) => node.id);
+  const edgeNodeIds = workspace.graph.edges
+    .filter((edge) => edge.governingGateId === gate.id)
+    .flatMap((edge) => [edge.source, edge.target]);
+  return [...new Set([...nodeIds, ...edgeNodeIds])];
+}
+
+export function buildRuntimeGateContext(workspace: UMGWorkspace): RuntimeGateContext {
+  return {
+    gates: (workspace.runtimeGates ?? []).map((gate) => ({
+      id: gate.id,
+      sourceCardId: gate.sourceCardId,
+      title: gate.title,
+      gateKind: gate.gateKind,
+      sourcePath: gate.sourcePath,
+      placement: gate.placement,
+      runtimeState: gate.runtimeState
+    })),
+    gate_decisions: [],
+    route_state: emptyRouteState()
+  };
+}
+
+export function buildGateIRRowsForWorkspace(workspace: UMGWorkspace): GateIRRow[] {
+  return (workspace.runtimeGates ?? []).map((gate) => buildGateIRRow(gate, {
+    rowId: `gate_ir_${gate.id}`,
+    governedNodeIds: governedNodeIdsForGate(workspace, gate),
+    requiredApproval: gate.gateKind === 'action_gate' && gate.runtimeState.state === 'requires_approval',
+    routingDecision: 'not_evaluated'
+  }));
+}
+
+export function attachGateContextToCompileResult(workspace: UMGWorkspace, result: { runtimeSpec: unknown; trace: Array<Record<string, unknown>>; irMatrix: Array<unknown> }) {
+  const gate_context = buildRuntimeGateContext(workspace);
+  const gateRows = buildGateIRRowsForWorkspace(workspace);
+  if (gate_context.gates.length === 0) return result;
+  const runtimeSpec = typeof result.runtimeSpec === 'object' && result.runtimeSpec !== null
+    ? { ...result.runtimeSpec as Record<string, unknown>, gate_context }
+    : { value: result.runtimeSpec, gate_context };
+  const trace = [
+    ...result.trace,
+    ...gate_context.gates.map((gate) => ({ kind: 'gate_attached', gateId: gate.id, gateKind: gate.gateKind, sourceCardId: gate.sourceCardId, placement: gate.placement, evaluated: false, executed: false, reason: gate.runtimeState.reason }))
+  ];
+  return { ...result, runtimeSpec, trace, irMatrix: [...result.irMatrix, ...gateRows] };
 }

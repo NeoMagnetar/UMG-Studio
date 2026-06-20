@@ -1,12 +1,15 @@
 import { CompileResult, HermesConfig } from './types';
 
 export function exportHermesPacket(user_request: string, compiled: CompileResult, settings: HermesConfig) {
+  const runtimeSpec = compiled.runtimeSpec as { gate_context?: unknown } | undefined;
+  const gate_context = runtimeSpec && typeof runtimeSpec === 'object' ? runtimeSpec.gate_context : undefined;
   return {
     mode: 'generate',
     user_request,
     compiled_prompt: compiled.promptPreview,
     runtime_spec: compiled.runtimeSpec,
-    active_blocks: compiled.irMatrix.filter((r) => r.active).map((r) => r.nodeId),
+    active_blocks: compiled.irMatrix.filter((r) => r.nodeType === 'molt_block' && Boolean((r as any).active)).map((r) => r.nodeId),
+    gate_context,
     trace: compiled.trace,
     settings: {
       endpoint: settings.endpoint,

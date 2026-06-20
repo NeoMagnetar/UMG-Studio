@@ -6,7 +6,7 @@ import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
-import { attachRuntimeGateToGraph, buildGateIRRow, buildRuntimeGate, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
+import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { buildFullGateSourceRecord, buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards, parseTriggerGateSourceMarkdown } from '../lib/umg/gateSourceImport';
@@ -1319,9 +1319,59 @@ describe('UMG Studio core engine', () => {
     expect(workspace.runtimeGates).toHaveLength(1);
     expect(workspace.runtimeGates?.[0].sourceCardId).toBe('TRG.001');
     expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
-    expect(compiled.irMatrix.every((row) => row.nodeType === 'molt_block')).toBe(true);
+    expect(compiled.irMatrix.filter((row) => row.nodeType === 'molt_block').length).toBeGreaterThan(0);
+    expect(compiled.irMatrix.filter((row) => row.nodeType === 'gate')).toHaveLength(1);
     expect(compiled.promptPreview).not.toContain('TRG.001');
     expect(JSON.stringify(compiled.runtimeSpec)).not.toContain('tool_results');
+  });
+
+  it('emits attached RuntimeGates as inert runtime gate_context and separate GateIRRows without changing MOLT prompt selection', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_context_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const baseWorkspace: UMGWorkspace = { id: 'ws_gate_context_base', title: 'Gate Context Base', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const targetNode = baseWorkspace.graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+    const attached = attachRuntimeGateToGraph(baseWorkspace.graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+    const workspace: UMGWorkspace = { ...baseWorkspace, graph: attached.graph, runtimeGates: attached.runtimeGates };
+    const context = buildRuntimeGateContext(workspace);
+    const gateRows = buildGateIRRowsForWorkspace(workspace);
+    const compiledWithoutGate = compileWorkspaceToRuntime(baseWorkspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const compiledWithGate = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const runtimeSpec = compiledWithGate.runtimeSpec as any;
+    const emittedGateRows = compiledWithGate.irMatrix.filter((row: any) => row.nodeType === 'gate') as any[];
+    const moltRows = compiledWithGate.irMatrix.filter((row: any) => row.nodeType === 'molt_block');
+
+    expect(context.gates).toHaveLength(1);
+    expect(context.gates[0]).toMatchObject({ id: 'gate_trg_001_context_test', sourceCardId: 'TRG.001', title: 'Technical Analysis Request', gateKind: 'trigger_gate', sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', placement: { kind: 'node_boundary', targetId: targetNode.id }, runtimeState: { state: 'inactive', passed: false, reason: 'Gate attached as control geometry; not evaluated yet.' } });
+    expect(context.gate_decisions).toEqual([]);
+    expect(context.route_state).toEqual({ active_paths: [], dormant_paths: [], suppressed_paths: [], blocked_paths: [] });
+    expect(gateRows).toHaveLength(1);
+    expect(gateRows[0]).toMatchObject({ nodeType: 'gate', gateKind: 'trigger_gate', state: 'inactive', gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: [], governedNodeIds: [targetNode.id], requiredApproval: false, routingDecision: 'not_evaluated', reason: 'Gate attached as control geometry; not evaluated yet.', traceEventIds: [] });
+    expect(runtimeSpec.gate_context).toMatchObject(context);
+    expect(emittedGateRows).toHaveLength(1);
+    expect(emittedGateRows[0].nodeType).toBe('gate');
+    expect(moltRows.length).toBe(compiledWithoutGate.irMatrix.filter((row: any) => row.nodeType === 'molt_block').length);
+    expect(compiledWithGate.promptPreview).toBe(compiledWithoutGate.promptPreview);
+    expect(JSON.stringify(compiledWithGate.runtimeSpec)).not.toContain('tool_results');
+  });
+
+  it('exports inert gate_context in Hermes packets without API keys, tool results, or route decisions', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_packet_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const graph = buildGraphFromSleeve(sleeve);
+    const targetEdge = graph.edges[0];
+    const attached = attachRuntimeGateToGraph(graph, gate, { kind: 'edge', edgeId: targetEdge.id });
+    const workspace: UMGWorkspace = { id: 'ws_gate_packet', title: 'Gate Packet Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: attached.graph, runtimeGates: attached.runtimeGates };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const packet = exportHermesPacket('Build a mobile detailing customer intake chatbot', compiled, { endpoint: 'http://localhost:9999', apiKey: 'secret-key', model: 'hermes-default', temperature: 0.3, maxTokens: 1200 }) as any;
+
+    expect(packet.gate_context.gates[0]).toMatchObject({ id: 'gate_trg_001_packet_test', sourceCardId: 'TRG.001', gateKind: 'trigger_gate', placement: { kind: 'edge', targetId: targetEdge.id }, runtimeState: { state: 'inactive', passed: false } });
+    expect(packet.gate_context.gate_decisions).toEqual([]);
+    expect(packet.gate_context.route_state).toEqual({ active_paths: [], dormant_paths: [], suppressed_paths: [], blocked_paths: [] });
+    expect(packet.settings.apiKey).toBeUndefined();
+    expect(JSON.stringify(packet)).not.toContain('secret-key');
+    expect(JSON.stringify(packet)).not.toContain('tool_results');
   });
 
   it('keeps TriggerGate source-card visibility inert for compose, real compile, IR Matrix, and live tool execution', () => {
@@ -1438,8 +1488,8 @@ describe('UMG Studio core engine', () => {
       ]
     };
     const gateRows = [
-      { rowId: 'gate_ir_service', nodeId: 'gate_service', nodeType: 'gate' as const, gateKind: 'trigger_gate' as const, title: 'Service intent', state: 'passed' as const, gatePassed: true, selectedRouteIds: ['route_service'], activeTargetIds: ['stack_service'], dormantTargetIds: ['stack_sales'], suppressedTargetIds: ['block_marketing_upsell'], blockedTargetIds: ['route_blocked'], governedNodeIds: ['stack_service', 'stack_sales', 'block_marketing_upsell', 'route_blocked'], requiredApproval: false, routingDecision: 'service_path', reason: 'repair intent matched', traceEventIds: ['trace_service'] },
-      { rowId: 'gate_ir_action', nodeId: 'gate_action', nodeType: 'gate' as const, gateKind: 'action_gate' as const, title: 'Tool approval', state: 'requires_approval' as const, gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: ['proposal_schedule_tool'], governedNodeIds: ['proposal_schedule_tool'], requiredApproval: true, reason: 'tool proposal requires approval; no execution', traceEventIds: [] }
+      { rowId: 'gate_ir_service', nodeId: 'gate_service', nodeType: 'gate' as const, gateKind: 'trigger_gate' as const, title: 'Service intent', selected: false as const, active: false as const, off: false as const, triggered: false as const, required: false as const, tagsMatched: [], state: 'passed' as const, gatePassed: true, selectedRouteIds: ['route_service'], activeTargetIds: ['stack_service'], dormantTargetIds: ['stack_sales'], suppressedTargetIds: ['block_marketing_upsell'], blockedTargetIds: ['route_blocked'], governedNodeIds: ['stack_service', 'stack_sales', 'block_marketing_upsell', 'route_blocked'], requiredApproval: false, routingDecision: 'service_path', reason: 'repair intent matched', traceEventIds: ['trace_service'] },
+      { rowId: 'gate_ir_action', nodeId: 'gate_action', nodeType: 'gate' as const, gateKind: 'action_gate' as const, title: 'Tool approval', selected: false as const, active: false as const, off: false as const, triggered: false as const, required: false as const, tagsMatched: [], state: 'requires_approval' as const, gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: ['proposal_schedule_tool'], governedNodeIds: ['proposal_schedule_tool'], requiredApproval: true, reason: 'tool proposal requires approval; no execution', traceEventIds: [] }
     ];
     const sourceRows = structuredClone(gateRows);
 
