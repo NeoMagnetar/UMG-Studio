@@ -6,8 +6,10 @@ import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
+import { buildGateIRRow, buildRuntimeGate, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
+import normalizedLibraryBlocks from '../../data/library/normalized-blocks.json';
 import { normalizeAIInstructionEntry, stableAIInstructionId } from '../lib/umg/aiInstructionImport';
 import { normalizeAISubjectEntry, stableAISubjectId } from '../lib/umg/aiSubjectImport';
 import { normalizeAIPrimaryEntry, stableAIPrimaryId } from '../lib/umg/aiPrimaryImport';
@@ -1173,6 +1175,124 @@ describe('UMG Studio core engine', () => {
 
     expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
     expect(compiled.irMatrix.some((row) => row.nodeId.includes('future_use') && row.active)).toBe(false);
+    for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
+  });
+
+  it('formalizes TriggerGate as a gate subtype that selectively controls runtime path states without creating MOLT trigger blocks', () => {
+    expect(GATE_KINDS).toEqual(['trigger_gate', 'routing_gate', 'governance_gate', 'action_gate']);
+
+    const gate = buildRuntimeGate({
+      id: 'gate_service_repair_route',
+      title: 'Service repair route gate',
+      gateKind: 'trigger_gate',
+      condition: 'Customer asks for repair or service appointment',
+      routeControl: {
+        activates: [{ targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' }],
+        dormants: [{ targetId: 'stack_sales', targetType: 'neostack', defaultPathState: 'dormant' }],
+        suppresses: [{ targetId: 'block_marketing_upsell', targetType: 'molt_block', defaultPathState: 'suppressed' }],
+        blocks: []
+      },
+      runtimeState: { state: 'passed', passed: true, reason: 'repair intent matched service route' },
+      priorityOrder: { orderIndex: 0, priorityMeaning: 'hierarchy_order_only' },
+      traceRefs: ['trace_repair_intent'],
+      sourcePath: 'local/gates/service-repair-route.json'
+    });
+
+    expect(gate).toMatchObject({ type: 'RuntimeGate', gateKind: 'trigger_gate', runtimeState: { state: 'passed', passed: true } });
+    expect(gate.routeControl.activates.map((target) => target.targetId)).toEqual(['stack_service']);
+    expect(gate.routeControl.dormants.map((target) => target.targetId)).toEqual(['stack_sales']);
+    expect(gate.routeControl.suppresses.map((target) => target.targetId)).toEqual(['block_marketing_upsell']);
+    expect(gate.routeControl.activates[0].targetType).toBe('neostack');
+  });
+
+  it('allows RuntimeGate targets to govern MOLT blocks, NeoBlocks, NeoStacks, sleeve routes, and tool proposals while ActionGate remains inert', () => {
+    const gate = buildRuntimeGate({
+      id: 'gate_multi_scope',
+      title: 'Multi-scope gate',
+      gateKind: 'action_gate',
+      condition: 'Tool proposal requires approval before execution',
+      routeControl: {
+        activates: [
+          { targetId: 'block_service_prompt', targetType: 'molt_block', defaultPathState: 'active' },
+          { targetId: 'nb_service_intake', targetType: 'neoblock', defaultPathState: 'active' },
+          { targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' },
+          { targetId: 'route_service', targetType: 'sleeve_route', defaultPathState: 'active' },
+          { targetId: 'proposal_schedule_tool', targetType: 'tool_proposal', defaultPathState: 'blocked' }
+        ],
+        dormants: [],
+        suppresses: [],
+        blocks: [{ targetId: 'proposal_schedule_tool', targetType: 'tool_proposal', defaultPathState: 'blocked' }]
+      },
+      runtimeState: { state: 'requires_approval', passed: false, reason: 'live tool execution is not implemented' }
+    });
+
+    expect(gate.routeControl.activates.map((target) => target.targetType)).toEqual(['molt_block', 'neoblock', 'neostack', 'sleeve_route', 'tool_proposal']);
+    expect(gate.routeControl.blocks[0]).toMatchObject({ targetType: 'tool_proposal', defaultPathState: 'blocked' });
+    expect(gate.runtimeState).toMatchObject({ state: 'requires_approval', passed: false });
+  });
+
+  it('adds Gate IR rows without converting existing MOLT IR rows into Gate rows', () => {
+    const gate = buildRuntimeGate({
+      id: 'gate_service_route',
+      title: 'Service route gate',
+      gateKind: 'routing_gate',
+      condition: 'Repair request selects service path',
+      routeControl: {
+        activates: [{ targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' }],
+        dormants: [{ targetId: 'stack_sales', targetType: 'neostack', defaultPathState: 'dormant' }],
+        suppresses: [{ targetId: 'block_marketing_upsell', targetType: 'molt_block', defaultPathState: 'suppressed' }],
+        blocks: [{ targetId: 'proposal_schedule_tool', targetType: 'tool_proposal', defaultPathState: 'blocked' }]
+      },
+      runtimeState: { state: 'passed', passed: true, reason: 'service route selected' },
+      traceRefs: ['trace_gate_service']
+    });
+    const gateRow = buildGateIRRow(gate, { selectedRouteIds: ['route_service'], routingDecision: 'service_path' });
+    const moltRow = { rowId: 'ir_molt_1', nodeId: 'block_service_prompt', nodeType: 'molt_block', role: 'instruction', title: 'Service Prompt', selected: true, active: true, off: false, triggered: false, required: true, tagsMatched: [], pathState: 'active', governingGateIds: ['gate_service_route'] };
+
+    expect(gateRow).toMatchObject({ nodeType: 'gate', gateKind: 'routing_gate', state: 'passed', gatePassed: true, routingDecision: 'service_path' });
+    expect(gateRow.activeTargetIds).toEqual(['stack_service']);
+    expect(gateRow.dormantTargetIds).toEqual(['stack_sales']);
+    expect(gateRow.suppressedTargetIds).toEqual(['block_marketing_upsell']);
+    expect(gateRow.blockedTargetIds).toEqual(['proposal_schedule_tool']);
+    expect(moltRow.nodeType).toBe('molt_block');
+    expect(moltRow).toMatchObject({ pathState: 'active', governingGateIds: ['gate_service_route'] });
+  });
+
+  it('documents IR Matrix as source of truth and Glyph Matrix as projection for gate state', () => {
+    expect(gateProjectionPrinciples).toMatchObject({
+      irMatrixSourceOfTruth: true,
+      glyphMatrixProjectionOnly: true,
+      gateNodesProjectAs: 'G',
+      noLiveToolExecution: true
+    });
+  });
+
+  it('keeps HUMAN/GATES out of MOLT imports and preserves existing generated MOLT family counts', () => {
+    const blocks = normalizedLibraryBlocks as Array<{ role?: string; sourceLayer?: string; sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }>;
+    const byAIParent = (role: string, parentPath: string) => blocks.filter((block) => block.role === role && block.sourceLayer === 'AI' && block.legacy?.parentSourcePath === parentPath).length;
+    const pathOf = (block: { sourcePath?: string; legacy?: { sourcePath?: string; parentSourcePath?: string } }) => `${block.sourcePath ?? ''} ${block.legacy?.sourcePath ?? ''} ${block.legacy?.parentSourcePath ?? ''}`;
+
+    expect(byAIParent('instruction', 'AI/MOLT-BLOCKS/instructions/library.v1.0.0.json')).toBe(300);
+    expect(byAIParent('subject', 'AI/MOLT-BLOCKS/subjects/library.v1.0.0.json')).toBe(200);
+    expect(byAIParent('primary', 'AI/MOLT-BLOCKS/primary/library.v1.0.0.json')).toBe(200);
+    expect(byAIParent('directive', 'AI/MOLT-BLOCKS/directives/library.v1.0.0.json')).toBe(200);
+    expect(byAIParent('philosophy', 'AI/MOLT-BLOCKS/philosophy/library.v1.0.0.json')).toBe(270);
+    expect(byAIParent('blueprint', 'AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json')).toBe(200);
+    expect(blocks.filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI').length).toBe(0);
+    expect(blocks.some((block) => pathOf(block).includes('HUMAN/GATES'))).toBe(false);
+    expect(blocks.some((block) => pathOf(block).includes('AI/MOLT-BLOCKS/triggers'))).toBe(false);
+  });
+
+  it('preserves the existing mobile-detailing compose and real compiler flow with Gate scaffold inactive', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'balanced' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_gate_scaffold', title: 'Gate Scaffold Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const graph = applyCompileResultToGraph(workspace.graph, compiled);
+    const activeRows = compiled.irMatrix.filter((row) => row.active && !row.off);
+
+    expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    expect(compiled.irMatrix.every((row) => row.nodeType === 'molt_block')).toBe(true);
     for (const row of activeRows) expect(graph.nodes.find((node) => node.sourceId === row.nodeId)?.state.active).toBe(true);
   });
 
