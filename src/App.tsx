@@ -17,6 +17,7 @@ import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceA
 import { buildBlockInspectorViews } from './lib/umg/blockViews';
 import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards } from './lib/umg/gateSourceImport';
 import { buildRuntimeGateFromSourceCard, attachRuntimeGateToGraph } from './lib/umg/gateRuntime';
+import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from './lib/umg/glyphMatrix';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
@@ -29,6 +30,8 @@ const triggerGateSourceModules = import.meta.glob('../../umg-block-library/HUMAN
 type InspectorTab = typeof inspectorTabs[number];
 
 type ShelfMode = AssetShelfId;
+type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
+const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
 
 export default function App() {
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
@@ -42,6 +45,7 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('Card');
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('ready');
+  const [runtimeTab, setRuntimeTab] = useState<RuntimeDrawerTab>('RuntimeSpec');
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
   const [search, setSearch] = useState('');
   const [tagFilters, setTagFilters] = useState<string[]>([]);
@@ -184,7 +188,7 @@ export default function App() {
       </section>
       <section className="graph card"><div className="bar"><h2>Graph Studio</h2><button onClick={() => workspace && downloadJson('sleeve.json', workspace.sleeves[0])}>Export Sleeve</button><button onClick={() => compiled && downloadJson('ir-matrix.json', compiled.irMatrix)}>Export IR</button><button onClick={() => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config))}>Export Hermes Packet</button></div>{graph ? <Graph nodes={graph.nodes} edges={graph.edges} selected={selected?.id} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}</section>
       <aside className="inspect card"><h2>Inspector / Config</h2>{selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}<BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} /><h3>Hermes</h3><div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div><input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => setConfig({ ...config, endpoint: event.target.value })} /><input placeholder="API key" type="password" value={config.apiKey ?? ''} onChange={(event) => setConfig({ ...config, apiKey: event.target.value })} /><input aria-label="Hermes model" value={config.model} onChange={(event) => setConfig({ ...config, model: event.target.value })} /><button onClick={async () => { const result = await testHermesConnection(config); setHermesStatus(result.ok ? 'test passed' : 'test failed'); setStatus(`Hermes ${result.message}`); }}>Test Connection</button></aside>
-      <section className="drawer card"><h2>Compiler / Runtime</h2><div className="tabs"><button>RuntimeSpec</button><button>Trace</button><button>IR Matrix</button><button>Output</button></div><pre>{renderRuntime(workspace, compiled, output)}</pre></section>
+      <section className="drawer card"><h2>Compiler / Runtime</h2><div className="tabs">{runtimeDrawerTabs.map((tab) => <button key={tab} className={runtimeTab === tab ? 'hot' : ''} onClick={() => setRuntimeTab(tab)}>{tab}</button>)}</div><pre className={runtimeTab === 'Glyph Matrix' ? 'glyphMatrixOutput' : undefined}>{renderRuntime(workspace, compiled, output, runtimeTab)}</pre></section>
     </main>
   </div>;
 }
@@ -293,8 +297,16 @@ function findWorkspaceBlock(workspace: UMGWorkspace | undefined, sourceId: strin
   return undefined;
 }
 
-function renderRuntime(workspace?: UMGWorkspace, compiled?: CompileResult, output?: string) {
-  return JSON.stringify({ workspace: workspace?.sleeves[0], runtimeGates: workspace?.runtimeGates ?? [], graph: workspace?.graph, runtimeSpec: compiled?.runtimeSpec, trace: compiled?.trace, diagnostics: compiled?.diagnostics, irMatrix: compiled?.irMatrix, output }, null, 2);
+function renderRuntime(workspace?: UMGWorkspace, compiled?: CompileResult, output?: string, runtimeTab: RuntimeDrawerTab = 'RuntimeSpec') {
+  if (runtimeTab === 'RuntimeSpec') return JSON.stringify(compiled?.runtimeSpec ?? workspace?.runtime, null, 2);
+  if (runtimeTab === 'Trace') return JSON.stringify(compiled?.trace ?? workspace?.runtime?.trace ?? [], null, 2);
+  if (runtimeTab === 'IR Matrix') return JSON.stringify(compiled?.irMatrix ?? workspace?.runtime?.irMatrix ?? [], null, 2);
+  if (runtimeTab === 'Glyph Matrix') {
+    if (!compiled) return 'Compile to project Glyph Matrix from RuntimeSpec, IR Matrix, GateIRRows, Trace, and inert gate_context.';
+    const glyphMatrix = projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' as GlyphMatrixViewMode });
+    return renderGlyphMatrixText(glyphMatrix);
+  }
+  return output || 'No output generated. Compile/export remains available without live tool execution.';
 }
 
 function labelDisplayType(value: string) {

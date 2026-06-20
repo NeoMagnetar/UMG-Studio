@@ -6,6 +6,7 @@ import { defaultWorkbenchLayout, loadWorkbenchLayout, saveWorkbenchLayout } from
 import { compileWorkspaceToRuntime } from '../lib/umg/compilerBridge';
 import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, normalizeImportedBlocks, normalizeSourceCatalog, sectionLibraryByDisplayType } from '../lib/umg/migrateLibrary';
 import { exportHermesPacket } from '../lib/umg/exporters';
+import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
@@ -1353,6 +1354,84 @@ describe('UMG Studio core engine', () => {
     expect(moltRows.length).toBe(compiledWithoutGate.irMatrix.filter((row: any) => row.nodeType === 'molt_block').length);
     expect(compiledWithGate.promptPreview).toBe(compiledWithoutGate.promptPreview);
     expect(JSON.stringify(compiledWithGate.runtimeSpec)).not.toContain('tool_results');
+  });
+
+  it('projects Glyph Matrix lines from IR Matrix, GateIRRows, Trace, and inert gate_context without creating runtime truth', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_glyph_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const baseWorkspace: UMGWorkspace = { id: 'ws_glyph_base', title: 'Glyph Base', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const targetNode = baseWorkspace.graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+    const attached = attachRuntimeGateToGraph(baseWorkspace.graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+    const workspace: UMGWorkspace = { ...baseWorkspace, graph: attached.graph, runtimeGates: attached.runtimeGates };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const sourceSnapshot = structuredClone({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph });
+
+    const glyphMatrix = projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'compact' });
+    const text = renderGlyphMatrixText(glyphMatrix);
+    const gateLine = glyphMatrix.lines.find((line) => line.sourceGateIrRowId);
+    const activeMoltLine = glyphMatrix.lines.find((line) => line.sourceIrRowId && line.nodeClass === 'M' && line.state === 'active');
+    const traceLine = glyphMatrix.lines.find((line) => line.sourceTraceEventId);
+
+    expect(glyphMatrix.viewMode).toBe('compact');
+    expect(glyphMatrix.activeSleeveId).toBe(workspace.activeSleeveId);
+    expect(activeMoltLine).toMatchObject({ nodeClass: 'M', stateGlyph: '[#]', relationOut: '==>' });
+    expect(gateLine).toMatchObject({ nodeClass: 'Gt', state: 'candidate', stateGlyph: '( )', relationOut: '-->', objectTitle: 'Technical Analysis Request' });
+    expect(gateLine?.text).toContain('Gt.001 Technical Analysis Request -->');
+    expect(gateLine?.text).toContain('state: inactive / not_evaluated');
+    expect(gateLine?.text).toContain('sourceCardId: TRG.001');
+    expect(gateLine?.text).toContain('gatePassed: false');
+    expect(gateLine?.text).not.toContain('[#]');
+    expect(text).toContain('( ) Gt.001 Technical Analysis Request -->');
+    expect(text).toContain('gatePassed: false');
+    expect(text).not.toContain('service_intent_detected');
+    expect(text).not.toContain('tool_results');
+    expect(traceLine?.text).toMatch(/^\(\d+\)/);
+    expect(JSON.stringify({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph })).toBe(JSON.stringify(sourceSnapshot));
+  });
+
+  it('maps Glyph Matrix gate kinds, relation symbols, blocked paths, and MOLT counts without tool execution', () => {
+    const rows = [
+      { rowId: 'ir_molt_active', nodeId: 'block_service_prompt', nodeType: 'molt_block' as const, role: 'instruction' as const, title: 'Service Prompt', selected: true, active: true, off: false, triggered: false, required: true, tagsMatched: [], priority: 1, contribution: 'Ask for repair details' },
+      { rowId: 'ir_molt_off', nodeId: 'block_sales_prompt', nodeType: 'molt_block' as const, role: 'subject' as const, title: 'Sales Prompt', selected: false, active: false, off: true, triggered: false, required: true, tagsMatched: [] },
+      { rowId: 'gate_ir_trigger', nodeId: 'gate_trigger', nodeType: 'gate' as const, gateKind: 'trigger_gate' as const, title: 'Trigger Intent', selected: false as const, active: false as const, off: false as const, triggered: false as const, required: false as const, tagsMatched: [], state: 'passed' as const, gatePassed: true, selectedRouteIds: ['route_service'], activeTargetIds: ['stack_service'], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: [], governedNodeIds: ['stack_service'], requiredApproval: false, routingDecision: 'service_path', reason: 'source runtime says active', traceEventIds: ['trace_gate_trigger'] },
+      { rowId: 'gate_ir_routing', nodeId: 'gate_routing', nodeType: 'gate' as const, gateKind: 'routing_gate' as const, title: 'Routing Gate', selected: false as const, active: false as const, off: false as const, triggered: false as const, required: false as const, tagsMatched: [], state: 'inactive' as const, gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: ['stack_sales'], suppressedTargetIds: [], blockedTargetIds: [], governedNodeIds: ['stack_sales'], requiredApproval: false, routingDecision: 'not_evaluated', reason: 'not evaluated', traceEventIds: [] },
+      { rowId: 'gate_ir_governance', nodeId: 'gate_governance', nodeType: 'gate' as const, gateKind: 'governance_gate' as const, title: 'Safety Guard', selected: false as const, active: false as const, off: false as const, triggered: false as const, required: false as const, tagsMatched: [], state: 'blocked' as const, gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: ['unsafe_path'], governedNodeIds: ['unsafe_path'], requiredApproval: false, routingDecision: 'blocked_by_policy', reason: 'blocked by source runtime', traceEventIds: ['trace_governance'] },
+      { rowId: 'gate_ir_action', nodeId: 'gate_action', nodeType: 'gate' as const, gateKind: 'action_gate' as const, title: 'Tool Approval', selected: false as const, active: false as const, off: false as const, triggered: false as const, required: false as const, tagsMatched: [], state: 'requires_approval' as const, gatePassed: false, selectedRouteIds: [], activeTargetIds: [], dormantTargetIds: [], suppressedTargetIds: [], blockedTargetIds: ['proposal_schedule_tool'], governedNodeIds: ['proposal_schedule_tool'], requiredApproval: true, reason: 'approval required; no execution', traceEventIds: [] }
+    ];
+    const trace = [{ id: 'trace_gate_trigger', kind: 'gate_passed' }, { id: 'trace_governance', kind: 'gate_blocked' }];
+    const glyphMatrix = projectGlyphMatrix({ runtimeSpec: { source: 'test', gate_context: { gates: [], gate_decisions: [], route_state: { active_paths: ['stack_service'], dormant_paths: ['stack_sales'], suppressed_paths: [], blocked_paths: ['unsafe_path'] } } }, irMatrix: rows as any, trace, viewMode: 'debug' });
+    const text = renderGlyphMatrixText(glyphMatrix);
+
+    expect(glyphMatrix.lines.find((line) => line.objectId === 'gate_trigger')).toMatchObject({ nodeClass: 'Gt', stateGlyph: '[#]', relationOut: '==>' });
+    expect(glyphMatrix.lines.find((line) => line.objectId === 'gate_routing')).toMatchObject({ nodeClass: 'Gr', stateGlyph: '( )', relationOut: '-->' });
+    expect(glyphMatrix.lines.find((line) => line.objectId === 'gate_governance')).toMatchObject({ nodeClass: 'Gv', stateGlyph: '[x]', relationOut: '-x->' });
+    expect(glyphMatrix.lines.find((line) => line.objectId === 'gate_action')).toMatchObject({ nodeClass: 'Ga', stateGlyph: '[!]', relationOut: '-x->' });
+    expect(text).toContain('M Service Prompt ==>');
+    expect(text).toContain('[ ] M Sales Prompt');
+    expect(text).toContain('(1)');
+    expect(text).toContain('(2)');
+    expect(text).not.toContain('tool_results');
+    expect(rows.filter((row) => row.nodeType === 'molt_block')).toHaveLength(2);
+    expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+  });
+
+  it('exports safe Glyph Matrix projection in Hermes packets without API keys, tool results, or invented route truth', () => {
+    const card = parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown);
+    const gate = buildRuntimeGateFromSourceCard(card, { id: 'gate_trg_001_packet_glyph_test' });
+    const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+    const graph = buildGraphFromSleeve(sleeve);
+    const attached = attachRuntimeGateToGraph(graph, gate, { kind: 'node_boundary', nodeId: graph.nodes.find((node) => node.nodeType === 'neoblock')!.id });
+    const workspace: UMGWorkspace = { id: 'ws_glyph_packet', title: 'Glyph Packet Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: attached.graph, runtimeGates: attached.runtimeGates };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+    const packet = exportHermesPacket('Build a mobile detailing customer intake chatbot', compiled, { endpoint: 'http://localhost:9999', apiKey: 'secret-key', model: 'hermes-default', temperature: 0.3, maxTokens: 1200 }) as any;
+
+    expect(packet.glyph_matrix.lines.some((line: any) => line.nodeClass === 'Gt' && line.text.includes('not_evaluated'))).toBe(true);
+    expect(packet.glyph_matrix.lines.some((line: any) => line.nodeClass === 'Gt' && line.stateGlyph === '[#]')).toBe(false);
+    expect(packet.glyph_matrix.lines.some((line: any) => line.text.includes('service_intent_detected'))).toBe(false);
+    expect(packet.settings.apiKey).toBeUndefined();
+    expect(JSON.stringify(packet)).not.toContain('secret-key');
+    expect(JSON.stringify(packet)).not.toContain('tool_results');
   });
 
   it('exports inert gate_context in Hermes packets without API keys, tool results, or route decisions', () => {
