@@ -33,6 +33,14 @@ export type ShelfAsset = {
 export type AssetShelf = { id: AssetShelfId; label: string; items: ShelfAsset[] };
 export type InsertContext = { mode: GraphFocusMode; selectedStackId?: string; selectedNeoBlockId?: string };
 
+export const triggerGateCategoryDisplayCopy = {
+  controlSourcesLabel: 'Control Sources: TriggerGate Sources',
+  triggerGateSourcesLabel: 'TriggerGate Sources',
+  actualTriggers: 'Actual triggers are available as TriggerGate Sources. They are browseable and attachable as gate/control geometry, not MOLT prompt-content blocks.',
+  triggerZeroCrossReference: 'No canonical MOLT Trigger prompt blocks exist. Use TriggerGate Sources (200) under Control Sources for actual TRG.* trigger/gate records.',
+  sourceRecordNote: 'TriggerGate Sources are the actual TRG.* trigger/gate source records.'
+};
+
 const stamp = () => Date.now().toString(36);
 const clone = <T>(value: T): T => structuredClone(value);
 
@@ -234,7 +242,7 @@ export function buildAssetShelves(input: { blocks: UMGBlock[]; neoblocks: NeoBlo
     { id: 'neoblocks', label: 'NeoBlocks', items: input.neoblocks.map(neoblockAsset) },
     { id: 'neostacks', label: 'NeoStacks', items: input.neostacks.map(neostackAsset) },
     { id: 'sleeves', label: 'Sleeves', items: input.sleeves.map(sleeveAsset) },
-    { id: 'control_sources', label: 'Control Sources', items: (input.gateSourceCards ?? []).map(triggerGateSourceAsset) },
+    { id: 'control_sources', label: triggerGateCategoryDisplayCopy.controlSourcesLabel, items: (input.gateSourceCards ?? []).map(triggerGateSourceAsset) },
     { id: 'source_audit', label: 'Source Assets / Audit — audit only', items: (input.sourceAuditItems ?? []).map(sourceAuditAsset) }
   ];
 }

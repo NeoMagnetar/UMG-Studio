@@ -9,7 +9,7 @@ import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
 import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
-import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets } from '../lib/umg/libraryAssets';
+import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets, triggerGateCategoryDisplayCopy } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { buildFullGateSourceRecord, buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards, parseTriggerGateSourceMarkdown } from '../lib/umg/gateSourceImport';
 import normalizedLibraryBlocks from '../../data/library/normalized-blocks.json';
@@ -1258,7 +1258,10 @@ describe('UMG Studio core engine', () => {
     const trg001Asset = controlShelf?.items.find((item) => item.id === 'TRG.001');
     const views = buildTriggerGateSourceInspectorViews(sourceCards[0]);
 
-    expect(controlShelf).toMatchObject({ id: 'control_sources', label: 'Control Sources' });
+    expect(controlShelf).toMatchObject({ id: 'control_sources', label: 'Control Sources: TriggerGate Sources' });
+    expect(triggerGateCategoryDisplayCopy.actualTriggers).toBe('Actual triggers are available as TriggerGate Sources. They are browseable and attachable as gate/control geometry, not MOLT prompt-content blocks.');
+    expect(triggerGateCategoryDisplayCopy.triggerZeroCrossReference).toBe('No canonical MOLT Trigger prompt blocks exist. Use TriggerGate Sources (200) under Control Sources for actual TRG.* trigger/gate records.');
+    expect(triggerGateCategoryDisplayCopy.controlSourcesLabel).toBe('Control Sources: TriggerGate Sources');
     expect(controlShelf?.items).toHaveLength(2);
     expect(trg001Asset).toMatchObject({ kind: 'trigger_gate_source', title: 'Technical Analysis Request', status: 'active', displayType: undefined, containedRoles: ['trigger_gate_source', 'trigger_gate', 'source_control'] });
     expect((trg001Asset?.asset as any).type).toBe('TriggerGateSourceCard');
