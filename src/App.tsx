@@ -63,18 +63,35 @@ export default function App() {
   const sections = useMemo(() => sectionLibraryByDisplayType(libraryWithStatus), [libraryWithStatus]);
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
   const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: savedNeoBlocks as NeoBlock[], neostacks: savedNeoStacks as NeoStack[], sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, triggerGateSourceCards]);
+  const controlSourceShelf = useMemo(() => shelves.find((shelf) => shelf.id === 'control_sources'), [shelves]);
   const currentShelf = shelves.find((shelf) => shelf.id === activeShelf) ?? shelves[0];
+  const isTriggerCategoryActive = activeShelf === 'molt_blocks' && roleFilter === 'trigger';
+  const resolvedShelf = isTriggerCategoryActive ? (controlSourceShelf ?? currentShelf) : currentShelf;
+  const promptTriggerCount = useMemo(() => libraryWithStatus.filter((block) => block.displayType === 'trigger').length, [libraryWithStatus]);
+  const triggerCategoryCount = triggerGateSourceCards.length;
+  const roleFilterCount = useMemo<Record<string, number>>(() => ({
+    trigger: triggerCategoryCount,
+    all: libraryWithStatus.length,
+    directive: libraryWithStatus.filter((block) => block.displayType === 'directive').length,
+    instruction: libraryWithStatus.filter((block) => block.displayType === 'instruction').length,
+    subject: libraryWithStatus.filter((block) => block.displayType === 'subject').length,
+    primary: libraryWithStatus.filter((block) => block.displayType === 'primary').length,
+    philosophy: libraryWithStatus.filter((block) => block.displayType === 'philosophy').length,
+    blueprint: libraryWithStatus.filter((block) => block.displayType === 'blueprint').length,
+    meta: libraryWithStatus.filter((block) => block.displayType === 'meta').length
+  }), [libraryWithStatus, triggerCategoryCount]);
+  const countForRoleFilter = (role: string) => roleFilterCount[role] ?? 0;
   const visibleItems = useMemo(() => {
-    let items = searchShelfAssets(currentShelf.items, { query: search, tags: tagFilters });
-    if (activeShelf === 'molt_blocks') {
+    let items = searchShelfAssets(resolvedShelf.items, { query: search, tags: tagFilters });
+    if (activeShelf === 'molt_blocks' && !isTriggerCategoryActive) {
       items = items.filter((item) => {
         const block = item.asset as UMGBlock;
         return (roleFilter === 'all' || block.displayType === roleFilter) && (statusFilter === 'all' || block.presentationStatus === statusFilter);
       });
     }
     return items;
-  }, [currentShelf, search, tagFilters, activeShelf, roleFilter, statusFilter]);
-  const visibleTags = useMemo(() => [...new Set(currentShelf.items.flatMap((item) => item.tags))].filter(Boolean).slice(0, 24), [currentShelf]);
+  }, [resolvedShelf, search, tagFilters, activeShelf, roleFilter, statusFilter, isTriggerCategoryActive]);
+  const visibleTags = useMemo(() => [...new Set(resolvedShelf.items.flatMap((item) => item.tags))].filter(Boolean).slice(0, 24), [resolvedShelf]);
   const graph = workspace?.graph;
   const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
@@ -181,12 +198,34 @@ export default function App() {
     <main>
       <section className="compose card"><h2>Compose</h2><textarea value={request} onChange={(event) => setRequest(event.target.value)} /><div className="row"><select value={target} onChange={(event) => setTarget(event.target.value)}><option value="chatbot">Chatbot</option><option value="business_template">Business Template</option><option value="website_prompt">Website Prompt</option><option value="umg_sleeve">UMG Sleeve</option></select><select value={depth} onChange={(event) => setDepth(event.target.value as any)}><option>lean</option><option>balanced</option><option>full</option></select><button className="primary" onClick={compose}>Compose Blocks</button><button onClick={compile}>Compile</button><button onClick={generate}>Generate</button></div><p>{status}</p></section>
       <section className="library card">
-        <ShelfControls shelves={shelves} activeShelf={activeShelf} setActiveShelf={(shelf: ShelfMode) => { setActiveShelf(shelf); setTagFilters([]); }} search={search} setSearch={setSearch} tagFilters={tagFilters} setTagFilters={setTagFilters} visibleTags={visibleTags} filtered={Boolean(search || tagFilters.length || roleFilter !== 'all' || statusFilter !== defaultStatusFilter)} shown={visibleItems.length} total={currentShelf.items.length} clear={() => { setSearch(''); setTagFilters([]); setRoleFilter('all'); setStatusFilter(defaultStatusFilter); }} />
-        {activeShelf === 'molt_blocks' && <BuilderShelfHeader roleFilter={roleFilter} statusFilter={statusFilter} shown={visibleItems.length} total={currentShelf.items.length} triggerGateSourceCount={triggerGateSourceCards.length} aiInstructionCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'instruction').length} aiSubjectCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'subject').length} aiPrimaryCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'primary').length} aiDirectiveCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'directive').length} aiPhilosophyCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'philosophy').length} aiBlueprintCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'blueprint').length} />}
+        <ShelfControls
+          shelves={shelves}
+          activeShelf={activeShelf}
+          setActiveShelf={(shelf: ShelfMode) => {
+            setActiveShelf(shelf);
+            setTagFilters([]);
+          }}
+          search={search}
+          setSearch={setSearch}
+          tagFilters={tagFilters}
+          setTagFilters={setTagFilters}
+          visibleTags={visibleTags}
+          filtered={Boolean(search || tagFilters.length || roleFilter !== 'all' || statusFilter !== defaultStatusFilter)}
+          shown={visibleItems.length}
+          total={resolvedShelf.items.length}
+          roleFilter={roleFilter}
+          clear={() => {
+            setSearch('');
+            setTagFilters([]);
+            setRoleFilter('all');
+            setStatusFilter(defaultStatusFilter);
+          }}
+        />
+        {activeShelf === 'molt_blocks' && <BuilderShelfHeader roleFilter={roleFilter} statusFilter={statusFilter} shown={visibleItems.length} total={resolvedShelf.items.length} triggerGateSourceCount={triggerCategoryCount} promptTriggerCount={promptTriggerCount} aiInstructionCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'instruction').length} aiSubjectCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'subject').length} aiPrimaryCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'primary').length} aiDirectiveCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'directive').length} aiPhilosophyCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'philosophy').length} aiBlueprintCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'blueprint').length} />}
         {activeShelf === 'source_audit' && <AuditShelfBanner total={currentShelf.items.length} />}
         {activeShelf === 'control_sources' && <ControlSourcesBanner total={currentShelf.items.length} />}
-        {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Role filter</b><div className="filterBar roleSubsections"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => setRoleFilter('all')}>All MOLT + Meta ({libraryWithStatus.length})</button>{roles.map((role) => <button key={role} className={roleFilter === role ? 'hot roleHot' : ''} onClick={() => setRoleFilter(role)}>{labelDisplayType(role)} ({libraryWithStatus.filter((block) => block.displayType === role).length})</button>)}<button className={roleFilter === 'meta' ? 'hot metaHot roleHot' : ''} onClick={() => setRoleFilter('meta')}>Meta ({libraryWithStatus.filter((block) => block.displayType === 'meta').length})</button></div></div>}
-        {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Status filter</b><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? libraryWithStatus.length : statusCounts[s] ?? 0)}</button>)}</div></div>}
+        {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Role filter</b><div className="filterBar roleSubsections"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => setRoleFilter('all')}>All MOLT + Meta ({countForRoleFilter('all')})</button>{roles.map((role) => <button key={role} className={roleFilter === role ? 'hot roleHot' : ''} onClick={() => setRoleFilter(role)}>{labelDisplayType(role)} ({countForRoleFilter(role)})</button>)}<button className={roleFilter === 'meta' ? 'hot metaHot roleHot' : ''} onClick={() => setRoleFilter('meta')}>Meta ({countForRoleFilter('meta')})</button></div></div>}
+        {activeShelf === 'molt_blocks' && roleFilter !== 'trigger' && <div className="filterGroup"><b>Status filter</b><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? roleFilter === 'all' ? libraryWithStatus.length : countForRoleFilter(roleFilter) : statusCounts[s] ?? 0)}</button>)}</div></div>}
         {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <AssetCards items={visibleItems} onAdd={addAsset} onInspect={inspectAsset} />}
         {activeShelf === 'molt_blocks' && <details className="secondaryAudit"><summary>Source Assets / Audit — secondary import accountability</summary><LibraryAudit report={migrationReport as any} />{sections.map((section) => <div key={section.type}>{section.label} ({section.blocks.length})</div>)}</details>}
       </section>
@@ -206,17 +245,17 @@ function LibraryAudit({ report }: { report: any }) {
   return <div className="report auditSummary"><b>Library Audit / Source Assets</b>{rows.map(([label, value]) => <span key={String(label)}>{String(label)}: {String(value)}</span>)}<span>reconciled: {String(summary.accountedTotal)}/{String(summary.totalScanned)}</span></div>;
 }
 
-function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, visibleTags, filtered, shown, total, clear }: any) {
+function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, visibleTags, filtered, shown, total, roleFilter = 'all', clear }: any) {
   const toggleTag = (tag: string) => setTagFilters(tagFilters.includes(tag) ? tagFilters.filter((t: string) => t !== tag) : [...tagFilters, tag]);
-  const searchLabel = activeShelf === 'source_audit' ? 'Search audit accountability rows' : activeShelf === 'control_sources' ? 'Search TriggerGate source cards' : 'Search active builder shelf first';
+  const searchLabel = activeShelf === 'source_audit' ? 'Search audit accountability rows' : activeShelf === 'control_sources' || roleFilter === 'trigger' ? 'Search TriggerGate source cards' : 'Search active builder shelf first';
   return <><div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelf.items.length})</button>)}</div><label className="searchLabel">{searchLabel}<input placeholder="title, INST id, tags, sourcePath, role/status" value={search} onChange={(event) => setSearch(event.target.value)} /></label>{filtered && <div className="filterNotice"><b>Filtered view active</b><span>{shown} of {total} shown</span><button onClick={clear}>Clear filters</button></div>}{tagFilters.length > 0 && <div className="activeTags"><b>Active filters</b>{tagFilters.map((tag: string) => <button key={tag} className="tag active" onClick={() => toggleTag(tag)}>{tag} ×</button>)}</div>}<div className="tagCloud">{visibleTags.map((tag: string) => <button key={tag} className={`tag ${tagFilters.includes(tag) ? 'active' : ''}`} onClick={() => toggleTag(tag)}>{tag}</button>)}</div></>;
 }
 
-function BuilderShelfHeader({ roleFilter, statusFilter, shown, total, triggerGateSourceCount, aiInstructionCount, aiSubjectCount, aiPrimaryCount, aiDirectiveCount, aiPhilosophyCount, aiBlueprintCount }: { roleFilter: string; statusFilter: string; shown: number; total: number; triggerGateSourceCount: number; aiInstructionCount: number; aiSubjectCount: number; aiPrimaryCount: number; aiDirectiveCount: number; aiPhilosophyCount: number; aiBlueprintCount: number }) {
+function BuilderShelfHeader({ roleFilter, statusFilter, shown, total, triggerGateSourceCount, promptTriggerCount, aiInstructionCount, aiSubjectCount, aiPrimaryCount, aiDirectiveCount, aiPhilosophyCount, aiBlueprintCount }: { roleFilter: string; statusFilter: string; shown: number; total: number; triggerGateSourceCount: number; promptTriggerCount: number; aiInstructionCount: number; aiSubjectCount: number; aiPrimaryCount: number; aiDirectiveCount: number; aiPhilosophyCount: number; aiBlueprintCount: number }) {
   const roleLabel = labelDisplayType(roleFilter);
   const statusLabel = labelDisplayType(statusFilter);
-  const visibleLabel = roleFilter === 'all' ? 'MOLT + Meta cards' : `${roleLabel} cards`;
-  return <div className="shelfHero builderHero"><b>Active shelf: MOLT Blocks</b><span>Active role: {roleLabel}</span><span>Active status: {statusLabel}</span><span>{shown} {visibleLabel} visible</span><span>{shown} of {total} individual MOLT cards visible</span><span>MOLT Trigger Blocks: 0</span><span>{triggerGateCategoryDisplayCopy.triggerGateSourcesLabel}: {triggerGateSourceCount}</span><span>{triggerGateCategoryDisplayCopy.actualTriggers}</span>{roleFilter === 'trigger' && <span>{triggerGateCategoryDisplayCopy.triggerZeroCrossReference}</span>}<span>AI directive cards available: {aiDirectiveCount}</span><span>AI instruction cards available: {aiInstructionCount}</span><span>AI subject cards available: {aiSubjectCount}</span><span>AI primary cards available: {aiPrimaryCount}</span><span>AI philosophy cards available: {aiPhilosophyCount}</span><span>AI blueprint cards available: {aiBlueprintCount}</span></div>;
+  const visibleLabel = roleFilter === 'trigger' ? triggerGateCategoryDisplayCopy.visiblePrompt : roleFilter === 'all' ? 'MOLT + Meta cards' : `${roleLabel} cards`;
+  return <div className="shelfHero builderHero"><b>Active shelf: MOLT Blocks</b><span>Active role: {roleLabel}</span><span>Active status: {statusLabel}</span><span>{shown} {visibleLabel} visible</span><span>{shown} of {total} visible</span><span>{triggerGateCategoryDisplayCopy.promptTriggerCountLabel}: {promptTriggerCount}</span><span>{triggerGateCategoryDisplayCopy.triggerSourceCardsCountLabel}: {triggerGateSourceCount}</span><span>{triggerGateCategoryDisplayCopy.triggerCardsRoleHint}</span><span>{triggerGateCategoryDisplayCopy.sourceRecordNote}</span><span>AI directive cards available: {aiDirectiveCount}</span><span>AI instruction cards available: {aiInstructionCount}</span><span>AI subject cards available: {aiSubjectCount}</span><span>AI primary cards available: {aiPrimaryCount}</span><span>AI philosophy cards available: {aiPhilosophyCount}</span><span>AI blueprint cards available: {aiBlueprintCount}</span></div>;
 }
 
 function AuditShelfBanner({ total }: { total: number }) {

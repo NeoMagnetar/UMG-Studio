@@ -1263,7 +1263,16 @@ describe('UMG Studio core engine', () => {
     expect(triggerGateCategoryDisplayCopy.triggerZeroCrossReference).toBe('No canonical MOLT Trigger prompt blocks exist. Use TriggerGate Sources (200) under Control Sources for actual TRG.* trigger/gate records.');
     expect(triggerGateCategoryDisplayCopy.controlSourcesLabel).toBe('Control Sources: TriggerGate Sources');
     expect(controlShelf?.items).toHaveLength(2);
-    expect(trg001Asset).toMatchObject({ kind: 'trigger_gate_source', title: 'Technical Analysis Request', status: 'active', displayType: undefined, containedRoles: ['trigger_gate_source', 'trigger_gate', 'source_control'] });
+    expect(trg001Asset).toMatchObject({
+      kind: 'trigger_gate_source',
+      title: 'Technical Analysis Request',
+      status: 'active',
+      displayType: undefined,
+      displayRole: 'trigger',
+      displayFamily: 'Trigger',
+      cardSurface: 'trigger_gate_source',
+      containedRoles: ['trigger_gate_source', 'trigger_gate', 'source_control', 'trigger']
+    });
     expect((trg001Asset?.asset as any).type).toBe('TriggerGateSourceCard');
     expect((trg001Asset?.asset as any).type).not.toBe('molt_block');
     expect(moltShelf?.items.filter((item) => (item.asset as any).role === 'trigger')).toHaveLength(0);
@@ -1275,6 +1284,31 @@ describe('UMG Studio core engine', () => {
     expect(views.runtimePreview).toMatchObject({ wouldBecome: 'RuntimeGate', defaultState: 'inactive/candidate', promptContent: false, liveExecution: false });
     expect(views.attachPlacementPreview).toMatchObject({ enabled: true, actionLabel: 'Attach Gate', liveExecution: false, promptContent: false });
     expect(views.traceIrPreview.createsGateIRRowNow).toBe(false);
+  });
+
+  it('exposes Trigger filter card count from TriggerGate source records and keeps trigger cards out of MOLT shelves', () => {
+    const sourceCards = normalizeTriggerGateSourceCards(
+      Array.from({ length: 200 }, (_, index) => ({
+        sourcePath: `/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.${String(index + 1).padStart(3, '0')}-sample.md`,
+        markdown: trg001Markdown.replace('TRG.001', `TRG.${String(index + 1).padStart(3, '0')}`)
+      }))
+    );
+    const shelves = buildAssetShelves({
+      blocks: normalizedLibraryBlocks as any[],
+      neoblocks: [],
+      neostacks: [],
+      sleeves: [],
+      gateSourceCards: sourceCards
+    });
+    const controlShelf = shelves.find((shelf) => shelf.id === 'control_sources');
+    const moltShelf = shelves.find((shelf) => shelf.id === 'molt_blocks');
+
+    expect(controlShelf?.items).toHaveLength(200);
+    expect(controlShelf?.items[0]?.id).toBe('TRG.001');
+    expect(controlShelf?.items[1]?.id).toBe('TRG.002');
+    expect(moltShelf?.items.some((item) => item.id.startsWith('TRG.'))).toBe(false);
+    expect(sourceCards).toHaveLength(200);
+    expect(triggerGateCategoryDisplayCopy.triggerCardsRoleHint).toBe('Trigger cards are TriggerGate source/control records. They are attachable as gate geometry, not prompt-content blocks.');
   });
 
   it('attaches TRG.001 as an inert RuntimeGate to selected graph node control geometry without creating MOLT blocks', () => {

@@ -28,6 +28,9 @@ export type ShelfAsset = {
   displayType?: MOLTDisplayType;
   containedRoles: string[];
   containedTitles: string[];
+  displayRole?: string;
+  displayFamily?: string;
+  cardSurface?: 'trigger_gate_source' | 'molt_block' | 'neoblock' | 'neostack' | 'sleeve' | 'source';
   asset: UMGBlock | NeoBlock | NeoStack | Sleeve | SourceAuditItem | TriggerGateSourceCard;
 };
 export type AssetShelf = { id: AssetShelfId; label: string; items: ShelfAsset[] };
@@ -38,7 +41,12 @@ export const triggerGateCategoryDisplayCopy = {
   triggerGateSourcesLabel: 'TriggerGate Sources',
   actualTriggers: 'Actual triggers are available as TriggerGate Sources. They are browseable and attachable as gate/control geometry, not MOLT prompt-content blocks.',
   triggerZeroCrossReference: 'No canonical MOLT Trigger prompt blocks exist. Use TriggerGate Sources (200) under Control Sources for actual TRG.* trigger/gate records.',
-  sourceRecordNote: 'TriggerGate Sources are the actual TRG.* trigger/gate source records.'
+  sourceRecordNote: 'TriggerGate Sources are the actual TRG.* trigger/gate source records.',
+  promptTriggerCountLabel: 'MOLT prompt triggers',
+  promptTriggerCountValue: 0,
+  triggerSourceCardsCountLabel: 'TriggerGate source cards',
+  triggerCardsRoleHint: 'Trigger cards are TriggerGate source/control records. They are attachable as gate geometry, not prompt-content blocks.',
+  visiblePrompt: 'Trigger'
 };
 
 const stamp = () => Date.now().toString(36);
@@ -233,7 +241,21 @@ function sourceAuditAsset(item: SourceAuditItem): ShelfAsset {
 }
 
 function triggerGateSourceAsset(card: TriggerGateSourceCard): ShelfAsset {
-  return { id: card.id, kind: 'trigger_gate_source', title: card.title, tags: card.tags, sourcePath: card.sourcePath, status: card.status, displayType: undefined, containedRoles: ['trigger_gate_source', card.gateKind, 'source_control'], containedTitles: [card.summary, card.activation.conditionSummary], asset: card };
+  return {
+    id: card.id,
+    kind: 'trigger_gate_source',
+    title: card.title,
+    tags: card.tags,
+    sourcePath: card.sourcePath,
+    status: card.status,
+    displayType: undefined,
+    displayRole: 'trigger',
+    displayFamily: 'Trigger',
+    cardSurface: 'trigger_gate_source',
+    containedRoles: ['trigger_gate_source', card.gateKind, 'source_control', 'trigger'],
+    containedTitles: [card.summary, card.activation.conditionSummary],
+    asset: card
+  };
 }
 
 export function buildAssetShelves(input: { blocks: UMGBlock[]; neoblocks: NeoBlock[]; neostacks: NeoStack[]; sleeves: Sleeve[]; sourceAuditItems?: SourceAuditItem[]; gateSourceCards?: TriggerGateSourceCard[] }): AssetShelf[] {
