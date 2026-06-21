@@ -8,7 +8,7 @@ import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, nor
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
-import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, gateProjectionPrinciples } from '../lib/umg/gateRuntime';
+import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, createInertGateEvaluationResult, createManualGateEvaluationResult, gateEvaluationResultToGateIRRowPatch, gateProjectionPrinciples, routeStateFromGateEvaluationResults } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets, triggerGateCategoryDisplayCopy } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { buildFullGateSourceRecord, buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards, parseTriggerGateSourceMarkdown } from '../lib/umg/gateSourceImport';
@@ -1742,5 +1742,329 @@ describe('UMG Studio core engine', () => {
     expect(JSON.stringify(packet)).not.toContain('SECRET_KEY');
     expect('apiKey' in packet.settings).toBe(false);
     expect(packet.mode).toBe('generate');
+  });
+
+  describe('GateEvaluation', () => {
+    const triggerRuntimeGate = buildRuntimeGate({
+      id: 'gate_scaffold_trigger_1',
+      title: 'Service route gate scaffold',
+      gateKind: 'trigger_gate',
+      condition: 'Customer asks for service support',
+      routeControl: {
+        activates: [{ targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' }],
+        dormants: [{ targetId: 'stack_sales', targetType: 'neostack', defaultPathState: 'dormant' }],
+        suppresses: [{ targetId: 'block_marketing_upsell', targetType: 'molt_block', defaultPathState: 'suppressed' }],
+        blocks: [{ targetId: 'proposal_schedule_tool', targetType: 'tool_proposal', defaultPathState: 'blocked' }]
+      },
+      runtimeState: { state: 'inactive', passed: false, reason: 'Gate attached as control geometry; not evaluated yet.' },
+      sourcePath: '/tmp/trigger-gate-scaffold.md'
+    });
+
+    it('GateEvaluationResult can represent inert/not_applicable gate result', () => {
+      const inert = createInertGateEvaluationResult(triggerRuntimeGate);
+      expect(inert).toMatchObject({
+        gateId: triggerRuntimeGate.id,
+        gateKind: 'trigger_gate',
+        outcome: 'not_applicable',
+        decision: 'inactive',
+        passed: false,
+        routeSelections: {
+          selectedRouteIds: [],
+          activeTargets: [],
+          dormantTargets: [],
+          suppressedTargets: [],
+          blockedTargets: [],
+          requiresApprovalTargets: []
+        },
+        requiresApproval: false,
+        selectedRouteId: undefined,
+        safety: {
+          promptContentMutation: false,
+          routeSwitching: false,
+          liveExecution: false,
+          toolExecution: false
+        }
+      });
+    });
+
+    it('GateEvaluationResult can represent passed TriggerGate with active/dormant/suppressed/blocked targets', () => {
+      const passed = createManualGateEvaluationResult(triggerRuntimeGate);
+
+      expect(passed).toMatchObject({
+        gateId: triggerRuntimeGate.id,
+        gateKind: 'trigger_gate',
+        evaluationMode: 'manual',
+        outcome: 'passed',
+        decision: 'passed',
+        passed: true,
+        routeSelections: {
+          selectedRouteIds: [],
+          activeTargets: ['stack_service'],
+          dormantTargets: ['stack_sales'],
+          suppressedTargets: ['block_marketing_upsell'],
+          blockedTargets: ['proposal_schedule_tool'],
+          requiresApprovalTargets: []
+        },
+        requiresApproval: false,
+        safety: {
+          promptContentMutation: false,
+          routeSwitching: false,
+          liveExecution: false,
+          toolExecution: false
+        }
+      });
+      expect(passed.targetDecisions.map((target) => target.targetType)).toContain('neostack');
+    });
+
+    it('routeStateFromGateEvaluationResults produces active_paths, dormant_paths, suppressed_paths, and blocked_paths', () => {
+      const passedA = createManualGateEvaluationResult(
+        buildRuntimeGate({
+          id: 'gate_scaffold_trigger_a',
+          title: 'A route scaffold',
+          gateKind: 'trigger_gate',
+          condition: 'A condition',
+          routeControl: {
+            activates: [{ targetId: 'node_a', targetType: 'neostack', defaultPathState: 'active' }],
+            dormants: [{ targetId: 'node_b', targetType: 'neostack', defaultPathState: 'dormant' }],
+            suppresses: [{ targetId: 'node_c', targetType: 'molt_block', defaultPathState: 'suppressed' }],
+            blocks: [{ targetId: 'node_d', targetType: 'molt_block', defaultPathState: 'blocked' }]
+          },
+          runtimeState: { state: 'inactive', passed: false, reason: 'Inert scaffold' },
+          sourcePath: '/tmp/scaffold-a.md'
+        })
+      );
+      const state = routeStateFromGateEvaluationResults([passedA]);
+      expect(state).toMatchObject({
+        active_paths: ['node_a'],
+        dormant_paths: ['node_b'],
+        suppressed_paths: ['node_c'],
+        blocked_paths: ['node_d'],
+        warnings: []
+      });
+    });
+
+    it('block beats suppressed/dormant/active in conflict', () => {
+      const activeGate = buildRuntimeGate({
+        id: 'gate_scaffold_trigger_conflict_active',
+        title: 'Conflict active',
+        gateKind: 'trigger_gate',
+        condition: 'Conflict active condition',
+        routeControl: {
+          activates: [{ targetId: 'route_x', targetType: 'neostack', defaultPathState: 'active' }],
+          dormants: [],
+          suppresses: [],
+          blocks: []
+        },
+        sourcePath: '/tmp/conflict-active.md',
+        runtimeState: { state: 'inactive', passed: false, reason: 'Inert scaffold' }
+      });
+      const blockedGate = buildRuntimeGate({
+        id: 'gate_scaffold_trigger_conflict_blocked',
+        title: 'Conflict blocked',
+        gateKind: 'trigger_gate',
+        condition: 'Conflict blocked condition',
+        routeControl: {
+          activates: [],
+          dormants: [],
+          suppresses: [],
+          blocks: [{ targetId: 'route_x', targetType: 'neostack', defaultPathState: 'blocked' }]
+        },
+        runtimeState: { state: 'inactive', passed: false, reason: 'Inert scaffold' },
+        sourcePath: '/tmp/conflict-blocked.md'
+      });
+
+      const state = routeStateFromGateEvaluationResults([createManualGateEvaluationResult(activeGate), createManualGateEvaluationResult(blockedGate)]);
+      expect(state.blocked_paths).toEqual(['route_x']);
+      expect(state.suppressed_paths).toEqual([]);
+      expect(state.dormant_paths).toEqual([]);
+      expect(state.active_paths).toEqual([]);
+      expect(state.warnings).toHaveLength(1);
+      expect(state.warnings[0]).toContain("blocked");
+    });
+
+    it('suppressed beats dormant/active in a conflict', () => {
+      const activeGate = buildRuntimeGate({
+        id: 'gate_scaffold_trigger_conflict_active_2',
+        title: 'Conflict active',
+        gateKind: 'trigger_gate',
+        condition: 'Conflict active condition 2',
+        routeControl: {
+          activates: [{ targetId: 'route_y', targetType: 'neostack', defaultPathState: 'active' }],
+          dormants: [],
+          suppresses: [],
+          blocks: []
+        },
+        runtimeState: { state: 'inactive', passed: false, reason: 'Inert scaffold' },
+        sourcePath: '/tmp/conflict-active-2.md'
+      });
+      const suppressedGate = buildRuntimeGate({
+        id: 'gate_scaffold_trigger_conflict_suppressed',
+        title: 'Conflict suppressed',
+        gateKind: 'trigger_gate',
+        condition: 'Conflict suppressed condition',
+        routeControl: { activates: [], dormants: [], suppresses: [{ targetId: 'route_y', targetType: 'neostack', defaultPathState: 'suppressed' }], blocks: [] },
+        runtimeState: { state: 'inactive', passed: false, reason: 'Inert scaffold' },
+        sourcePath: '/tmp/conflict-suppressed.md'
+      });
+      const state = routeStateFromGateEvaluationResults([createManualGateEvaluationResult(activeGate), createManualGateEvaluationResult(suppressedGate)]);
+      expect(state.suppressed_paths).toEqual(['route_y']);
+      expect(state.blocked_paths).toEqual([]);
+      expect(state.dormant_paths).toEqual([]);
+      expect(state.active_paths).toEqual([]);
+      expect(state.warnings).toHaveLength(1);
+      expect(state.warnings[0]).toContain('suppressed');
+    });
+
+    it('safety flags remain false for GateEvaluationResult helpers', () => {
+      const inert = createInertGateEvaluationResult(triggerRuntimeGate);
+      const passed = createManualGateEvaluationResult(triggerRuntimeGate);
+
+      expect(inert.safety.promptContentMutation).toBe(false);
+      expect(inert.safety.routeSwitching).toBe(false);
+      expect(inert.safety.liveExecution).toBe(false);
+      expect(inert.safety.toolExecution).toBe(false);
+
+      expect(passed.safety.promptContentMutation).toBe(false);
+      expect(passed.safety.routeSwitching).toBe(false);
+      expect(passed.safety.liveExecution).toBe(false);
+      expect(passed.safety.toolExecution).toBe(false);
+    });
+
+    it('helper does not mutate RuntimeGate input when creating GateEvaluationResult', () => {
+      const runtimeGateSnapshot = JSON.parse(JSON.stringify(triggerRuntimeGate));
+      createInertGateEvaluationResult(triggerRuntimeGate);
+      createManualGateEvaluationResult(triggerRuntimeGate);
+      expect(triggerRuntimeGate).toEqual(runtimeGateSnapshot);
+    });
+
+    it('existing Trigger MOLT remains 0 and TriggerGate Sources remains 200', () => {
+      const sourceCards = normalizeTriggerGateSourceCards([
+        ...Array.from({ length: 200 }, (_, index) => ({
+          sourcePath: `/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.${String(index + 1).padStart(3, '0')}-sample.md`,
+          markdown: trg001Markdown.replace('TRG.001', `TRG.${String(index + 1).padStart(3, '0')}`)
+        }))
+      ]);
+      const shelves = buildAssetShelves({
+        blocks: normalizedLibraryBlocks as any[],
+        neoblocks: [],
+        neostacks: [],
+        sleeves: [],
+        gateSourceCards: sourceCards
+      });
+
+      expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+      expect(shelves.find((shelf) => shelf.id === 'control_sources')?.items.length).toBe(200);
+    });
+
+    it('existing compose/compile path still uses real compiler', () => {
+      const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const workspace = {
+        id: 'ws_gate_scaffold_validate',
+        title: 'Gate Scaffold Validation',
+        activeSleeveId: sleeve.id,
+        sleeves: [sleeve],
+        libraryRefs: [],
+        graph: buildGraphFromSleeve(sleeve)
+      };
+      const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+
+      expect(compiled.runtimeSpec).toMatchObject({ compiler: 'umg-compiler', source: 'real' });
+    });
+
+    it('existing Glyph Matrix does not claim active route unless source truth says active', () => {
+      const gate = buildRuntimeGate({
+        id: 'gate_scaffold_glyph',
+        title: 'Glyph inactive gate',
+        gateKind: 'trigger_gate',
+        condition: 'Glyph inactive condition',
+        routeControl: { activates: [{ targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' }], dormants: [], suppresses: [], blocks: [] },
+        runtimeState: { state: 'inactive', passed: false, reason: 'Inert scaffold' },
+        sourcePath: '/tmp/glyph-scaffold.md'
+      });
+      const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const targetNode = buildGraphFromSleeve(sleeve).nodes.find((node) => node.nodeType === 'neoblock')!;
+      const attached = attachRuntimeGateToGraph(buildGraphFromSleeve(sleeve), gate, { kind: 'node_boundary', nodeId: targetNode.id });
+      const workspace: UMGWorkspace = { id: 'ws_scaffold_glyph', title: 'Gate Scaffold Glyph', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: attached.graph, runtimeGates: attached.runtimeGates };
+      const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] });
+      const glyphMatrix = projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'compact' });
+      const gateLine = glyphMatrix.lines.find((line) => line.objectId === gate.id);
+
+      expect(glyphMatrix.routeState).toMatchObject({
+        active_paths: [],
+        dormant_paths: [],
+        suppressed_paths: [],
+        blocked_paths: []
+      });
+      expect(gateLine).toMatchObject({ nodeClass: 'Gt', state: 'candidate', stateGlyph: '( )' });
+      expect(gateLine?.text).not.toContain('[#]');
+    });
+
+    it('does not implement route switching and does not execute live tools when creating GateIR patch', () => {
+      const inert = createInertGateEvaluationResult(triggerRuntimeGate);
+      const passed = createManualGateEvaluationResult(triggerRuntimeGate);
+      const inertPatch = gateEvaluationResultToGateIRRowPatch(inert);
+      const passedPatch = gateEvaluationResultToGateIRRowPatch(passed);
+
+      expect(inertPatch).toMatchObject({
+        state: 'inactive',
+        gatePassed: false,
+        selectedRouteIds: [],
+        activeTargetIds: [],
+        dormantTargetIds: [],
+        suppressedTargetIds: [],
+        blockedTargetIds: [],
+        requiredApproval: false,
+        routingDecision: undefined,
+        reason: expect.any(String),
+        traceEventIds: []
+      });
+      expect(passedPatch).toMatchObject({
+        state: 'passed',
+        gatePassed: true,
+        selectedRouteIds: [],
+        activeTargetIds: ['stack_service'],
+        dormantTargetIds: ['stack_sales'],
+        suppressedTargetIds: ['block_marketing_upsell'],
+        blockedTargetIds: ['proposal_schedule_tool'],
+        requiredApproval: false,
+        reason: expect.any(String),
+        routingDecision: undefined,
+        traceEventIds: []
+      });
+      const mutable = {
+        state: 'inactive',
+        gatePassed: false,
+        selectedRouteIds: ['before'],
+        activeTargetIds: ['before'],
+        dormantTargetIds: ['before'],
+        suppressedTargetIds: ['before'],
+        blockedTargetIds: ['before'],
+        requiredApproval: true,
+        routingDecision: 'before',
+        reason: 'before',
+        traceEventIds: ['before']
+      };
+      const patched = { ...mutable, ...gateEvaluationResultToGateIRRowPatch(passed) };
+
+      expect(mutable).toEqual({
+        state: 'inactive',
+        gatePassed: false,
+        selectedRouteIds: ['before'],
+        activeTargetIds: ['before'],
+        dormantTargetIds: ['before'],
+        suppressedTargetIds: ['before'],
+        blockedTargetIds: ['before'],
+        requiredApproval: true,
+        routingDecision: 'before',
+        reason: 'before',
+        traceEventIds: ['before']
+      });
+      expect(patched.gatePassed).toBe(true);
+      expect(patched.requiredApproval).toBe(false);
+      expect(patched.routingDecision).toBeUndefined();
+      expect(patched.traceEventIds).toEqual([]);
+      expect(JSON.stringify(patched)).not.toContain('tool_results');
+      expect(gateEvaluationResultToGateIRRowPatch(passed).routingDecision).toBeUndefined();
+    });
   });
 });

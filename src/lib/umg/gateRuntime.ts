@@ -1,9 +1,110 @@
-import { GateIRRow, GateKind, GateRouteControl, GateScopeTarget, GraphEdge, GraphNode, RuntimeGate, RuntimeGateContext, TriggerGateSourceCard, UMGWorkspace } from './types';
+import {
+  GateEvaluationInput,
+  GateEvaluationMode,
+  GateEvaluationResult,
+  GateEvaluationRouteSelections,
+  GateEvaluationTargetDecision,
+  GateIRRow,
+  GateKind,
+  GatePathState,
+  GateRouteControl,
+  GateScopeTarget,
+  GraphEdge,
+  GraphNode,
+  RuntimeGate,
+  RuntimeGateContext,
+  TriggerGateSourceCard,
+  UMGWorkspace
+} from './types';
 
 export const GATE_KINDS: GateKind[] = ['trigger_gate', 'routing_gate', 'governance_gate', 'action_gate'];
 
 const emptyRouteControl = (): GateRouteControl => ({ activates: [], dormants: [], suppresses: [], blocks: [] });
 const targetIds = (targets: GateScopeTarget[]) => targets.map((target) => target.targetId);
+
+const GATE_EVAL_DEFAULT_TIME = '1970-01-01T00:00:00.000Z';
+const pathStatePrecedence: Record<GatePathState, number> = {
+  active: 1,
+  dormant: 2,
+  suppressed: 3,
+  blocked: 4
+};
+
+export type GateEvaluationRouteState = {
+  active_paths: string[];
+  dormant_paths: string[];
+  suppressed_paths: string[];
+  blocked_paths: string[];
+};
+
+export type GateEvaluationRouteStateWithWarnings = GateEvaluationRouteState & {
+  warnings: string[];
+};
+
+const defaultSafetyFlags = {
+  promptContentMutation: false,
+  routeSwitching: false,
+  liveExecution: false,
+  toolExecution: false
+};
+
+const DEFAULT_INERT_GATE_EVALUATION_REASON = 'Gate evaluation is inert; runtime evaluation mode is not implemented.';
+
+const defaultRouteSelections = (): GateEvaluationRouteSelections => ({
+  selectedRouteIds: [],
+  activeTargets: [],
+  dormantTargets: [],
+  suppressedTargets: [],
+  blockedTargets: [],
+  requiresApprovalTargets: []
+});
+
+function routeSelectionsFromRuntimeGate(gate: RuntimeGate): GateEvaluationRouteSelections {
+  return {
+    selectedRouteIds: [],
+    activeTargets: targetIds(gate.routeControl.activates),
+    dormantTargets: targetIds(gate.routeControl.dormants),
+    suppressedTargets: targetIds(gate.routeControl.suppresses),
+    blockedTargets: targetIds(gate.routeControl.blocks),
+    requiresApprovalTargets: []
+  };
+}
+
+function buildTargetDecisionsFromRuntimeGate(gate: RuntimeGate): GateEvaluationTargetDecision[] {
+  const buildDecision = (
+    target: GateScopeTarget,
+    requestedPathState: GateEvaluationTargetDecision['requestedPathState'],
+    sourceKey: 'routeControl.activates' | 'routeControl.dormants' | 'routeControl.suppresses' | 'routeControl.blocks'
+  ): GateEvaluationTargetDecision => ({
+    targetId: target.targetId,
+    targetType: target.targetType,
+    requestedPathState,
+    winnerPolicy: 'default',
+    evidence: [{ source: gate.id, value: sourceKey }]
+  });
+  return [
+    ...gate.routeControl.activates.map((target) => buildDecision(target, 'active', 'routeControl.activates')),
+    ...gate.routeControl.dormants.map((target) => buildDecision(target, 'dormant', 'routeControl.dormants')),
+    ...gate.routeControl.suppresses.map((target) => buildDecision(target, 'suppressed', 'routeControl.suppresses')),
+    ...gate.routeControl.blocks.map((target) => buildDecision(target, 'blocked', 'routeControl.blocks'))
+  ];
+}
+
+function routeSelectionsFromResultInputs(input: Pick<GateEvaluationInput, 'selectedRouteId'>, routeSelections: GateEvaluationRouteSelections): GateEvaluationRouteSelections {
+  return {
+    ...routeSelections,
+    selectedRouteIds: routeSelections.selectedRouteIds.length ? [...routeSelections.selectedRouteIds] : (input.selectedRouteId ? [input.selectedRouteId] : [])
+  };
+}
+
+function sanitizeSafetyFlags(safety: GateEvaluationResult['safety']): GateEvaluationResult['safety'] {
+  return {
+    promptContentMutation: !!safety.promptContentMutation,
+    routeSwitching: !!safety.routeSwitching,
+    liveExecution: !!safety.liveExecution,
+    toolExecution: !!safety.toolExecution
+  };
+}
 
 export const gateProjectionPrinciples = {
   irMatrixSourceOfTruth: true,
@@ -56,6 +157,142 @@ export function buildRuntimeGateFromSourceCard(card: TriggerGateSourceCard, opti
     priorityOrder: { priorityMeaning: 'hierarchy_order_only' },
     traceRefs: []
   });
+}
+
+export function createInertGateEvaluationResult(
+  gate: RuntimeGate,
+  input: Pick<GateEvaluationInput, 'evaluationReason' | 'evaluatedAt' | 'selectedRouteId' | 'traceEventIds' | 'confidence'> = {}
+): GateEvaluationResult {
+  const evaluatedAt = input.evaluatedAt ?? GATE_EVAL_DEFAULT_TIME;
+  const routeSelections: GateEvaluationRouteSelections = routeSelectionsFromResultInputs(
+    { selectedRouteId: input.selectedRouteId ?? '' },
+    defaultRouteSelections()
+  );
+  const selectedRouteIds = routeSelections.selectedRouteIds;
+  return {
+    gateId: gate.id,
+    gateKind: gate.gateKind,
+    evaluatedAt,
+    evaluationMode: 'disabled',
+    outcome: 'not_applicable',
+    decision: 'inactive',
+    passed: false,
+    confidence: input.confidence,
+    reason: input.evaluationReason ?? DEFAULT_INERT_GATE_EVALUATION_REASON,
+    routeSelections: {
+      ...routeSelections,
+      selectedRouteIds
+    },
+    targetDecisions: [],
+    selectedRouteId: input.selectedRouteId,
+    requiresApproval: false,
+    safety: sanitizeSafetyFlags(defaultSafetyFlags),
+    traceEventIds: [...(input.traceEventIds ?? [])]
+  };
+}
+
+export function createManualGateEvaluationResult(
+  gate: RuntimeGate,
+  input: Pick<GateEvaluationInput, 'evaluationReason' | 'evaluationMode' | 'evaluatedAt' | 'selectedRouteId' | 'confidence' | 'traceEventIds'> = {}
+): GateEvaluationResult {
+  const evaluatedAt = input.evaluatedAt ?? GATE_EVAL_DEFAULT_TIME;
+  const evaluationMode = input.evaluationMode ?? 'manual';
+  const routeSelections = routeSelectionsFromResultInputs(
+    { selectedRouteId: input.selectedRouteId ?? '' },
+    routeSelectionsFromRuntimeGate(gate)
+  );
+  return {
+    gateId: gate.id,
+    gateKind: gate.gateKind,
+    evaluatedAt,
+    evaluationMode,
+    outcome: 'passed',
+    decision: 'passed',
+    passed: true,
+    confidence: input.confidence,
+    reason: input.evaluationReason ?? `Manual ${gate.gateKind} evaluation from routeControl`,
+    routeSelections,
+    targetDecisions: buildTargetDecisionsFromRuntimeGate(gate),
+    selectedRouteId: input.selectedRouteId,
+    requiresApproval: false,
+    safety: sanitizeSafetyFlags(defaultSafetyFlags),
+    traceEventIds: [...(input.traceEventIds ?? [])]
+  };
+}
+
+export function routeStateFromGateEvaluationResults(
+  results: GateEvaluationResult[]
+): GateEvaluationRouteStateWithWarnings {
+  const pathChoiceByTarget = new Map<string, { state: GatePathState; order: number }>();
+  const warnings: string[] = [];
+
+  let order = 0;
+
+  for (const result of results) {
+    const targetsForResult: Array<[GatePathState, string, string]> = [
+      ...result.routeSelections.activeTargets.map((targetId) => ['active', targetId, result.gateId] as [GatePathState, string, string]),
+      ...result.routeSelections.dormantTargets.map((targetId) => ['dormant', targetId, result.gateId] as [GatePathState, string, string]),
+      ...result.routeSelections.suppressedTargets.map((targetId) => ['suppressed', targetId, result.gateId] as [GatePathState, string, string]),
+      ...result.routeSelections.blockedTargets.map((targetId) => ['blocked', targetId, result.gateId] as [GatePathState, string, string])
+    ];
+
+    for (const [state, targetId, gateId] of targetsForResult) {
+      order += 1;
+      const existing = pathChoiceByTarget.get(targetId);
+      if (!existing) {
+        pathChoiceByTarget.set(targetId, { state, order });
+        continue;
+      }
+
+      if (pathStatePrecedence[state] > pathStatePrecedence[existing.state]) {
+        warnings.push(
+          `Route target '${targetId}' conflicted across gate results; ${existing.state} overridden by ${state} from gate ${gateId}.`
+        );
+        pathChoiceByTarget.set(targetId, { state, order });
+      }
+    }
+  }
+
+  const activeOrdered: string[] = [];
+  const dormantOrdered: string[] = [];
+  const suppressedOrdered: string[] = [];
+  const blockedOrdered: string[] = [];
+
+  const orderedTargetChoices = [...pathChoiceByTarget.entries()].sort((a, b) => a[1].order - b[1].order);
+
+  for (const [targetId, stateChoice] of orderedTargetChoices) {
+    if (stateChoice.state === 'active') activeOrdered.push(targetId);
+    if (stateChoice.state === 'dormant') dormantOrdered.push(targetId);
+    if (stateChoice.state === 'suppressed') suppressedOrdered.push(targetId);
+    if (stateChoice.state === 'blocked') blockedOrdered.push(targetId);
+  }
+
+  return {
+    active_paths: activeOrdered,
+    dormant_paths: dormantOrdered,
+    suppressed_paths: suppressedOrdered,
+    blocked_paths: blockedOrdered,
+    warnings
+  };
+}
+
+export function gateEvaluationResultToGateIRRowPatch(result: GateEvaluationResult): Pick<
+  GateIRRow,
+  'state' | 'gatePassed' | 'selectedRouteIds' | 'activeTargetIds' | 'dormantTargetIds' | 'suppressedTargetIds' | 'blockedTargetIds' | 'requiredApproval' | 'routingDecision' | 'reason' | 'traceEventIds'
+> {
+  return {
+    state: result.decision,
+    gatePassed: result.passed,
+    selectedRouteIds: [...result.routeSelections.selectedRouteIds],
+    activeTargetIds: [...result.routeSelections.activeTargets],
+    dormantTargetIds: [...result.routeSelections.dormantTargets],
+    suppressedTargetIds: [...result.routeSelections.suppressedTargets],
+    blockedTargetIds: [...result.routeSelections.blockedTargets],
+    requiredApproval: result.requiresApproval,
+    routingDecision: result.selectedRouteId,
+    reason: result.reason,
+    traceEventIds: [...result.traceEventIds]
+  };
 }
 
 export function attachRuntimeGateToGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, gate: RuntimeGate, placement: GateAttachmentPlacement, existingRuntimeGates: RuntimeGate[] = []) {

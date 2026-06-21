@@ -22,6 +22,57 @@ export type RuntimeGatePlacement = { kind:'node_boundary'|'edge'; targetId:strin
 export type RuntimeGate = { type:'RuntimeGate'; id:string; title:string; gateKind:GateKind; condition:string; routeControl:GateRouteControl; runtimeState:GateRuntimeState; priorityOrder:GatePriorityOrder; traceRefs:string[]; sourcePath?:string; sourceCardId?:string; placement?:RuntimeGatePlacement };
 export type FullGateSourceRecord = { type:'FullGateSourceRecord'; sourcePath:string; sourceLayer:'HUMAN'; sourceFamily:'HUMAN/GATES'; legacyOriginal:{ markdown:string; parsedFields:Record<string,string>; parsedHeadings:Record<string,string> }; normalized:TriggerGateSourceCard; parserVersion:'trigger-gate-source-card.v0.1'; warnings:string[] };
 export type GateIRRow = { rowId:string; nodeId:string; nodeType:'gate'; gateKind:GateKind; title:string; selected:false; active:false; off:false; triggered:false; required:false; tagsMatched:string[]; state:RuntimeGateState|GatePathState; gatePassed:boolean; selectedRouteIds:string[]; activeTargetIds:string[]; dormantTargetIds:string[]; suppressedTargetIds:string[]; blockedTargetIds:string[]; governedNodeIds:string[]; requiredApproval:boolean; routingDecision?:string; reason:string; traceEventIds:string[] };
+export type GateEvaluationMode = 'manual' | 'text_tag' | 'policy' | 'manual_override' | 'disabled';
+export type GateEvaluationOutcome = 'passed' | 'blocked' | 'dormant' | 'suppressed' | 'requires_approval' | 'not_applicable' | 'error';
+export type GateEvaluationTargetDecision = {
+  targetId: string;
+  targetType: GateTargetType;
+  requestedPathState: GatePathState;
+  winnerPolicy: 'pass' | 'conflict' | 'default' | 'override';
+  evidence: Array<{ source: string; value: string; traceEventId?: string }>;
+  overridesBy?: string[];
+};
+export type GateEvaluationRouteSelections = {
+  selectedRouteIds: string[];
+  activeTargets: string[];
+  dormantTargets: string[];
+  suppressedTargets: string[];
+  blockedTargets: string[];
+  requiresApprovalTargets: string[];
+};
+export type GateEvaluationResult = {
+  gateId: string;
+  gateKind: GateKind;
+  evaluatedAt: string;
+  evaluationMode: GateEvaluationMode;
+  outcome: GateEvaluationOutcome;
+  decision: RuntimeGateState;
+  passed: boolean;
+  confidence?: number;
+  reason: string;
+  routeSelections: GateEvaluationRouteSelections;
+  targetDecisions: GateEvaluationTargetDecision[];
+  selectedRouteId?: string;
+  requiresApproval: boolean;
+  safety: {
+    promptContentMutation: boolean;
+    routeSwitching: boolean;
+    liveExecution: boolean;
+    toolExecution: boolean;
+  };
+  traceEventIds: string[];
+};
+export type GateEvaluationInput = {
+  gate: RuntimeGate;
+  evaluationMode?: GateEvaluationMode;
+  triggerMatch?: boolean;
+  routePriority?: number;
+  evaluationReason?: string;
+  selectedRouteId?: string;
+  evaluatedAt?: string;
+  confidence?: number;
+  traceEventIds?: string[];
+};
 export type GateDecision = { gateId:string; gateKind:GateKind; decision:RuntimeGateState|GatePathState; reason:string; targetIds:string[] };
 export type GateRouteState = { active_paths:string[]; dormant_paths:string[]; suppressed_paths:string[]; blocked_paths:string[] };
 export type RuntimeGateContext = { gates:Array<Pick<RuntimeGate,'id'|'sourceCardId'|'title'|'gateKind'|'sourcePath'|'runtimeState'|'placement'>>; gate_decisions:GateDecision[]; route_state:GateRouteState };
