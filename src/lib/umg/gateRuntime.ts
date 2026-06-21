@@ -41,6 +41,12 @@ export type GateEvaluationRouteStateWithWarnings = GateEvaluationRouteState & {
   warnings: string[];
 };
 
+export type GateEvaluationMetadata = {
+  gate_context: RuntimeGateContext;
+  gate_ir_rows: GateIRRow[];
+  trace_events: Array<Record<string, unknown>>;
+};
+
 const defaultSafetyFlags = {
   promptContentMutation: false,
   routeSwitching: false,
@@ -385,16 +391,117 @@ export function buildGateIRRowsForWorkspace(workspace: UMGWorkspace): GateIRRow[
   }));
 }
 
-export function attachGateContextToCompileResult(workspace: UMGWorkspace, result: { runtimeSpec: unknown; trace: Array<Record<string, unknown>>; irMatrix: Array<unknown> }) {
+function mergeUniqueStrings(values: string[][]) {
+  return [...new Set(values.flat().filter((value): value is string => typeof value === 'string' && value.length > 0))];
+}
+
+export function buildGateEvaluationRuntimeMetadata(workspace: UMGWorkspace, gateEvaluationResults: GateEvaluationResult[] = []): GateEvaluationMetadata {
   const gate_context = buildRuntimeGateContext(workspace);
   const gateRows = buildGateIRRowsForWorkspace(workspace);
-  if (gate_context.gates.length === 0) return result;
-  const runtimeSpec = typeof result.runtimeSpec === 'object' && result.runtimeSpec !== null
-    ? { ...result.runtimeSpec as Record<string, unknown>, gate_context }
-    : { value: result.runtimeSpec, gate_context };
-  const trace = [
-    ...result.trace,
-    ...gate_context.gates.map((gate) => ({ kind: 'gate_attached', gateId: gate.id, gateKind: gate.gateKind, sourceCardId: gate.sourceCardId, placement: gate.placement, evaluated: false, executed: false, reason: gate.runtimeState.reason }))
+  const gateById = new Map<string, { id: string }>(gate_context.gates.map((gate) => [gate.id, { id: gate.id }]));
+  const evaluationsByGate = new Map<string, GateEvaluationResult>();
+  gateEvaluationResults.forEach((result) => {
+    if (gateById.has(result.gateId)) evaluationsByGate.set(result.gateId, result);
+  });
+
+  const applicableResults = gateEvaluationResults.filter((result) => gateById.has(result.gateId));
+  const routeState = applicableResults.length === 0
+    ? emptyRouteState()
+    : (() => {
+      const stateWithWarnings = routeStateFromGateEvaluationResults(applicableResults);
+      return {
+        active_paths: stateWithWarnings.active_paths,
+        dormant_paths: stateWithWarnings.dormant_paths,
+        suppressed_paths: stateWithWarnings.suppressed_paths,
+        blocked_paths: stateWithWarnings.blocked_paths
+      };
+    })();
+
+  const gateRowsPatched = gateRows.map((gateRow) => {
+    const evalResult = evaluationsByGate.get(gateRow.nodeId);
+    if (!evalResult) return gateRow;
+    return { ...gateRow, ...gateEvaluationResultToGateIRRowPatch(evalResult) };
+  });
+
+  const gate_decisions = applicableResults.map((result) => ({
+    gateId: result.gateId,
+    gateKind: result.gateKind,
+    decision: result.decision,
+    reason: result.reason,
+    targetIds: mergeUniqueStrings([
+      result.routeSelections.activeTargets,
+      result.routeSelections.dormantTargets,
+      result.routeSelections.suppressedTargets,
+      result.routeSelections.blockedTargets,
+      result.routeSelections.requiresApprovalTargets
+    ])
+  }));
+
+  const withMetadata = {
+    ...gate_context,
+    gate_decisions,
+    route_state: routeState
+  };
+
+  const evaluationWarnings = applicableResults.length === 0
+    ? []
+    : routeStateFromGateEvaluationResults(applicableResults).warnings;
+
+  const trace_events = [
+    ...gate_context.gates.map((gate) => ({
+      kind: 'gate_attached',
+      gateId: gate.id,
+      gateKind: gate.gateKind,
+      sourceCardId: gate.sourceCardId,
+      placement: gate.placement,
+      evaluated: false,
+      executed: false,
+      reason: gate.runtimeState.reason
+    })),
+    ...applicableResults.map((result) => ({
+      kind: 'gate_evaluated',
+      gateId: result.gateId,
+      gateKind: result.gateKind,
+      evaluatedAt: result.evaluatedAt,
+      outcome: result.outcome,
+      decision: result.decision,
+      passed: result.passed,
+      evaluationMode: result.evaluationMode,
+      safety: result.safety,
+      requiresExecution: false,
+      routeSelections: {
+        active_paths: result.routeSelections.activeTargets,
+        dormant_paths: result.routeSelections.dormantTargets,
+        suppressed_paths: result.routeSelections.suppressedTargets,
+        blocked_paths: result.routeSelections.blockedTargets,
+        requires_approval: result.routeSelections.requiresApprovalTargets
+      },
+      traceEventIds: result.traceEventIds
+    })),
+    ...applicableResults.length > 0
+      ? [{
+          kind: 'route_state_projected',
+          route_state: routeState,
+          warnings: evaluationWarnings,
+          source: 'runtime_gate_evaluation_metadata'
+        }]
+      : []
   ];
-  return { ...result, runtimeSpec, trace, irMatrix: [...result.irMatrix, ...gateRows] };
+
+  return {
+    gate_context: withMetadata,
+    gate_ir_rows: gateRowsPatched,
+    trace_events
+  };
+}
+
+export function attachGateContextToCompileResult(workspace: UMGWorkspace, result: { runtimeSpec: unknown; trace: Array<Record<string, unknown>>; irMatrix: Array<unknown> }, gateEvaluationResults: GateEvaluationResult[] = []) {
+  const metadata = buildGateEvaluationRuntimeMetadata(workspace, gateEvaluationResults);
+  if (metadata.gate_context.gates.length === 0) return result;
+  const runtimeSpec =
+    typeof result.runtimeSpec === 'object' && result.runtimeSpec !== null
+      ? { ...result.runtimeSpec as Record<string, unknown>, gate_context: metadata.gate_context }
+      : { value: result.runtimeSpec, gate_context: metadata.gate_context };
+  const trace = [...result.trace, ...metadata.trace_events];
+  return { ...result, runtimeSpec, trace, irMatrix: [...result.irMatrix, ...metadata.gate_ir_rows] };
 }

@@ -1,6 +1,7 @@
 import { compileSleeve as realCompileSleeve } from '/home/neomagnetar/umg-compiler/compiler-v0/dist/compile.js';
 import { CompileResult, Diagnostic, IRMatrixRow, MOLTRole, Sleeve, UMGBlock, UMGWorkspace } from './types';
 import { attachGateContextToCompileResult } from './gateRuntime';
+import { GateEvaluationResult } from './types';
 import { isCompilerMoltBlock } from './migrateLibrary';
 
 const required: MOLTRole[] = ['directive', 'instruction', 'subject', 'primary', 'blueprint'];
@@ -34,6 +35,7 @@ export type CompilerBridgeOptions = {
   compilerName?: string;
   externalCompiler?: RealCompilerAdapter;
   disableInstalledCompiler?: boolean;
+  gateEvaluationResults?: GateEvaluationResult[];
 };
 
 function activeBlocks(ws: UMGWorkspace) {
@@ -256,29 +258,37 @@ export function compileWorkspaceToRuntime(workspace: UMGWorkspace, triggerState:
     const compilerName = options.compilerName ?? 'real-umg-compiler';
     try {
       const realResult = options.externalCompiler(sleeve, triggerState, workspace);
-      return attachGateContextToCompileResult(workspace, normalizeCompilerResult(realResult, fallback, compilerName)) as CompileResult;
+      return attachGateContextToCompileResult(workspace, normalizeCompilerResult(realResult, fallback, compilerName), options.gateEvaluationResults) as CompileResult;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return attachGateContextToCompileResult(workspace, deterministicCompile(workspace, triggerState, {
-        id: `diag_${compilerName}_fallback`,
-        type: 'Compiler fallback',
-        severity: 'warning',
-        message: `${compilerName} unavailable; used deterministic fallback: ${message}`
-      })) as CompileResult;
+      return attachGateContextToCompileResult(
+        workspace,
+        deterministicCompile(workspace, triggerState, {
+          id: `diag_${compilerName}_fallback`,
+          type: 'Compiler fallback',
+          severity: 'warning',
+          message: `${compilerName} unavailable; used deterministic fallback: ${message}`
+        }),
+        options.gateEvaluationResults
+      ) as CompileResult;
     }
   }
 
-  if (options.disableInstalledCompiler) return attachGateContextToCompileResult(workspace, fallback) as CompileResult;
+  if (options.disableInstalledCompiler) return attachGateContextToCompileResult(workspace, fallback, options.gateEvaluationResults) as CompileResult;
 
   try {
-    return attachGateContextToCompileResult(workspace, compileWithInstalledCompiler(workspace, triggerState, fallback)) as CompileResult;
+    return attachGateContextToCompileResult(workspace, compileWithInstalledCompiler(workspace, triggerState, fallback), options.gateEvaluationResults) as CompileResult;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return attachGateContextToCompileResult(workspace, deterministicCompile(workspace, triggerState, {
-      id: 'diag_umg_compiler_fallback',
-      type: 'Compiler fallback',
-      severity: 'warning',
-      message: `umg-compiler unavailable; used deterministic fallback: ${message}`
-    })) as CompileResult;
+    return attachGateContextToCompileResult(
+      workspace,
+      deterministicCompile(workspace, triggerState, {
+        id: 'diag_umg_compiler_fallback',
+        type: 'Compiler fallback',
+        severity: 'warning',
+        message: `umg-compiler unavailable; used deterministic fallback: ${message}`
+      }),
+      options.gateEvaluationResults
+    ) as CompileResult;
   }
 }

@@ -8,7 +8,7 @@ import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, nor
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
-import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, GATE_KINDS, createInertGateEvaluationResult, createManualGateEvaluationResult, gateEvaluationResultToGateIRRowPatch, gateProjectionPrinciples, routeStateFromGateEvaluationResults } from '../lib/umg/gateRuntime';
+import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, buildGateEvaluationRuntimeMetadata, GATE_KINDS, createInertGateEvaluationResult, createManualGateEvaluationResult, gateEvaluationResultToGateIRRowPatch, gateProjectionPrinciples, routeStateFromGateEvaluationResults } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets, triggerGateCategoryDisplayCopy } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
 import { buildFullGateSourceRecord, buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards, parseTriggerGateSourceMarkdown } from '../lib/umg/gateSourceImport';
@@ -1999,7 +1999,210 @@ describe('UMG Studio core engine', () => {
       expect(gateLine?.text).not.toContain('[#]');
     });
 
+    it('wires GateEvaluationResult metadata into runtimeSpec route state, gate decisions, GateIRRows, and trace without route switching', () => {
+      const gate = buildRuntimeGateFromSourceCard(parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown), { id: 'gate_trg_001_runtime_meta' });
+      const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const baseWorkspace: UMGWorkspace = { id: 'ws_gate_runtime_meta', title: 'Gate Runtime Metadata', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+      const targetNode = baseWorkspace.graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+      const attached = attachRuntimeGateToGraph(baseWorkspace.graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+      const workspace: UMGWorkspace = { ...baseWorkspace, graph: attached.graph, runtimeGates: attached.runtimeGates };
+
+      const manualResult = createManualGateEvaluationResult(gate);
+      manualResult.routeSelections = {
+        ...manualResult.routeSelections,
+        selectedRouteIds: ['route_service'],
+        activeTargets: ['stack_service'],
+        dormantTargets: ['stack_sales'],
+        suppressedTargets: ['block_marketing_upsell'],
+        blockedTargets: ['proposal_schedule_tool'],
+        requiresApprovalTargets: []
+      };
+
+      const inertMetadata = buildGateEvaluationRuntimeMetadata(workspace);
+      const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] }, { gateEvaluationResults: [manualResult] });
+      const runtimeSpec = compiled.runtimeSpec as any;
+      const gateRows = compiled.irMatrix.filter((row: any) => row.nodeType === 'gate');
+      const gateContext = runtimeSpec.gate_context as any;
+      const gateLine = gateRows.find((row: any) => row.nodeId === gate.id) as any;
+      const evaluatedEvents = compiled.trace.filter((event: any) => event.kind === 'gate_evaluated');
+      const routeProjected = compiled.trace.find((event: any) => event.kind === 'route_state_projected');
+
+      expect(inertMetadata.gate_context.route_state).toEqual({ active_paths: [], dormant_paths: [], suppressed_paths: [], blocked_paths: [] });
+      expect(inertMetadata.gate_context.gate_decisions).toEqual([]);
+      expect(runtimeSpec).toHaveProperty('gate_context');
+      expect(gateContext.route_state).toEqual({
+        active_paths: ['stack_service'],
+        dormant_paths: ['stack_sales'],
+        suppressed_paths: ['block_marketing_upsell'],
+        blocked_paths: ['proposal_schedule_tool']
+      });
+      expect(gateContext.gate_decisions).toMatchObject([
+        {
+          gateId: gate.id,
+          gateKind: 'trigger_gate',
+          decision: 'passed',
+          targetIds: ['stack_service', 'stack_sales', 'block_marketing_upsell', 'proposal_schedule_tool']
+        }
+      ]);
+      expect(gateLine).toMatchObject({
+        gatePassed: true,
+        state: 'passed',
+        selectedRouteIds: ['route_service'],
+        activeTargetIds: ['stack_service'],
+        dormantTargetIds: ['stack_sales'],
+        suppressedTargetIds: ['block_marketing_upsell'],
+        blockedTargetIds: ['proposal_schedule_tool'],
+        routingDecision: undefined,
+        requiredApproval: false
+      });
+      expect(gateLine?.state).not.toBe('not_evaluated');
+      expect(evaluatedEvents).toHaveLength(1);
+      expect(evaluatedEvents[0]).toMatchObject({
+        gateId: gate.id,
+        evaluationMode: 'manual',
+        outcome: 'passed',
+        safety: { promptContentMutation: false, routeSwitching: false, liveExecution: false, toolExecution: false },
+        requiresExecution: false
+      });
+      expect(routeProjected).toMatchObject({ kind: 'route_state_projected', source: 'runtime_gate_evaluation_metadata' });
+      expect(compiled.trace.some((event: any) => event.kind === 'route_state_projected')).toBe(true);
+      expect(compiled.trace.some((event: any) => event.kind === 'tool_execution')).toBe(false);
+    });
+
+    it('buildGateEvaluationRuntimeMetadata patches GateIRRows without mutating source GateIR rows', () => {
+      const gate = buildRuntimeGateFromSourceCard(parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown), { id: 'gate_trg_001_row_mutation' });
+      const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const baseWorkspace: UMGWorkspace = { id: 'ws_gate_rows_meta', title: 'Gate Row Metadata', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+      const targetNode = baseWorkspace.graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+      const attached = attachRuntimeGateToGraph(baseWorkspace.graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+      const workspace: UMGWorkspace = { ...baseWorkspace, graph: attached.graph, runtimeGates: attached.runtimeGates };
+
+      const rows = buildGateIRRowsForWorkspace(workspace);
+      const sourceRows = JSON.parse(JSON.stringify(rows));
+      const manual = createManualGateEvaluationResult(gate);
+      manual.routeSelections = {
+        ...manual.routeSelections,
+        activeTargets: ['manual_active'],
+        dormantTargets: [],
+        suppressedTargets: [],
+        blockedTargets: [],
+        requiresApprovalTargets: [],
+        selectedRouteIds: ['manual_route']
+      };
+
+      const metadata = buildGateEvaluationRuntimeMetadata(workspace, [manual]);
+      const patched = metadata.gate_ir_rows[0] as any;
+      expect(patched).not.toBe(rows[0]);
+      expect(rows[0]).toEqual(sourceRows[0]);
+      expect(patched.activeTargetIds).toEqual(['manual_active']);
+      expect(patched.selectedRouteIds).toEqual(['manual_route']);
+      expect(patched.state).toBe('passed');
+    });
+
+    it('projects evaluated route state into Glyph Matrix only from runtime evaluation source truth', () => {
+      const gate = buildRuntimeGateFromSourceCard(parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown), { id: 'gate_trg_001_glyph_projection' });
+      const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const baseWorkspace: UMGWorkspace = { id: 'ws_gate_glyph_projection', title: 'Gate Glyph Projection', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+      const targetNode = baseWorkspace.graph.nodes.find((node) => node.nodeType === 'neoblock')!;
+      const attached = attachRuntimeGateToGraph(baseWorkspace.graph, gate, { kind: 'node_boundary', nodeId: targetNode.id });
+      const workspace: UMGWorkspace = { ...baseWorkspace, graph: attached.graph, runtimeGates: attached.runtimeGates };
+
+      const inertCompile = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] });
+      const evaluated = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake'] }, { gateEvaluationResults: [
+        {
+          ...createManualGateEvaluationResult(gate),
+          routeSelections: {
+            ...createManualGateEvaluationResult(gate).routeSelections,
+            selectedRouteIds: ['route_service'],
+            activeTargets: ['stack_service'],
+            dormantTargets: ['stack_sales'],
+            suppressedTargets: ['block_marketing_upsell'],
+            blockedTargets: ['proposal_schedule_tool'],
+            requiresApprovalTargets: []
+          }
+        }
+      ] });
+
+      const inertMatrix = projectGlyphMatrix({ runtimeSpec: inertCompile.runtimeSpec, irMatrix: inertCompile.irMatrix, trace: inertCompile.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'compact' });
+      const activeMatrix = projectGlyphMatrix({ runtimeSpec: evaluated.runtimeSpec, irMatrix: evaluated.irMatrix, trace: evaluated.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'compact' });
+
+      expect(inertMatrix.routeState).toMatchObject({ active_paths: [], dormant_paths: [], suppressed_paths: [], blocked_paths: [] });
+      expect(activeMatrix.routeState).toMatchObject({
+        active_paths: ['stack_service'],
+        dormant_paths: ['stack_sales'],
+        suppressed_paths: ['block_marketing_upsell'],
+        blocked_paths: ['proposal_schedule_tool']
+      });
+      expect(activeMatrix.lines.find((line) => line.objectId === gate.id)).toMatchObject({ nodeClass: 'Gt', state: 'blocked' });
+      expect(inertMatrix.lines.find((line) => line.objectId === gate.id)).toMatchObject({ nodeClass: 'Gt', state: 'candidate' });
+    });
+
+    it('projects graph path states from evaluated GateIRRow patches', () => {
+      const graph = {
+        nodes: [
+          { id: 'node_stack_service', sourceId: 'stack_service', nodeType: 'neostack' as const, label: 'Service NeoStack', position: { x: 320, y: 80 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+          { id: 'node_stack_sales', sourceId: 'stack_sales', nodeType: 'neoblock' as const, label: 'Sales NeoBlock', position: { x: 320, y: 260 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+          { id: 'node_block_marketing_upsell', sourceId: 'block_marketing_upsell', nodeType: 'molt_block' as const, label: 'Marketing Upsell', position: { x: 940, y: 260 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+          { id: 'node_route_blocked', sourceId: 'proposal_schedule_tool', nodeType: 'molt_block' as const, label: 'Blocked Path', position: { x: 320, y: 420 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } }
+        ],
+        edges: [
+          { id: 'edge_service', source: 'node_sleeve', target: 'node_stack_service', type: 'activates' as const },
+          { id: 'edge_sales', source: 'node_sleeve', target: 'node_stack_sales', type: 'activates' as const },
+          { id: 'edge_upsell', source: 'node_stack_sales', target: 'node_block_marketing_upsell', type: 'contains' as const }
+        ]
+      };
+      const gate = buildRuntimeGate({
+        id: 'gate_graph_projection',
+        title: 'Graph projection gate',
+        gateKind: 'trigger_gate',
+        condition: 'Graph gate condition',
+        routeControl: {
+          activates: [{ targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' }],
+          dormants: [{ targetId: 'stack_sales', targetType: 'neoblock', defaultPathState: 'dormant' }],
+          suppresses: [{ targetId: 'block_marketing_upsell', targetType: 'molt_block', defaultPathState: 'suppressed' }],
+          blocks: [{ targetId: 'proposal_schedule_tool', targetType: 'molt_block', defaultPathState: 'blocked' }]
+        },
+        runtimeState: { state: 'inactive', passed: false, reason: 'Graph projection scope' }
+      });
+      const workspace: UMGWorkspace = { id: 'ws_gate_graph_projection', title: 'Gate Graph Projection', activeSleeveId: 'sleeve_graph', sleeves: [{ id: 'sleeve_graph', title: 'Graph Sleeve', version: 'v1', stacks: [] } as any], libraryRefs: [], graph, runtimeGates: [gate] };
+      const manual = createManualGateEvaluationResult(gate);
+      manual.routeSelections = {
+        ...manual.routeSelections,
+        activeTargets: ['stack_service'],
+        dormantTargets: ['stack_sales'],
+        suppressedTargets: ['block_marketing_upsell'],
+        blockedTargets: ['proposal_schedule_tool'],
+        requiresApprovalTargets: [],
+        selectedRouteIds: ['route_service']
+      };
+
+      const metadata = buildGateEvaluationRuntimeMetadata(workspace, [manual]);
+      const projected = projectGateRowsToGraph(graph, metadata.gate_ir_rows);
+
+      expect(projected.nodes.find((node) => node.sourceId === 'stack_service')?.pathState).toBe('active');
+      expect(projected.nodes.find((node) => node.sourceId === 'stack_sales')?.pathState).toBe('dormant');
+      expect(projected.nodes.find((node) => node.sourceId === 'block_marketing_upsell')?.pathState).toBe('suppressed');
+      expect(projected.nodes.find((node) => node.sourceId === 'proposal_schedule_tool')?.pathState).toBe('blocked');
+      expect(projected.edges.find((edge) => edge.id === 'edge_service')?.pathState).toBe('active');
+      expect(projected.edges.find((edge) => edge.id === 'edge_sales')?.pathState).toBe('dormant');
+      expect(projected.edges.find((edge) => edge.id === 'edge_upsell')?.pathState).toBe('suppressed');
+    });
+
+    it('preserves compiler prompt content when wiring GateEvaluationResult metadata', () => {
+      const sleeve = composeBlocks({ freeform_request: 'Build a mobile detailing customer intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const graph = buildGraphFromSleeve(sleeve);
+      const gate = buildRuntimeGateFromSourceCard(parseTriggerGateSourceMarkdown('/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md', trg001Markdown), { id: 'gate_prompt_stability' });
+      const workspace: UMGWorkspace = { id: 'ws_gate_prompt_stability', title: 'Gate Prompt Stability', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph, runtimeGates: [gate] };
+      const baseCompile = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] });
+      const evaluatedCompile = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'intake', 'mobile-detailing'] }, { gateEvaluationResults: [createInertGateEvaluationResult(gate)] });
+      const baseRuntimeSpec = baseCompile.runtimeSpec as Record<string, unknown>;
+
+      expect(evaluatedCompile.promptPreview).toBe(baseCompile.promptPreview);
+      expect((evaluatedCompile.runtimeSpec as any)).toMatchObject({ compiler: baseRuntimeSpec.compiler });
+    });
+
     it('does not implement route switching and does not execute live tools when creating GateIR patch', () => {
+
       const inert = createInertGateEvaluationResult(triggerRuntimeGate);
       const passed = createManualGateEvaluationResult(triggerRuntimeGate);
       const inertPatch = gateEvaluationResultToGateIRRowPatch(inert);
