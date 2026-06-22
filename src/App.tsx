@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './style.css';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
@@ -9,7 +9,7 @@ import migrationReport from '../data/library/migration-report.json';
 import sourceAuditData from '../data/library/source-assets.json';
 import { normalizeImportedBlocks, classifyLibraryDisplay, sectionLibraryByDisplayType } from './lib/umg/migrateLibrary';
 import { composeBlocks } from './lib/umg/composeBlocks';
-import { applyCompileResultToGraph, buildGraphFromSleeve, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
+import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { generateWithHermes, redactKey, testHermesConnection } from './lib/hermes/hermesClient';
@@ -19,6 +19,7 @@ import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards }
 import { buildRuntimeGateFromSourceCard, attachRuntimeGateToGraph } from './lib/umg/gateRuntime';
 import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from './lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from './lib/umg/gateDebug';
+import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from './lib/umg/workbenchLayout';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
@@ -30,6 +31,7 @@ const triggerGateSourceModules = import.meta.glob('../../umg-block-library/HUMAN
 
 type InspectorTab = typeof inspectorTabs[number];
 
+type ResizeTarget = 'left' | 'right' | 'bottom';
 type ShelfMode = AssetShelfId;
 type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
@@ -54,6 +56,13 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState(defaultStatusFilter);
   const [config, setConfig] = useState<HermesConfig>({ endpoint: '', model: 'hermes-default', temperature: 0.3, maxTokens: 1200 });
   const [hermesStatus, setHermesStatus] = useState('not configured');
+  const [layout, setLayout] = useState<WorkbenchLayoutState>(() =>
+    typeof window === 'undefined' ? loadWorkbenchLayout(undefined) : loadWorkbenchLayout(window.localStorage)
+  );
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
+  }, [layout]);
 
   const libraryWithStatus = useMemo(() => library.map((block) => {
     const classification = classifyLibraryDisplay(block);
@@ -105,9 +114,55 @@ export default function App() {
   const selectedGateId = selected?.governingGateIds?.[0];
   const selectedGateGlyphMatrix = useMemo(() => compiled ? projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }) : undefined, [compiled, workspace]);
   const runtimeGateDebugView = useMemo(() => selectedGateId ? buildRuntimeGateDebugView({ gateId: selectedGateId, workspace, compiled, glyphMatrix: selectedGateGlyphMatrix }) : undefined, [selectedGateId, workspace, compiled, selectedGateGlyphMatrix]);
+  const resizeState = useRef<{ target: ResizeTarget; startX: number; startY: number; startWidth: number; } | null>(null);
+
+  const startResize = (target: ResizeTarget, event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    resizeState.current = {
+      target,
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: layout.leftWidth
+    };
+    if (target === 'left' && layout.leftCollapsed) setLayout((current) => ({ ...current, leftCollapsed: false, leftWidth: Math.max(layout.leftWidth, 240) }));
+    if (target === 'right' && layout.rightCollapsed) setLayout((current) => ({ ...current, rightCollapsed: false, rightWidth: Math.max(layout.rightWidth, 400) }));
+    if (target === 'bottom' && layout.bottomCollapsed) setLayout((current) => ({ ...current, bottomCollapsed: false, bottomHeight: Math.max(layout.bottomHeight, 180) }));
+
+    const onPointerMove = (move: PointerEvent) => {
+      const state = resizeState.current;
+      if (!state) return;
+      setLayout((current) => {
+        if (state.target === 'left') return { ...current, leftWidth: Math.min(560, Math.max(220, state.startWidth + (move.clientX - state.startX)) )};
+        if (state.target === 'right') return { ...current, rightWidth: Math.min(620, Math.max(260, current.rightWidth - (move.clientX - state.startX))) };
+        return { ...current, bottomHeight: Math.min(520, Math.max(150, current.bottomHeight + (state.startY - move.clientY))) };
+      });
+    };
+
+    const stopResize = () => {
+      resizeState.current = null;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', stopResize);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', stopResize);
+  };
+
+  const classes = [
+    layout.leftCollapsed ? 'leftCollapsed' : '',
+    layout.rightCollapsed ? 'rightCollapsed' : '',
+    layout.bottomCollapsed ? 'bottomCollapsed' : ''
+  ].filter(Boolean).join(' ');
+
+  const layoutStyle = {
+    '--leftWidth': `${layout.leftWidth}px`,
+    '--rightWidth': `${layout.rightWidth}px`,
+    '--bottomHeight': `${layout.bottomHeight}px`
+  } as React.CSSProperties;
 
   const compose = () => {
     const composition = composeBlocks({ freeform_request: request, target_type: target as any, depth }, libraryWithStatus);
+
     const nextWorkspace: UMGWorkspace = { id: 'ws_local', title: 'Local UMG Workspace', activeSleeveId: composition.draft_sleeve.id, sleeves: [composition.draft_sleeve], libraryRefs: libraryWithStatus.map((block) => block.id), graph: buildGraphFromSleeve(composition.draft_sleeve) };
     setWorkspace(nextWorkspace);
     setCompiled(undefined);
@@ -187,17 +242,44 @@ export default function App() {
 
   const generate = async () => {
     if (!compiled) return setStatus('compile first');
-    if (!config.endpoint) { setOutput('Hermes endpoint not configured. Compile/export remains available without Hermes.'); return setStatus('Hermes generation blocked: not configured'); }
-    const result = await generateWithHermes(request, compiled, config);
-    setOutput(result.output);
-    setStatus(result.ok ? 'Hermes generation complete' : 'Hermes generation blocked');
+    if (!config.endpoint) {
+      setRuntimeTab('Output');
+      const notConfiguredMessage = 'Hermes generation is not configured. Compile/runtime preview remains available.';
+      setOutput(notConfiguredMessage);
+      return setStatus('Hermes generation blocked: not configured');
+    }
+    try {
+      const result = await generateWithHermes(request, compiled, config);
+      setRuntimeTab('Output');
+      setOutput(result.output);
+      setStatus(result.ok ? 'Hermes generation complete' : 'Hermes generation blocked');
+    } catch (error) {
+      setRuntimeTab('Output');
+      const message = error instanceof Error ? error.message : String(error);
+      setOutput(`Hermes generation failed: ${message}`);
+      setStatus('Hermes generation blocked');
+    }
+  };
+
+  const updateNodePosition = (nodeId: string, x: number, y: number) => {
+    if (!workspace) return;
+    setWorkspace((previous) => {
+      if (!previous) return previous;
+      const nextGraph = applyManualLayout(previous.graph, nodeId, { x, y, relation: 'contains' });
+      return { ...previous, graph: nextGraph };
+    });
+    setCompiled(undefined);
   };
 
   return <div className="app">
     <header><div><b>UMG Studio v0.1</b><span>local graph cognition studio</span></div><button onClick={() => downloadJson('umg-workspace.json', workspace)}>Export Workspace</button></header>
-    <main>
+    <main className={classes} style={layoutStyle}>
       <section className="compose card"><h2>Compose</h2><textarea value={request} onChange={(event) => setRequest(event.target.value)} /><div className="row"><select value={target} onChange={(event) => setTarget(event.target.value)}><option value="chatbot">Chatbot</option><option value="business_template">Business Template</option><option value="website_prompt">Website Prompt</option><option value="umg_sleeve">UMG Sleeve</option></select><select value={depth} onChange={(event) => setDepth(event.target.value as any)}><option>lean</option><option>balanced</option><option>full</option></select><button className="primary" onClick={compose}>Compose Blocks</button><button onClick={compile}>Compile</button><button onClick={generate}>Generate</button></div><p>{status}</p></section>
       <section className="library card">
+        <div className="panelTitle">
+          <h2>Library & Control Sources</h2>
+          <button onClick={() => setLayout((current) => ({ ...current, leftCollapsed: !current.leftCollapsed }))}>{layout.leftCollapsed ? 'Expand' : 'Collapse'}</button>
+        </div>
         <ShelfControls
           shelves={shelves}
           activeShelf={activeShelf}
@@ -229,9 +311,44 @@ export default function App() {
         {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <AssetCards items={visibleItems} onAdd={addAsset} onInspect={inspectAsset} />}
         {activeShelf === 'molt_blocks' && <details className="secondaryAudit"><summary>Source Assets / Audit — secondary import accountability</summary><LibraryAudit report={migrationReport as any} />{sections.map((section) => <div key={section.type}>{section.label} ({section.blocks.length})</div>)}</details>}
       </section>
-      <section className="graph card"><div className="bar"><h2>Graph Studio</h2><button onClick={() => workspace && downloadJson('sleeve.json', workspace.sleeves[0])}>Export Sleeve</button><button onClick={() => compiled && downloadJson('ir-matrix.json', compiled.irMatrix)}>Export IR</button><button onClick={() => compiled && downloadJson('glyph-matrix.json', projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }))}>Export Glyph Matrix</button><button onClick={() => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config))}>Export Hermes Packet</button></div>{graph ? <Graph nodes={graph.nodes} edges={graph.edges} selected={selected?.id} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}</section>
-      <aside className="inspect card"><h2>Inspector / Config</h2>{selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}<RuntimeGateDebugPanel view={runtimeGateDebugView} /><BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} /><h3>Hermes</h3><div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div><input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => setConfig({ ...config, endpoint: event.target.value })} /><input placeholder="API key" type="password" value={config.apiKey ?? ''} onChange={(event) => setConfig({ ...config, apiKey: event.target.value })} /><input aria-label="Hermes model" value={config.model} onChange={(event) => setConfig({ ...config, model: event.target.value })} /><button onClick={async () => { const result = await testHermesConnection(config); setHermesStatus(result.ok ? 'test passed' : 'test failed'); setStatus(`Hermes ${result.message}`); }}>Test Connection</button></aside>
-      <section className="drawer card"><h2>Compiler / Runtime</h2><div className="tabs">{runtimeDrawerTabs.map((tab) => <button key={tab} className={runtimeTab === tab ? 'hot' : ''} onClick={() => setRuntimeTab(tab)}>{tab}</button>)}</div><pre className={runtimeTab === 'Glyph Matrix' ? 'glyphMatrixOutput' : undefined}>{renderRuntime(workspace, compiled, output, runtimeTab)}</pre></section>
+      <div className="split vertical leftSplit" onPointerDown={(event) => startResize('left', event)} role="separator" aria-label="Resize library panel" />
+      <section className="graph card">
+        <div className="panelTitle">
+          <div className="graphControls">
+            <h2>Graph Studio</h2>
+            <button onClick={() => workspace && downloadJson('sleeve.json', workspace.sleeves[0])}>Export Sleeve</button>
+            <button onClick={() => compiled && downloadJson('ir-matrix.json', compiled.irMatrix)}>Export IR</button>
+            <button onClick={() => compiled && downloadJson('glyph-matrix.json', projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }))}>Export Glyph Matrix</button>
+            <button onClick={() => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config))}>Export Hermes Packet</button>
+          </div>
+        </div>
+        {graph ? <Graph nodes={graph.nodes} edges={graph.edges} selected={selected?.id} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
+      </section>
+      <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
+      <aside className="inspect card">
+        <div className="panelTitle">
+          <h2>Inspector / Config</h2>
+          <button onClick={() => setLayout((current) => ({ ...current, rightCollapsed: !current.rightCollapsed }))}>{layout.rightCollapsed ? 'Expand' : 'Collapse'}</button>
+        </div>
+        {selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}
+        <RuntimeGateDebugPanel view={runtimeGateDebugView} />
+        <BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} />
+        <h3>Hermes</h3>
+        <div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div>
+        <input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => setConfig({ ...config, endpoint: event.target.value })} />
+        <input placeholder="API key" type="password" value={config.apiKey ?? ''} onChange={(event) => setConfig({ ...config, apiKey: event.target.value })} />
+        <input aria-label="Hermes model" value={config.model} onChange={(event) => setConfig({ ...config, model: event.target.value })} />
+        <button onClick={async () => { const result = await testHermesConnection(config); setHermesStatus(result.ok ? 'test passed' : 'test failed'); setStatus(`Hermes ${result.message}`); }}>Test Connection</button>
+      </aside>
+      <div className="split horizontal bottomSplit" onPointerDown={(event) => startResize('bottom', event)} role="separator" aria-label="Resize runtime drawer" />
+      <section className="drawer card">
+        <div className="panelTitle">
+          <h2>Compiler / Runtime</h2>
+          <button onClick={() => setLayout((current) => ({ ...current, bottomCollapsed: !current.bottomCollapsed }))}>{layout.bottomCollapsed ? 'Expand' : 'Collapse'}</button>
+        </div>
+        <div className="tabs">{runtimeDrawerTabs.map((tab) => <button key={tab} className={runtimeTab === tab ? 'hot' : ''} onClick={() => setRuntimeTab(tab)}>{tab}</button>)}</div>
+        <pre className={runtimeTab === 'Glyph Matrix' ? 'glyphMatrixOutput' : undefined}>{renderRuntime(workspace, compiled, output, runtimeTab)}</pre>
+      </section>
     </main>
   </div>;
 }
@@ -298,14 +415,68 @@ function gateStripStyle(edge: any) {
   return { left: (x1 + x2) / 2, top: (y1 + y2) / 2 };
 }
 
-function Graph({ nodes, edges, selected, onPick }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void }) {
-  return <div className="canvas">{edges.map((edge) => {
-    const gateStrip = gateVisualMetadataForEdge(edge);
-    return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
-  })}{nodes.map((node) => {
-    const gateBadge = gateVisualMetadataForNode(node);
-    return <button key={node.id} className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`} style={{ left: node.position.x, top: node.position.y }} onClick={() => onPick(node)}><b>{node.label}</b><small>{node.nodeType}</small>{gateBadge.renderGateBadge && <span className={gateBadge.className}>{gateBadge.label}</span>}{node.state.warning && <em>{node.state.warning}</em>}</button>;
-  })}</div>;
+function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void; onMove?: (nodeId: string, x: number, y: number) => void }) {
+  const dragging = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
+
+  const onCanvasPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    dragging.current = null;
+    if (event.target === event.currentTarget && onMove) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+  };
+
+  const onCanvasPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const active = dragging.current;
+    if (!active || !onMove) return;
+    onMove(active.id, event.clientX - active.offsetX, event.clientY - active.offsetY);
+  };
+
+  const onCanvasPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    dragging.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const onNodePointerDown = (event: React.PointerEvent<HTMLButtonElement>, node: GraphNode) => {
+    if (!onMove) return;
+    event.stopPropagation();
+    event.preventDefault();
+    dragging.current = {
+      id: node.id,
+      offsetX: event.clientX - node.position.x,
+      offsetY: event.clientY - node.position.y
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onNodePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  return (
+    <div className="canvas" onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+      {edges.map((edge) => {
+        const gateStrip = gateVisualMetadataForEdge(edge);
+        return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
+      })}{nodes.map((node) => {
+        const gateBadge = gateVisualMetadataForNode(node);
+        return <button
+          key={node.id}
+          className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`}
+          style={{ left: node.position.x, top: node.position.y }}
+          onPointerDown={(event) => onNodePointerDown(event, node)}
+          onPointerUp={onNodePointerUp}
+          onClick={() => onPick(node)}
+        >
+          <b>{node.label}</b>
+          <small>{node.nodeType}</small>
+          {gateBadge.renderGateBadge && <span className={gateBadge.className}>{gateBadge.label}</span>}
+          {node.state.warning && <em>{node.state.warning}</em>}
+        </button>;
+      })}
+    </div>
+  );
 }
 
 function RuntimeGateDebugPanel({ view }: { view?: ReturnType<typeof buildRuntimeGateDebugView> }) {
