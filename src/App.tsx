@@ -12,7 +12,8 @@ import { composeBlocks } from './lib/umg/composeBlocks';
 import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
-import { generateWithHermes, redactKey, testHermesConnection } from './lib/hermes/hermesClient';
+import { redactKey, testHermesConnection } from './lib/hermes/hermesClient';
+import { generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT } from './lib/umg/hermesGenerate';
 import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceAuditItem, triggerGateCategoryDisplayCopy } from './lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from './lib/umg/blockViews';
 import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards } from './lib/umg/gateSourceImport';
@@ -54,7 +55,13 @@ export default function App() {
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState(defaultStatusFilter);
-  const [config, setConfig] = useState<HermesConfig>({ endpoint: '', model: 'hermes-default', temperature: 0.3, maxTokens: 1200 });
+  const [config, setConfig] = useState<HermesConfig>(() => ({
+    endpoint: import.meta.env.VITE_HERMES_GENERATE_URL ?? '',
+    apiKey: import.meta.env.VITE_HERMES_API_KEY || undefined,
+    model: import.meta.env.VITE_HERMES_MODEL ?? 'hermes-default',
+    temperature: 0.3,
+    maxTokens: 1200
+  }));
   const [hermesStatus, setHermesStatus] = useState('not configured');
   const [layout, setLayout] = useState<WorkbenchLayoutState>(() =>
     typeof window === 'undefined' ? loadWorkbenchLayout(undefined) : loadWorkbenchLayout(window.localStorage)
@@ -241,23 +248,25 @@ export default function App() {
   };
 
   const generate = async () => {
-    if (!compiled) return setStatus('compile first');
-    if (!config.endpoint) {
-      setRuntimeTab('Output');
-      const notConfiguredMessage = 'Hermes generation is not configured. Compile/runtime preview remains available.';
-      setOutput(notConfiguredMessage);
-      return setStatus('Hermes generation blocked: not configured');
+    setRuntimeTab('Output');
+    if (!compiled) {
+      const message = 'Compose and Compile first before Hermes generation.';
+      setOutput(message);
+      return setStatus(message);
     }
+    if (!config.endpoint) {
+      setOutput(HERMES_GENERATE_MISSING_ENDPOINT);
+      return setStatus('Hermes generation endpoint missing');
+    }
+    setStatus('Generating with Hermes…');
     try {
-      const result = await generateWithHermes(request, compiled, config);
-      setRuntimeTab('Output');
+      const result = await generateWithHermesEndpoint({ userRequest: request, workspace, compiled, config });
       setOutput(result.output);
-      setStatus(result.ok ? 'Hermes generation complete' : 'Hermes generation blocked');
+      setStatus(result.status);
     } catch (error) {
-      setRuntimeTab('Output');
       const message = error instanceof Error ? error.message : String(error);
       setOutput(`Hermes generation failed: ${message}`);
-      setStatus('Hermes generation blocked');
+      setStatus('Hermes generation failed');
     }
   };
 

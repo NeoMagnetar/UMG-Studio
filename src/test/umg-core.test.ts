@@ -8,6 +8,7 @@ import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, nor
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
+import { buildHermesGeneratePacket, extractHermesGeneratedText, generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT } from '../lib/umg/hermesGenerate';
 import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, buildGateEvaluationRuntimeMetadata, GATE_KINDS, createInertGateEvaluationResult, createManualGateEvaluationResult, gateEvaluationResultToGateIRRowPatch, gateProjectionPrinciples, routeStateFromGateEvaluationResults } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets, triggerGateCategoryDisplayCopy } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
@@ -1776,6 +1777,69 @@ describe('UMG Studio core engine', () => {
     expect(JSON.stringify(packet)).not.toContain('SECRET_KEY');
     expect('apiKey' in packet.settings).toBe(false);
     expect(packet.mode).toBe('generate');
+  });
+
+  it('builds a bounded Hermes Generate request packet with projection-only safety metadata', () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'lean' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_hermes_generate', title: 'Hermes Generate Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot', 'mobile'] });
+    const beforePrompt = compiled.promptPreview;
+    const beforeMoltCount = compiled.irMatrix.filter((row) => row.nodeType === 'molt_block').length;
+    const packet = buildHermesGeneratePacket('Build it', compiled, workspace) as any;
+
+    expect(packet.mode).toBe('umg_studio_generate_test');
+    expect(packet.userRequest).toBe('Build it');
+    expect(packet.compiledPromptPreview).toBe(beforePrompt);
+    expect(packet.runtimeSpecSummary.source).toBe('real');
+    expect(packet.selectedMoltBlocks.length).toBeGreaterThan(0);
+    expect(packet.workspaceStructure.sleeve.stacks.length).toBeGreaterThan(0);
+    expect(packet.safety).toEqual({ routeSwitching: false, liveExecution: false, toolExecution: false, promptContentMutation: false });
+    expect(JSON.stringify(packet)).not.toContain('SECRET_KEY');
+    expect(JSON.stringify(packet)).not.toContain('tool_results');
+    expect(compiled.promptPreview).toBe(beforePrompt);
+    expect(compiled.irMatrix.filter((row) => row.nodeType === 'molt_block')).toHaveLength(beforeMoltCount);
+  });
+
+  it('uses configured Hermes Generate endpoint and displays common response shapes', async () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'lean' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_hermes_response', title: 'Hermes Response Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot'] });
+    const calls: any[] = [];
+    const fetchImpl = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url, init, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ text: 'Hermes generated mobile detailing draft' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    const result = await generateWithHermesEndpoint({ userRequest: 'Build it', workspace, compiled, config: { endpoint: 'http://127.0.0.1:9999/generate', apiKey: 'SECRET_KEY', model: 'hermes-test', temperature: 0.3, maxTokens: 1200 }, fetchImpl });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toBe('Hermes generated mobile detailing draft');
+    expect(result.status).toBe('Hermes generation complete');
+    expect(calls[0].url).toBe('http://127.0.0.1:9999/generate');
+    expect(calls[0].body.safety).toEqual({ routeSwitching: false, liveExecution: false, toolExecution: false, promptContentMutation: false });
+    expect(calls[0].body.generation.model).toBe('hermes-test');
+    expect(JSON.stringify(calls[0].body)).not.toContain('SECRET_KEY');
+    expect(calls[0].init.headers.authorization).toBe('Bearer SECRET_KEY');
+    expect(extractHermesGeneratedText({ output: 'output text' })).toBe('output text');
+    expect(extractHermesGeneratedText({ message: 'message text' })).toBe('message text');
+    expect(extractHermesGeneratedText({ result: 'result text' })).toBe('result text');
+  });
+
+  it('handles missing Hermes endpoint, failures, and unknown response shapes clearly', async () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'lean' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_hermes_failure', title: 'Hermes Failure Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot'] });
+    const missing = await generateWithHermesEndpoint({ userRequest: 'Build it', workspace, compiled, config: { endpoint: '', model: 'hermes-test', temperature: 0.3, maxTokens: 1200 } });
+    const failed = await generateWithHermesEndpoint({ userRequest: 'Build it', workspace, compiled, config: { endpoint: 'http://127.0.0.1:9999/generate', model: 'hermes-test', temperature: 0.3, maxTokens: 1200 }, fetchImpl: async () => new Response(JSON.stringify({ error: 'down' }), { status: 503 }) });
+
+    expect(missing.ok).toBe(false);
+    expect(missing.output).toBe(HERMES_GENERATE_MISSING_ENDPOINT);
+    expect(failed.ok).toBe(false);
+    expect(failed.output).toContain('Hermes generation failed: HTTP 503');
+    expect(extractHermesGeneratedText({ nested: { value: 'unknown' } })).toContain('nested');
   });
 
   describe('GateEvaluation', () => {
