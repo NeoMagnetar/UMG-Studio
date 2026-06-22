@@ -1794,6 +1794,180 @@ describe('UMG Studio core engine', () => {
       sourcePath: '/tmp/trigger-gate-scaffold.md'
     });
 
+    function buildManualDealershipGateFixture() {
+      const sleeve = composeBlocks({ freeform_request: 'Build a dealership service intake chatbot', target_type: 'chatbot', depth: 'lean' }, normalizedLibraryBlocks as any[]).draft_sleeve;
+      const composedGraph = buildGraphFromSleeve(sleeve);
+      const graph = {
+        nodes: [
+          ...composedGraph.nodes,
+          { id: 'node_stack_service', sourceId: 'stack_service', nodeType: 'neostack' as const, label: 'Service NeoStack', position: { x: 320, y: 80 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+          { id: 'node_stack_sales', sourceId: 'stack_sales', nodeType: 'neostack' as const, label: 'Sales NeoStack', position: { x: 320, y: 260 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+          { id: 'node_block_marketing_upsell', sourceId: 'block_marketing_upsell', nodeType: 'molt_block' as const, label: 'Marketing Upsell NeoBlock', position: { x: 940, y: 260 }, state: { selected: false, active: true, off: false, triggered: false, invalid: false } },
+          { id: 'node_proposal_schedule_tool', sourceId: 'proposal_schedule_tool', nodeType: 'gate' as const, label: 'Schedule ToolProposal', position: { x: 620, y: 420 }, state: { selected: false, active: false, off: false, triggered: false, invalid: false } }
+        ],
+        edges: [
+          ...composedGraph.edges,
+          { id: 'edge_service', source: composedGraph.nodes[0].id, target: 'node_stack_service', type: 'activates' as const },
+          { id: 'edge_sales', source: composedGraph.nodes[0].id, target: 'node_stack_sales', type: 'activates' as const },
+          { id: 'edge_upsell', source: 'node_stack_sales', target: 'node_block_marketing_upsell', type: 'contains' as const },
+          { id: 'edge_tool', source: 'node_stack_service', target: 'node_proposal_schedule_tool', type: 'activates' as const }
+        ]
+      };
+      const gate = buildRuntimeGate({
+        id: 'gate_manual_dealership_service_route',
+        title: 'Dealership Service Route TriggerGate',
+        gateKind: 'trigger_gate',
+        condition: 'Customer request indicates dealership service scheduling intent',
+        sourceCardId: 'TRG.001',
+        sourcePath: '/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.001-technical-analysis-request.md',
+        routeControl: {
+          activates: [{ targetId: 'stack_service', targetType: 'neostack', defaultPathState: 'active' }],
+          dormants: [{ targetId: 'stack_sales', targetType: 'neostack', defaultPathState: 'dormant' }],
+          suppresses: [{ targetId: 'block_marketing_upsell', targetType: 'molt_block', defaultPathState: 'suppressed' }],
+          blocks: [{ targetId: 'proposal_schedule_tool', targetType: 'tool_proposal', defaultPathState: 'blocked' }]
+        },
+        runtimeState: { state: 'inactive', passed: false, reason: 'Manual fixture gate attached as projection-only control geometry.' }
+      });
+      const attached = attachRuntimeGateToGraph(graph, gate, { kind: 'node_boundary', nodeId: 'node_stack_service' });
+      const workspace: UMGWorkspace = { id: 'ws_manual_dealership_fixture', title: 'Manual Dealership Fixture', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: attached.graph, runtimeGates: attached.runtimeGates };
+      const runtimeGate = attached.runtimeGates[0];
+      const manualResult = createManualGateEvaluationResult(runtimeGate, {
+        selectedRouteId: 'route_service',
+        evaluationReason: 'Manual dealership service-route fixture result; projection only.',
+        evaluatedAt: '2026-01-01T00:00:00.000Z',
+        traceEventIds: ['trace_manual_dealership_gate_eval']
+      });
+      return { workspace, gate: runtimeGate, manualResult };
+    }
+
+    it('manual dealership fixture projects explicit GateEvaluationResult through RuntimeSpec, GateIRRows, and Trace without execution', () => {
+      const { workspace, gate, manualResult } = buildManualDealershipGateFixture();
+      const baseCompile = compileWorkspaceToRuntime(workspace, { tags: ['dealership', 'service'] });
+      const evaluatedCompile = compileWorkspaceToRuntime(workspace, { tags: ['dealership', 'service'] }, { gateEvaluationResults: [manualResult] });
+      const runtimeSpec = evaluatedCompile.runtimeSpec as any;
+      const gateRows = evaluatedCompile.irMatrix.filter((row: any) => row.nodeType === 'gate') as any[];
+      const gateRow = gateRows.find((row) => row.nodeId === gate.id);
+      const baseMoltRows = baseCompile.irMatrix.filter((row: any) => row.nodeType === 'molt_block');
+      const evaluatedMoltRows = evaluatedCompile.irMatrix.filter((row: any) => row.nodeType === 'molt_block');
+      const traceKinds = evaluatedCompile.trace.map((event: any) => event.kind);
+
+      expect(manualResult).toMatchObject({
+        gateId: 'gate_manual_dealership_service_route',
+        gateKind: 'trigger_gate',
+        outcome: 'passed',
+        decision: 'passed',
+        passed: true,
+        evaluationMode: 'manual',
+        routeSelections: {
+          selectedRouteIds: ['route_service'],
+          activeTargets: ['stack_service'],
+          dormantTargets: ['stack_sales'],
+          suppressedTargets: ['block_marketing_upsell'],
+          blockedTargets: ['proposal_schedule_tool']
+        },
+        safety: { promptContentMutation: false, routeSwitching: false, liveExecution: false, toolExecution: false }
+      });
+      expect(runtimeSpec.gate_context.route_state).toEqual({
+        active_paths: ['stack_service'],
+        dormant_paths: ['stack_sales'],
+        suppressed_paths: ['block_marketing_upsell'],
+        blocked_paths: ['proposal_schedule_tool']
+      });
+      expect(runtimeSpec.gate_context.gate_decisions).toMatchObject([{ gateId: gate.id, gateKind: 'trigger_gate', decision: 'passed', targetIds: ['stack_service', 'stack_sales', 'block_marketing_upsell', 'proposal_schedule_tool'] }]);
+      expect((evaluatedCompile.runtimeSpec as any).source).toBe((baseCompile.runtimeSpec as any).source);
+      expect(gateRow).toMatchObject({
+        nodeType: 'gate',
+        gateKind: 'trigger_gate',
+        state: 'passed',
+        gatePassed: true,
+        selectedRouteIds: ['route_service'],
+        activeTargetIds: ['stack_service'],
+        dormantTargetIds: ['stack_sales'],
+        suppressedTargetIds: ['block_marketing_upsell'],
+        blockedTargetIds: ['proposal_schedule_tool'],
+        requiredApproval: false,
+        routingDecision: 'route_service'
+      });
+      expect(gateRows).toHaveLength(1);
+      expect(evaluatedMoltRows).toHaveLength(baseMoltRows.length);
+      expect(evaluatedMoltRows.every((row: any) => row.nodeType === 'molt_block')).toBe(true);
+      expect(traceKinds).toContain('gate_attached');
+      expect(traceKinds).toContain('gate_evaluated');
+      expect(traceKinds).toContain('route_state_projected');
+      expect(traceKinds).not.toContain('tool_execution');
+      expect(traceKinds).not.toContain('action_approved');
+      expect(traceKinds).not.toContain('route_switched');
+      expect(traceKinds).not.toContain('prompt_pruned');
+      expect(JSON.stringify(evaluatedCompile.runtimeSpec)).not.toContain('tool_results');
+      expect(JSON.stringify(evaluatedCompile)).not.toContain('executionPermission');
+      expect(evaluatedCompile.trace.find((event: any) => event.kind === 'gate_evaluated')).toMatchObject({ safety: { promptContentMutation: false, routeSwitching: false, liveExecution: false, toolExecution: false }, requiresExecution: false });
+    });
+
+    it('manual dealership fixture projects Glyph Matrix and graph pathState only from supplied source truth', () => {
+      const { workspace, gate, manualResult } = buildManualDealershipGateFixture();
+      const inertCompile = compileWorkspaceToRuntime(workspace, { tags: ['dealership', 'service'] });
+      const evaluatedCompile = compileWorkspaceToRuntime(workspace, { tags: ['dealership', 'service'] }, { gateEvaluationResults: [manualResult] });
+      const inertGlyph = projectGlyphMatrix({ runtimeSpec: inertCompile.runtimeSpec, irMatrix: inertCompile.irMatrix, trace: inertCompile.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'debug' });
+      const evaluatedGlyph = projectGlyphMatrix({ runtimeSpec: evaluatedCompile.runtimeSpec, irMatrix: evaluatedCompile.irMatrix, trace: evaluatedCompile.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'debug' });
+      const projectedGraph = projectGateRowsToGraph(workspace.graph, evaluatedCompile.irMatrix.filter((row: any) => row.nodeType === 'gate') as any[]);
+      const glyphText = renderGlyphMatrixText(evaluatedGlyph);
+
+      expect(inertGlyph.routeState).toMatchObject({ active_paths: [], dormant_paths: [], suppressed_paths: [], blocked_paths: [] });
+      expect(evaluatedGlyph.routeState).toMatchObject({ active_paths: ['stack_service'], dormant_paths: ['stack_sales'], suppressed_paths: ['block_marketing_upsell'], blocked_paths: ['proposal_schedule_tool'] });
+      expect(glyphText).toContain('RouteState:');
+      expect(glyphText).toContain('active_paths: [stack_service]');
+      expect(glyphText).toContain('dormant_paths: [stack_sales]');
+      expect(glyphText).toContain('suppressed_paths: [block_marketing_upsell]');
+      expect(glyphText).toContain('blocked_paths: [proposal_schedule_tool]');
+      expect(evaluatedGlyph.lines.find((line) => line.objectId === gate.id)).toMatchObject({ nodeClass: 'Gt', sourceGateIrRowId: `gate_ir_${gate.id}` });
+      expect(inertGlyph.lines.find((line) => line.objectId === gate.id)).toMatchObject({ nodeClass: 'Gt' });
+      expect(inertGlyph.lines.find((line) => line.objectId === gate.id)?.stateGlyph).not.toBe('[#]');
+      expect(projectedGraph.nodes.find((node) => node.sourceId === 'stack_service')).toMatchObject({ pathState: 'active', gateKind: 'trigger_gate', gateLabel: 'Gt: Dealership Service Route TriggerGate' });
+      expect(projectedGraph.nodes.find((node) => node.sourceId === 'stack_sales')?.pathState).toBe('dormant');
+      expect(projectedGraph.nodes.find((node) => node.sourceId === 'block_marketing_upsell')?.pathState).toBe('suppressed');
+      expect(projectedGraph.nodes.find((node) => node.sourceId === 'proposal_schedule_tool')).toMatchObject({ pathState: 'blocked', state: { invalid: false } });
+      expect(workspace.graph.nodes.find((node) => node.sourceId === 'stack_service')?.pathState).toBe('candidate');
+      expect(JSON.stringify(evaluatedGlyph)).not.toContain('tool_results');
+    });
+
+    it('manual dealership fixture exposes RuntimeGate Debug and preserves prompt content and trigger counts', () => {
+      const { workspace, gate, manualResult } = buildManualDealershipGateFixture();
+      const baseCompile = compileWorkspaceToRuntime(workspace, { tags: ['dealership', 'service'] });
+      const evaluatedCompile = compileWorkspaceToRuntime(workspace, { tags: ['dealership', 'service'] }, { gateEvaluationResults: [manualResult] });
+      const glyphMatrix = projectGlyphMatrix({ runtimeSpec: evaluatedCompile.runtimeSpec, irMatrix: evaluatedCompile.irMatrix, trace: evaluatedCompile.trace, graph: workspace.graph, activeSleeveId: workspace.activeSleeveId, viewMode: 'compact' });
+      const debugView = buildRuntimeGateDebugView({ gateId: gate.id, workspace, compiled: evaluatedCompile, glyphMatrix });
+      const sourceCards = Array.from({ length: 200 }, (_, index) => parseTriggerGateSourceMarkdown(`/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.${String(index + 1).padStart(3, '0')}-sample.md`, trg001Markdown.replace('TRG.001', `TRG.${String(index + 1).padStart(3, '0')}`)));
+      const shelves = buildAssetShelves({ blocks: normalizedLibraryBlocks as any[], neoblocks: [], neostacks: [], sleeves: [], gateSourceCards: sourceCards });
+      const baseActiveMoltRows = baseCompile.irMatrix.filter((row: any) => row.nodeType === 'molt_block' && row.active && !row.off).map((row: any) => row.nodeId);
+      const evaluatedActiveMoltRows = evaluatedCompile.irMatrix.filter((row: any) => row.nodeType === 'molt_block' && row.active && !row.off).map((row: any) => row.nodeId);
+
+      expect(debugView).toMatchObject({
+        gateId: gate.id,
+        sourceCardId: 'TRG.001',
+        gateKind: 'trigger_gate',
+        gateIRRow: {
+          state: 'passed',
+          gatePassed: true,
+          selectedRouteIds: ['route_service'],
+          activeTargetIds: ['stack_service'],
+          dormantTargetIds: ['stack_sales'],
+          suppressedTargetIds: ['block_marketing_upsell'],
+          blockedTargetIds: ['proposal_schedule_tool']
+        },
+        safety: { evaluated: false, routeSwitching: false, liveExecution: false, promptContentMutation: false }
+      });
+      expect(debugView?.traceEvent).toMatchObject({ kind: 'gate_attached', gateId: gate.id, evaluated: false, executed: false });
+      expect(evaluatedCompile.trace.find((event: any) => event.kind === 'gate_evaluated' && event.gateId === gate.id)).toBeTruthy();
+      expect(debugView?.glyphLine?.text).toContain('Dealership Service Route TriggerGate');
+      expect(debugView?.graphPlacement?.nodes.map((node) => node.sourceId)).toContain('stack_service');
+      expect(evaluatedCompile.promptPreview).toBe(baseCompile.promptPreview);
+      expect(evaluatedActiveMoltRows).toEqual(baseActiveMoltRows);
+      expect(JSON.stringify(evaluatedCompile.promptPreview)).not.toContain('HUMAN/GATES');
+      expect(JSON.stringify(evaluatedCompile.promptPreview)).not.toContain('TRG.001');
+      expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+      expect(shelves.find((shelf) => shelf.id === 'control_sources')?.items).toHaveLength(200);
+    });
+
     it('GateEvaluationResult can represent inert/not_applicable gate result', () => {
       const inert = createInertGateEvaluationResult(triggerRuntimeGate);
       expect(inert).toMatchObject({
