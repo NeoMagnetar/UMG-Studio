@@ -8,7 +8,7 @@ import { classifyLibraryDisplay, getLibraryAssetStatus, isCompilerMoltBlock, nor
 import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
-import { buildHermesGeneratePacket, extractHermesGeneratedText, generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT } from '../lib/umg/hermesGenerate';
+import { buildHermesGeneratePacket, extractHermesGeneratedText, generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT, resolveHermesGenerateConfig } from '../lib/umg/hermesGenerate';
 import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, buildGateEvaluationRuntimeMetadata, GATE_KINDS, createInertGateEvaluationResult, createManualGateEvaluationResult, gateEvaluationResultToGateIRRowPatch, gateProjectionPrinciples, routeStateFromGateEvaluationResults } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets, triggerGateCategoryDisplayCopy } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
@@ -1779,6 +1779,21 @@ describe('UMG Studio core engine', () => {
     expect(packet.mode).toBe('generate');
   });
 
+  it('resolves Hermes Generate config with bridge first and legacy endpoint fallback', () => {
+    const bridge = resolveHermesGenerateConfig({ VITE_HERMES_GENERATE_URL: 'http://127.0.0.1:8787/api/hermes/generate', VITE_HERMES_ENDPOINT: 'http://localhost:3000/api/hermes', VITE_HERMES_API_KEY: 'LOCAL_DEV_KEY', VITE_HERMES_MODEL: 'hermes-test' });
+    const legacy = resolveHermesGenerateConfig({ VITE_HERMES_ENDPOINT: 'http://localhost:3000/api/hermes', VITE_HERMES_MODEL: 'hermes-legacy' });
+    const missing = resolveHermesGenerateConfig({});
+
+    expect(bridge.config.endpoint).toBe('http://127.0.0.1:8787/api/hermes/generate');
+    expect(bridge.endpointMode).toBe('bridge');
+    expect(legacy.config.endpoint).toBe('http://localhost:3000/api/hermes');
+    expect(legacy.endpointMode).toBe('legacy');
+    expect(legacy.config.model).toBe('hermes-legacy');
+    expect(missing.config.endpoint).toBe('');
+    expect(HERMES_GENERATE_MISSING_ENDPOINT).toContain('VITE_HERMES_GENERATE_URL');
+    expect(HERMES_GENERATE_MISSING_ENDPOINT).toContain('VITE_HERMES_ENDPOINT');
+  });
+
   it('builds a bounded Hermes Generate request packet with projection-only safety metadata', () => {
     const blocks = normalizeImportedBlocks(rawBlocks);
     const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'lean' }, blocks).draft_sleeve;
@@ -1812,7 +1827,7 @@ describe('UMG Studio core engine', () => {
       return new Response(JSON.stringify({ text: 'Hermes generated mobile detailing draft' }), { status: 200, headers: { 'content-type': 'application/json' } });
     };
 
-    const result = await generateWithHermesEndpoint({ userRequest: 'Build it', workspace, compiled, config: { endpoint: 'http://127.0.0.1:9999/generate', apiKey: 'SECRET_KEY', model: 'hermes-test', temperature: 0.3, maxTokens: 1200 }, fetchImpl });
+    const result = await generateWithHermesEndpoint({ userRequest: 'Build it', workspace, compiled, endpointMode: 'bridge', config: { endpoint: 'http://127.0.0.1:9999/generate', apiKey: 'SECRET_KEY', model: 'hermes-test', temperature: 0.3, maxTokens: 1200 }, fetchImpl });
 
     expect(result.ok).toBe(true);
     expect(result.output).toBe('Hermes generated mobile detailing draft');
@@ -1825,6 +1840,31 @@ describe('UMG Studio core engine', () => {
     expect(extractHermesGeneratedText({ output: 'output text' })).toBe('output text');
     expect(extractHermesGeneratedText({ message: 'message text' })).toBe('message text');
     expect(extractHermesGeneratedText({ result: 'result text' })).toBe('result text');
+  });
+
+  it('uses legacy Hermes endpoint compatibility with the original Hermes packet shape', async () => {
+    const blocks = normalizeImportedBlocks(rawBlocks);
+    const sleeve = composeBlocks({ freeform_request: 'customer intake chatbot mobile detailing', depth: 'lean' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_hermes_legacy', title: 'Hermes Legacy Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['chatbot'] });
+    const calls: any[] = [];
+    const fetchImpl = async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url, init, body: JSON.parse(String(init?.body)) });
+      return new Response('legacy raw text output', { status: 200 });
+    };
+
+    const result = await generateWithHermesEndpoint({ userRequest: 'Build it', workspace, compiled, endpointMode: 'legacy', config: { endpoint: 'http://localhost:3000/api/hermes', apiKey: 'SECRET_KEY', model: 'hermes-legacy', temperature: 0.3, maxTokens: 1200 }, fetchImpl });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toBe('legacy raw text output');
+    expect(result.status).toBe('Hermes generation complete');
+    expect(calls[0].url).toBe('http://localhost:3000/api/hermes');
+    expect(calls[0].body.mode).toBe('generate');
+    expect(calls[0].body.user_request).toBe('Build it');
+    expect(calls[0].body.compiled_prompt).toBe(compiled.promptPreview);
+    expect(calls[0].body.safety).toBeUndefined();
+    expect(JSON.stringify(calls[0].body)).not.toContain('SECRET_KEY');
+    expect(calls[0].init.headers.authorization).toBe('Bearer SECRET_KEY');
   });
 
   it('handles missing Hermes endpoint, failures, and unknown response shapes clearly', async () => {

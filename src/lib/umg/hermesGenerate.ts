@@ -1,12 +1,15 @@
+import { exportHermesPacket } from './exporters';
 import { CompileResult, HermesConfig, IRMatrixRow, NeoBlock, NeoStack, Sleeve, UMGWorkspace } from './types';
 
 export type HermesGenerateConfig = Pick<HermesConfig, 'endpoint' | 'apiKey' | 'model' | 'temperature' | 'maxTokens'>;
+export type HermesGenerateEndpointMode = 'bridge' | 'legacy';
 
 export type HermesGenerateRequest = {
   userRequest: string;
   workspace?: UMGWorkspace;
   compiled: CompileResult;
   config: HermesGenerateConfig;
+  endpointMode?: HermesGenerateEndpointMode;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
@@ -15,10 +18,30 @@ export type HermesGenerateResult = {
   ok: boolean;
   output: string;
   status: string;
-  packet?: ReturnType<typeof buildHermesGeneratePacket>;
+  packet?: unknown;
 };
 
-export const HERMES_GENERATE_MISSING_ENDPOINT = 'Hermes generation endpoint is not configured. Set VITE_HERMES_GENERATE_URL for test generation.';
+export const HERMES_GENERATE_MISSING_ENDPOINT = 'Hermes generation endpoint is not configured. Set VITE_HERMES_GENERATE_URL or legacy VITE_HERMES_ENDPOINT.';
+
+export function inferHermesGenerateEndpointMode(endpoint: string): HermesGenerateEndpointMode {
+  return endpoint.includes('/api/hermes/generate') ? 'bridge' : 'legacy';
+}
+
+export function resolveHermesGenerateConfig(env: Record<string, string | undefined>) {
+  const bridgeEndpoint = env.VITE_HERMES_GENERATE_URL ?? '';
+  const legacyEndpoint = env.VITE_HERMES_ENDPOINT ?? '';
+  const endpoint = bridgeEndpoint || legacyEndpoint || '';
+  return {
+    endpointMode: bridgeEndpoint ? 'bridge' as const : legacyEndpoint ? 'legacy' as const : 'bridge' as const,
+    config: {
+      endpoint,
+      apiKey: env.VITE_HERMES_API_KEY || undefined,
+      model: env.VITE_HERMES_MODEL ?? 'hermes-default',
+      temperature: 0.3,
+      maxTokens: 1200
+    } satisfies HermesGenerateConfig
+  };
+}
 
 function activeMoltRows(compiled: CompileResult) {
   return compiled.irMatrix.filter((row) => row.nodeType === 'molt_block' && Boolean(row.active) && !Boolean(row.off));
@@ -106,7 +129,10 @@ export async function generateWithHermesEndpoint(input: HermesGenerateRequest): 
     return { ok: false, output: HERMES_GENERATE_MISSING_ENDPOINT, status: 'Hermes generation endpoint missing' };
   }
 
-  const packet = buildHermesGeneratePacket(input.userRequest, input.compiled, input.workspace);
+  const endpointMode = input.endpointMode ?? inferHermesGenerateEndpointMode(input.config.endpoint);
+  const packet = endpointMode === 'legacy'
+    ? exportHermesPacket(input.userRequest, input.compiled, input.config as HermesConfig)
+    : buildHermesGeneratePacket(input.userRequest, input.compiled, input.workspace);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 15000);
   const fetcher = input.fetchImpl ?? fetch;
@@ -118,7 +144,7 @@ export async function generateWithHermesEndpoint(input: HermesGenerateRequest): 
         'content-type': 'application/json',
         ...(input.config.apiKey ? { authorization: `Bearer ${input.config.apiKey}` } : {})
       },
-      body: JSON.stringify({
+      body: JSON.stringify(endpointMode === 'legacy' ? packet : {
         ...packet,
         generation: {
           model: input.config.model,
@@ -129,6 +155,9 @@ export async function generateWithHermesEndpoint(input: HermesGenerateRequest): 
       signal: controller.signal
     });
     const rawText = await response.text();
+    if (endpointMode === 'legacy') {
+      return { ok: response.ok, output: response.ok ? rawText : `Hermes generation failed: HTTP ${response.status}\n${rawText}`, status: response.ok ? 'Hermes generation complete' : 'Hermes generation failed', packet };
+    }
     let parsed: unknown = rawText;
     try {
       parsed = rawText ? JSON.parse(rawText) : '';

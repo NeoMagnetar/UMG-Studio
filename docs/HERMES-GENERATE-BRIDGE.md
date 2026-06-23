@@ -2,7 +2,7 @@
 
 ## Purpose
 
-UMG Studio's browser Generate button can call `VITE_HERMES_GENERATE_URL`, but real provider secrets must not live in browser-visible `VITE_*` variables. This local dev-only bridge gives the browser a local endpoint while keeping provider credentials server-side.
+UMG Studio's browser Generate button can call `VITE_HERMES_GENERATE_URL` for the local bridge or fall back to legacy `VITE_HERMES_ENDPOINT` when the bridge URL is absent. Real provider secrets must not live in browser-visible `VITE_*` variables. The local dev-only bridge gives the browser a local endpoint while keeping provider credentials server-side.
 
 Target frontend URL:
 
@@ -20,11 +20,28 @@ POST http://127.0.0.1:8787/api/hermes/generate
 
 Create an untracked local env file for the Vite frontend and shell-export server-only bridge variables separately.
 
-Frontend-only value:
+Frontend bridge value:
 
 ```text
 VITE_HERMES_GENERATE_URL=http://127.0.0.1:8787/api/hermes/generate
 ```
+
+Legacy direct endpoint compatibility value:
+
+```text
+VITE_HERMES_ENDPOINT=http://localhost:3000/api/hermes
+```
+
+Endpoint resolution order is `VITE_HERMES_GENERATE_URL`, then legacy `VITE_HERMES_ENDPOINT`, then empty/unconfigured.
+
+Legacy browser-visible values are local/dev only:
+
+```text
+VITE_HERMES_MODEL=hermes-default
+VITE_HERMES_API_KEY=replace_me_only_for_local_legacy_dev
+```
+
+Prefer bridge-side `HERMES_API_KEY` for real provider secrets.
 
 Server-only bridge values:
 
@@ -65,6 +82,9 @@ Restart Vite after changing `VITE_HERMES_GENERATE_URL`; Vite loads `VITE_*` vari
 Browser/Vite:
 
 - `VITE_HERMES_GENERATE_URL`: local bridge URL. Safe to expose.
+- `VITE_HERMES_ENDPOINT`: legacy direct browser endpoint, used only if `VITE_HERMES_GENERATE_URL` is absent.
+- `VITE_HERMES_MODEL`: legacy/direct endpoint model hint.
+- `VITE_HERMES_API_KEY`: browser-visible legacy/direct endpoint key; local/dev only. Prefer server-side bridge `HERMES_API_KEY` for real secrets.
 
 Server-only bridge:
 
@@ -78,6 +98,8 @@ Server-only bridge:
 
 - Do not commit `.env`, `.env.local`, or `.env.*.local`.
 - Do not store real secrets in `VITE_*` variables.
+- `VITE_HERMES_API_KEY` is browser-visible and should be used only for local/dev legacy endpoint compatibility.
+- For real provider secrets, prefer bridge-side `HERMES_API_KEY`.
 - Bridge logs redact Authorization, api_key, key, token, and secret fields.
 - Logs should show status/duration/provider origin only, not full prompt bodies or keys.
 

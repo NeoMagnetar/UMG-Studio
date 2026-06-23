@@ -13,7 +13,7 @@ import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, gat
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { redactKey, testHermesConnection } from './lib/hermes/hermesClient';
-import { generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT } from './lib/umg/hermesGenerate';
+import { generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT, HermesGenerateEndpointMode, inferHermesGenerateEndpointMode, resolveHermesGenerateConfig } from './lib/umg/hermesGenerate';
 import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceAuditItem, triggerGateCategoryDisplayCopy } from './lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from './lib/umg/blockViews';
 import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards } from './lib/umg/gateSourceImport';
@@ -38,6 +38,7 @@ type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' |
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
 
 export default function App() {
+  const initialHermesGenerate = resolveHermesGenerateConfig(import.meta.env as Record<string, string | undefined>);
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
   const [request, setRequest] = useState(demo);
   const [depth, setDepth] = useState<'lean' | 'balanced' | 'full'>('balanced');
@@ -55,13 +56,8 @@ export default function App() {
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState(defaultStatusFilter);
-  const [config, setConfig] = useState<HermesConfig>(() => ({
-    endpoint: import.meta.env.VITE_HERMES_GENERATE_URL ?? '',
-    apiKey: import.meta.env.VITE_HERMES_API_KEY || undefined,
-    model: import.meta.env.VITE_HERMES_MODEL ?? 'hermes-default',
-    temperature: 0.3,
-    maxTokens: 1200
-  }));
+  const [config, setConfig] = useState<HermesConfig>(() => initialHermesGenerate.config);
+  const [endpointMode, setEndpointMode] = useState<HermesGenerateEndpointMode>(initialHermesGenerate.endpointMode);
   const [hermesStatus, setHermesStatus] = useState('not configured');
   const [layout, setLayout] = useState<WorkbenchLayoutState>(() =>
     typeof window === 'undefined' ? loadWorkbenchLayout(undefined) : loadWorkbenchLayout(window.localStorage)
@@ -258,9 +254,9 @@ export default function App() {
       setOutput(HERMES_GENERATE_MISSING_ENDPOINT);
       return setStatus('Hermes generation endpoint missing');
     }
-    setStatus('Generating with Hermes…');
+    setStatus(endpointMode === 'legacy' ? 'Generating with legacy Hermes endpoint…' : 'Generating with Hermes bridge…');
     try {
-      const result = await generateWithHermesEndpoint({ userRequest: request, workspace, compiled, config });
+      const result = await generateWithHermesEndpoint({ userRequest: request, workspace, compiled, config, endpointMode });
       setOutput(result.output);
       setStatus(result.status);
     } catch (error) {
@@ -344,7 +340,7 @@ export default function App() {
         <BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} />
         <h3>Hermes</h3>
         <div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div>
-        <input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => setConfig({ ...config, endpoint: event.target.value })} />
+        <input placeholder="Hermes endpoint" value={config.endpoint} onChange={(event) => { const endpoint = event.target.value; setConfig({ ...config, endpoint }); setEndpointMode(inferHermesGenerateEndpointMode(endpoint)); }} />
         <input placeholder="API key" type="password" value={config.apiKey ?? ''} onChange={(event) => setConfig({ ...config, apiKey: event.target.value })} />
         <input aria-label="Hermes model" value={config.model} onChange={(event) => setConfig({ ...config, model: event.target.value })} />
         <button onClick={async () => { const result = await testHermesConnection(config); setHermesStatus(result.ok ? 'test passed' : 'test failed'); setStatus(`Hermes ${result.message}`); }}>Test Connection</button>
