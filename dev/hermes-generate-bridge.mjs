@@ -1,6 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
+import { spawn } from 'node:child_process';
 
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 8787;
@@ -14,6 +15,11 @@ export const ALLOWED_ORIGINS = new Set([
 
 const SECRET_KEYS = /authorization|api[_-]?key|\bkey\b|token|secret/i;
 const UNSAFE_FLAGS = ['routeSwitching', 'liveExecution', 'toolExecution', 'promptContentMutation'];
+
+const SPARK_DEFAULT_CLI_PATH = '/home/neomagnetar/.local/bin/hermes';
+const SPARK_DEFAULT_PROVIDER = 'openai-codex';
+const SPARK_DEFAULT_MODEL = 'gpt-5.3-codex-spark';
+const LOCAL_SPARK_BACKEND = 'local_spark_cli';
 
 function logSafe(event, details = {}) {
   const safe = redactSecrets(details);
@@ -117,6 +123,101 @@ export function buildProviderPayload(packet, env = process.env) {
   };
 }
 
+function buildSparkPrompt(packet, env = process.env) {
+  const providerModel = env.HERMES_INFERENCE_MODEL || SPARK_DEFAULT_MODEL;
+  const blocks = Array.isArray(packet?.selectedMoltBlocks) ? packet.selectedMoltBlocks : [];
+  const maxRequest = truncateText(packet?.userRequest || '', 1200);
+  const maxPreview = truncateText(packet?.compiledPromptPreview || '', 1600);
+  const selectedSummary = blocks
+    .slice(0, 30)
+    .map((block) => `${block.title || block.id || 'Untitled'} (${block.role || 'block'})`)
+    .join(', ');
+  const workspace = packet?.workspaceStructure;
+  const runtimeSummary = packet?.runtimeSpecSummary;
+
+  return [
+    'You are an editor for UMG studio generated lead workflows.',
+    `Model: ${providerModel}.`,
+    'Generate concise user-facing output (about 500 words or less unless the user explicitly requests more).',
+    'Use only the provided workspace context. Produce a practical assistant-ready summary and suggested follow-up.',
+    'Rules:',
+    '- Do not execute tools.',
+    '- Do not route switch.',
+    '- Do not claim live execution.',
+    '- Keep output concise and safe for users.',
+    '',
+    `User request: ${maxRequest || 'No explicit user request.'}`,
+    `Compiled preview: ${maxPreview || 'No compiled preview provided.'}`,
+    `Workspace: ${JSON.stringify(workspace || {}, null, 2)}`,
+    `RuntimeSpec summary: ${JSON.stringify(runtimeSummary || {}, null, 2)}`,
+    `Selected blocks: ${selectedSummary || 'No selected blocks.'}`
+  ].join('\n');
+}
+
+export function runHermesSparkCli(prompt, env = process.env, spawnFn = spawn, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const cliPath = env.HERMES_CLI_PATH || SPARK_DEFAULT_CLI_PATH;
+    const provider = env.HERMES_INFERENCE_PROVIDER || SPARK_DEFAULT_PROVIDER;
+    const model = env.HERMES_INFERENCE_MODEL || SPARK_DEFAULT_MODEL;
+    const args = ['-z', prompt, '--provider', provider, '--model', model];
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let child;
+
+    const finish = (code, signal) => {
+      if (settled) return;
+      clearTimeout(timer);
+      settled = true;
+      if (code === 0 && !signal) {
+        return resolve({ ok: true, status: 200, text: truncateText(stdout.trim(), 12000) || 'Hermes Spark CLI returned empty output.' });
+      }
+      const error = new Error(signal ? `Hermes Spark CLI exited with ${signal}` : `Hermes Spark CLI exited with status ${code}`);
+      error.code = signal || code;
+      error.stderr = stderr;
+      reject(error);
+    };
+
+    const timer = setTimeout(() => {
+      if (child && child.kill) {
+        child.kill('SIGKILL');
+      }
+      reject(Object.assign(new Error('Hermes Spark CLI command timed out.'), { code: 'ETIMEDOUT', stderr: stderr || 'Timeout after no response from Hermes Spark CLI.' }));
+    }, timeoutMs);
+
+    child = spawnFn(cliPath, args, {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    if (!child || typeof child.on !== 'function') {
+      clearTimeout(timer);
+      reject(new Error('Hermes Spark CLI spawn returned no process.'));
+      return;
+    }
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on('error', (error) => {
+      if (settled) return;
+      clearTimeout(timer);
+      settled = true;
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => finish(code, signal));
+  });
+}
+
 export function extractProviderText(payload) {
   if (typeof payload === 'string') return payload;
   if (!payload || typeof payload !== 'object') return String(payload ?? '');
@@ -175,9 +276,29 @@ export function postToProvider(providerUrl, payload, env = process.env, timeoutM
   });
 }
 
-export async function buildBridgeResponse(packet, env = process.env, providerPost = postToProvider) {
+export async function buildBridgeResponse(packet, env = process.env, providerPost = postToProvider, sparkPost = runHermesSparkCli) {
   const safety = validateSafetyFlags(packet);
   if (!safety.ok) return jsonResponse(400, { text: safety.error }, undefined);
+
+  const backend = (env.HERMES_BACKEND || '').trim();
+  if (backend === LOCAL_SPARK_BACKEND) {
+    const prompt = buildSparkPrompt(packet, env);
+    try {
+      const sparkTimeoutMs = Number(env.HERMES_SPARK_TIMEOUT_MS || 30000);
+      const spark = await sparkPost(prompt, env, undefined, Number.isFinite(sparkTimeoutMs) ? sparkTimeoutMs : 30000);
+      return jsonResponse(200, { text: spark.text }, undefined);
+    } catch (error) {
+      const code = error && typeof error === 'object' ? error.code : undefined;
+      const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';
+      if (code === 'ETIMEDOUT') {
+        return jsonResponse(504, { text: `Hermes Spark CLI timed out.${stderr ? ` stderr: ${truncateText(stderr, 220)}` : ''}` }, undefined);
+      }
+      return jsonResponse(502, {
+        text: `Hermes Spark CLI failed.${stderr ? ` ${truncateText(stderr, 220)}` : ''}`
+      }, undefined);
+    }
+  }
+
   if (!env.HERMES_PROVIDER_URL) {
     return jsonResponse(503, { text: 'Hermes bridge is not configured. Set HERMES_PROVIDER_URL server-side.' }, undefined);
   }
