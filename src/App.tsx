@@ -13,7 +13,8 @@ import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, gat
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { redactKey, testHermesConnection } from './lib/hermes/hermesClient';
-import { generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT, HermesGenerateEndpointMode, inferHermesGenerateEndpointMode, resolveHermesGenerateConfig } from './lib/umg/hermesGenerate';
+import { generateWithHermesEndpoint, HermesGenerateEndpointMode, inferHermesGenerateEndpointMode, resolveHermesGenerateConfig } from './lib/umg/hermesGenerate';
+import { buildLocalGenerateFallback } from './lib/umg/localGenerate';
 import { buildAssetShelves, searchShelfAssets, ShelfAsset, AssetShelfId, SourceAuditItem, triggerGateCategoryDisplayCopy } from './lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from './lib/umg/blockViews';
 import { buildTriggerGateSourceInspectorViews, normalizeTriggerGateSourceCards } from './lib/umg/gateSourceImport';
@@ -246,13 +247,14 @@ export default function App() {
   const generate = async () => {
     setRuntimeTab('Output');
     if (!compiled) {
-      const message = 'Compose and Compile first before Hermes generation.';
-      setOutput(message);
-      return setStatus(message);
+      const result = buildLocalGenerateFallback({ userRequest: request, workspace, compiled });
+      setOutput(result.output);
+      return setStatus(result.status);
     }
     if (!config.endpoint) {
-      setOutput(HERMES_GENERATE_MISSING_ENDPOINT);
-      return setStatus('Hermes generation endpoint missing');
+      const result = buildLocalGenerateFallback({ userRequest: request, workspace, compiled });
+      setOutput(result.output);
+      return setStatus(result.status);
     }
     setStatus(endpointMode === 'legacy' ? 'Generating with legacy Hermes endpoint…' : 'Generating with Hermes bridge…');
     try {

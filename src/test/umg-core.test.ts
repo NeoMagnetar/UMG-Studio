@@ -9,6 +9,7 @@ import { exportHermesPacket } from '../lib/umg/exporters';
 import { projectGlyphMatrix, renderGlyphMatrixText } from '../lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from '../lib/umg/gateDebug';
 import { buildHermesGeneratePacket, extractHermesGeneratedText, generateWithHermesEndpoint, HERMES_GENERATE_MISSING_ENDPOINT, resolveHermesGenerateConfig } from '../lib/umg/hermesGenerate';
+import { buildLocalGenerateFallback, LOCAL_GENERATE_COMPILE_FIRST_MESSAGE, LOCAL_GENERATE_STATUS } from '../lib/umg/localGenerate';
 import { attachRuntimeGateToGraph, buildGateIRRow, buildGateIRRowsForWorkspace, buildRuntimeGate, buildRuntimeGateContext, buildRuntimeGateFromSourceCard, buildGateEvaluationRuntimeMetadata, GATE_KINDS, createInertGateEvaluationResult, createManualGateEvaluationResult, gateEvaluationResultToGateIRRowPatch, gateProjectionPrinciples, routeStateFromGateEvaluationResults } from '../lib/umg/gateRuntime';
 import { buildAssetShelves, buildSourceAssetAudit, duplicateSleeveIntoWorkspace, insertMoltBlockIntoWorkspace, insertNeoBlockIntoWorkspace, insertNeoStackIntoWorkspace, openSleeveAsWorkspace, searchShelfAssets, triggerGateCategoryDisplayCopy } from '../lib/umg/libraryAssets';
 import { buildBlockInspectorViews } from '../lib/umg/blockViews';
@@ -1814,6 +1815,50 @@ describe('UMG Studio core engine', () => {
     expect(JSON.stringify(packet)).not.toContain('tool_results');
     expect(compiled.promptPreview).toBe(beforePrompt);
     expect(compiled.irMatrix.filter((row) => row.nodeType === 'molt_block')).toHaveLength(beforeMoltCount);
+  });
+
+  it('generates deterministic local fallback output from compiled mobile-detailing workspace without mutating prompt or IR rows', () => {
+    const blocks = normalizedLibraryBlocks as any[];
+    const sleeve = composeBlocks({ freeform_request: 'Build me a customer-intake chatbot for a mobile detailing business', target_type: 'chatbot', depth: 'lean' }, blocks).draft_sleeve;
+    const workspace = { id: 'ws_local_fallback', title: 'Mobile Detailing Workspace', activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
+    const compiled = compileWorkspaceToRuntime(workspace, { tags: ['mobile', 'detailing', 'chatbot'] });
+    const promptPreview = compiled.promptPreview;
+    const activeMoltRows = structuredClone(compiled.irMatrix.filter((row) => row.nodeType === 'molt_block' && row.active));
+    const fallback = buildLocalGenerateFallback({ userRequest: 'Build me a customer-intake chatbot for a mobile detailing business', workspace, compiled });
+    const triggerGateSources = normalizeTriggerGateSourceCards(Array.from({ length: 200 }, (_, index) => ({
+      sourcePath: `/home/neomagnetar/umg-block-library/HUMAN/GATES/TRG.${String(index + 1).padStart(3, '0')}-sample.md`,
+      markdown: trg001Markdown.replace('TRG.001', `TRG.${String(index + 1).padStart(3, '0')}`)
+    })));
+
+    expect(fallback.ok).toBe(true);
+    expect(fallback.status).toBe(LOCAL_GENERATE_STATUS);
+    expect(fallback.output).toContain('Customer Intake Chatbot Draft');
+    expect(fallback.output).toContain('Purpose');
+    expect(fallback.output).toContain('Greeting');
+    expect(fallback.output).toContain('Basic Questions');
+    expect(fallback.output).toContain('Required Customer Fields');
+    expect(fallback.output).toContain('Vehicle / Location / Service Need / Budget Collection');
+    expect(fallback.output).toContain('Lead Summary Format');
+    expect(fallback.output).toContain('Notes / Safety / Follow-up Guidance');
+    expect(fallback.output).toContain('generated locally from compiled RuntimeSpec fallback');
+    expect(fallback.output).toContain('no route switching performed');
+    expect(fallback.output).toContain('no live tool execution performed');
+    expect(fallback.output).toContain('no ActionGate execution performed');
+    expect(fallback.output).toContain('RuntimeSpec summary: source: real');
+    expect(fallback.output).toContain('HUMAN/GATES sources are not imported as prompt content.');
+    expect(fallback.output).not.toContain('TRG.001');
+    expect(compiled.promptPreview).toBe(promptPreview);
+    expect(compiled.irMatrix.filter((row) => row.nodeType === 'molt_block' && row.active)).toEqual(activeMoltRows);
+    expect((normalizedLibraryBlocks as any[]).filter((block) => block.role === 'trigger' && block.sourceLayer === 'AI')).toHaveLength(0);
+    expect(triggerGateSources).toHaveLength(200);
+  });
+
+  it('returns clear bounded local fallback message before Compile', () => {
+    const fallback = buildLocalGenerateFallback({ userRequest: 'Build me a customer-intake chatbot for a mobile detailing business' });
+
+    expect(fallback.ok).toBe(false);
+    expect(fallback.output).toBe(LOCAL_GENERATE_COMPILE_FIRST_MESSAGE);
+    expect(fallback.status).toBe(LOCAL_GENERATE_COMPILE_FIRST_MESSAGE);
   });
 
   it('uses configured Hermes Generate endpoint and displays common response shapes', async () => {
