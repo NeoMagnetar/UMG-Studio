@@ -52,6 +52,7 @@ export default function App() {
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('ready');
   const [runtimeTab, setRuntimeTab] = useState<RuntimeDrawerTab>('RuntimeSpec');
+  const [graphViewMode, setGraphViewMode] = useState<'full' | 'selected'>('full');
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
   const [search, setSearch] = useState('');
   const [tagFilters, setTagFilters] = useState<string[]>([]);
@@ -107,6 +108,19 @@ export default function App() {
   const visibleTags = useMemo(() => [...new Set(resolvedShelf.items.flatMap((item) => item.tags))].filter(Boolean).slice(0, 24), [resolvedShelf]);
   const graph = workspace?.graph;
   const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
+  const viewedGraph = useMemo(() => {
+    if (graphViewMode === 'full' || !graph || !selected) {
+      return graph;
+    }
+    const focusedNodes = new Set<string>([selected.id]);
+    graph.edges.forEach((edge) => {
+      if (edge.source === selected.id) focusedNodes.add(edge.target);
+      if (edge.target === selected.id) focusedNodes.add(edge.source);
+    });
+    const nodes = graph.nodes.filter((node) => focusedNodes.has(node.id));
+    const edges = graph.edges.filter((edge) => focusedNodes.has(edge.source) && focusedNodes.has(edge.target));
+    return { nodes, edges };
+  }, [graph, graphViewMode, selected]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
   const inspectedGateSource = isTriggerGateSourceCard(inspected) ? inspected : undefined;
   const inspectorBlock = inspectedBlock ?? selectedBlock;
@@ -118,15 +132,26 @@ export default function App() {
   const selectedGateId = selected?.governingGateIds?.[0];
   const selectedGateGlyphMatrix = useMemo(() => compiled ? projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }) : undefined, [compiled, workspace]);
   const runtimeGateDebugView = useMemo(() => selectedGateId ? buildRuntimeGateDebugView({ gateId: selectedGateId, workspace, compiled, glyphMatrix: selectedGateGlyphMatrix }) : undefined, [selectedGateId, workspace, compiled, selectedGateGlyphMatrix]);
-  const resizeState = useRef<{ target: ResizeTarget; startX: number; startY: number; startWidth: number; } | null>(null);
+  const resizeState = useRef<{
+    target: ResizeTarget;
+    startX: number;
+    startY: number;
+    startLeftWidth: number;
+    startRightWidth: number;
+    startBottomHeight: number;
+  } | null>(null);
 
   const startResize = (target: ResizeTarget, event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    const currentTarget = event.currentTarget;
+    const pointerId = event.pointerId;
     resizeState.current = {
       target,
       startX: event.clientX,
       startY: event.clientY,
-      startWidth: layout.leftWidth
+      startLeftWidth: layout.leftWidth,
+      startRightWidth: layout.rightWidth,
+      startBottomHeight: layout.bottomHeight
     };
     if (target === 'left' && layout.leftCollapsed) setLayout((current) => ({ ...current, leftCollapsed: false, leftWidth: Math.max(layout.leftWidth, 240) }));
     if (target === 'right' && layout.rightCollapsed) setLayout((current) => ({ ...current, rightCollapsed: false, rightWidth: Math.max(layout.rightWidth, 400) }));
@@ -136,18 +161,43 @@ export default function App() {
       const state = resizeState.current;
       if (!state) return;
       setLayout((current) => {
-        if (state.target === 'left') return { ...current, leftWidth: Math.min(560, Math.max(220, state.startWidth + (move.clientX - state.startX)) )};
-        if (state.target === 'right') return { ...current, rightWidth: Math.min(620, Math.max(260, current.rightWidth - (move.clientX - state.startX))) };
-        return { ...current, bottomHeight: Math.min(520, Math.max(150, current.bottomHeight + (state.startY - move.clientY))) };
+        if (state.target === 'left') return {
+          ...current,
+          leftWidth: Math.min(560, Math.max(220, state.startLeftWidth + (move.clientX - state.startX)))
+        };
+        if (state.target === 'right') return {
+          ...current,
+          rightWidth: Math.min(620, Math.max(260, state.startRightWidth - (move.clientX - state.startX)))
+        };
+        return {
+          ...current,
+          bottomHeight: Math.min(520, Math.max(150, state.startBottomHeight + (state.startY - move.clientY)))
+        };
       });
     };
 
     const stopResize = () => {
       resizeState.current = null;
+      if (pointerId >= 0) {
+        try {
+          if (currentTarget.hasPointerCapture(pointerId)) {
+            currentTarget.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // ignore pointer-capture incompatibilities in non-native pointer streams
+        }
+      }
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', stopResize);
     };
 
+    if (pointerId >= 0) {
+      try {
+        currentTarget.setPointerCapture(pointerId);
+      } catch {
+        // keep resize robust when pointer capture is unavailable in the current event stream
+      }
+    }
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', stopResize);
   };
@@ -327,9 +377,11 @@ export default function App() {
             <button onClick={() => compiled && downloadJson('ir-matrix.json', compiled.irMatrix)}>Export IR</button>
             <button onClick={() => compiled && downloadJson('glyph-matrix.json', projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }))}>Export Glyph Matrix</button>
             <button onClick={() => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config))}>Export Hermes Packet</button>
+            <button className={graphViewMode === 'full' ? 'hot' : ''} onClick={() => setGraphViewMode('full')}>View: Full</button>
+            <button className={graphViewMode === 'selected' ? 'hot' : ''} onClick={() => setGraphViewMode('selected')}>View: Selected context</button>
           </div>
         </div>
-        {graph ? <Graph nodes={graph.nodes} edges={graph.edges} selected={selected?.id} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
+        {viewedGraph ? <Graph nodes={viewedGraph.nodes} edges={viewedGraph.edges} selected={selected?.id} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
       </section>
       <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
       <aside className="inspect card">
@@ -454,11 +506,15 @@ function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[];
       offsetX: event.clientX - node.position.x,
       offsetY: event.clientY - node.position.y
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const onNodePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  const onNodePointerMove = (event: React.PointerEvent<HTMLButtonElement>, node: GraphNode) => {
+    if (!onMove || dragging.current?.id !== node.id) return;
+    onMove(dragging.current.id, event.clientX - dragging.current.offsetX, event.clientY - dragging.current.offsetY);
+  };
+
+  const onNodePointerUp = () => {
+    dragging.current = null;
   };
 
   return (
@@ -473,6 +529,7 @@ function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[];
           className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`}
           style={{ left: node.position.x, top: node.position.y }}
           onPointerDown={(event) => onNodePointerDown(event, node)}
+          onPointerMove={(event) => onNodePointerMove(event, node)}
           onPointerUp={onNodePointerUp}
           onClick={() => onPick(node)}
         >
