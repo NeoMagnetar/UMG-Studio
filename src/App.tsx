@@ -35,6 +35,7 @@ type InspectorTab = typeof inspectorTabs[number];
 
 type ResizeTarget = 'left' | 'right' | 'bottom';
 type ShelfMode = AssetShelfId;
+type WorkspaceMode = 'compose' | 'canvas' | 'runtime';
 type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
 
@@ -53,6 +54,7 @@ export default function App() {
   const [status, setStatus] = useState('ready');
   const [runtimeTab, setRuntimeTab] = useState<RuntimeDrawerTab>('RuntimeSpec');
   const [graphViewMode, setGraphViewMode] = useState<'full' | 'selected'>('full');
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('canvas');
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
   const [search, setSearch] = useState('');
   const [tagFilters, setTagFilters] = useState<string[]>([]);
@@ -131,6 +133,7 @@ export default function App() {
   }) : undefined, [inspectedGateSource, inspectorBlock, selected, compiled]);
   const selectedGateId = selected?.governingGateIds?.[0];
   const selectedGateGlyphMatrix = useMemo(() => compiled ? projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }) : undefined, [compiled, workspace]);
+  const fullGlyphMatrix = useMemo(() => compiled ? projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'full_sleeve' }) : undefined, [compiled, workspace]);
   const runtimeGateDebugView = useMemo(() => selectedGateId ? buildRuntimeGateDebugView({ gateId: selectedGateId, workspace, compiled, glyphMatrix: selectedGateGlyphMatrix }) : undefined, [selectedGateId, workspace, compiled, selectedGateGlyphMatrix]);
   const resizeState = useRef<{
     target: ResizeTarget;
@@ -205,13 +208,15 @@ export default function App() {
   const classes = [
     layout.leftCollapsed ? 'leftCollapsed' : '',
     layout.rightCollapsed ? 'rightCollapsed' : '',
-    layout.bottomCollapsed ? 'bottomCollapsed' : ''
+    layout.bottomCollapsed ? 'bottomCollapsed' : '',
+    `mode-${workspaceMode}`
   ].filter(Boolean).join(' ');
 
   const layoutStyle = {
     '--leftWidth': `${layout.leftWidth}px`,
     '--rightWidth': `${layout.rightWidth}px`,
-    '--bottomHeight': `${layout.bottomHeight}px`
+    '--bottomHeight': `${layout.bottomHeight}px`,
+    '--composeHeight': workspaceMode === 'compose' ? '176px' : '0px'
   } as React.CSSProperties;
 
   const compose = () => {
@@ -328,10 +333,43 @@ export default function App() {
     setCompiled(undefined);
   };
 
+  const exportWorkspaceJson = () => workspace && downloadJson('umg-workspace.json', workspace);
+  const exportSleeveJson = () => workspace && workspace.sleeves[0] && downloadJson('sleeve.json', workspace.sleeves[0]);
+  const exportIrJson = () => compiled && downloadJson('ir-matrix.json', compiled.irMatrix);
+  const exportGlyphMatrixJson = () => compiled && fullGlyphMatrix && downloadJson('glyph-matrix.json', fullGlyphMatrix);
+  const exportHermesPacketJson = () => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config));
+
   return <div className="app">
-    <header><div><b>UMG Studio v0.1</b><span>local graph cognition studio</span></div><button onClick={() => downloadJson('umg-workspace.json', workspace)}>Export Workspace</button></header>
+    <header>
+      <div><b>UMG Studio v0.1</b><span>local graph cognition studio</span></div>
+      <nav className="modeTabs" aria-label="Workbench mode">
+        <button className={workspaceMode === 'compose' ? 'hot' : ''} onClick={() => setWorkspaceMode('compose')}>Compose</button>
+        <button className={workspaceMode === 'canvas' ? 'hot' : ''} onClick={() => setWorkspaceMode('canvas')}>Canvas</button>
+        <button className={workspaceMode === 'runtime' ? 'hot' : ''} onClick={() => setWorkspaceMode('runtime')}>Runtime</button>
+      </nav>
+    </header>
     <main className={classes} style={layoutStyle}>
-      <section className="compose card"><h2>Compose</h2><textarea value={request} onChange={(event) => setRequest(event.target.value)} /><div className="row"><select value={target} onChange={(event) => setTarget(event.target.value)}><option value="chatbot">Chatbot</option><option value="business_template">Business Template</option><option value="website_prompt">Website Prompt</option><option value="umg_sleeve">UMG Sleeve</option></select><select value={depth} onChange={(event) => setDepth(event.target.value as any)}><option>lean</option><option>balanced</option><option>full</option></select><button className="primary" onClick={compose}>Compose Blocks</button><button onClick={compile}>Compile</button><button onClick={generate}>Generate</button></div><p>{status}</p></section>
+      <section className={`compose card ${workspaceMode === 'compose' ? '' : 'modeHidden'}`}>
+        <h2>Compose</h2>
+        <textarea value={request} onChange={(event) => setRequest(event.target.value)} />
+        <div className="row">
+          <select value={target} onChange={(event) => setTarget(event.target.value)}>
+            <option value="chatbot">Chatbot</option>
+            <option value="business_template">Business Template</option>
+            <option value="website_prompt">Website Prompt</option>
+            <option value="umg_sleeve">UMG Sleeve</option>
+          </select>
+          <select value={depth} onChange={(event) => setDepth(event.target.value as any)}>
+            <option>lean</option>
+            <option>balanced</option>
+            <option>full</option>
+          </select>
+          <button className="primary" onClick={compose}>Compose Blocks</button>
+          <button onClick={compile}>Compile</button>
+          <button onClick={generate}>Generate</button>
+        </div>
+        <p>{status}</p>
+      </section>
       <section className="library card">
         <div className="panelTitle">
           <h2>Library & Control Sources</h2>
@@ -373,10 +411,16 @@ export default function App() {
         <div className="panelTitle">
           <div className="graphControls">
             <h2>Graph Studio</h2>
-            <button onClick={() => workspace && downloadJson('sleeve.json', workspace.sleeves[0])}>Export Sleeve</button>
-            <button onClick={() => compiled && downloadJson('ir-matrix.json', compiled.irMatrix)}>Export IR</button>
-            <button onClick={() => compiled && downloadJson('glyph-matrix.json', projectGlyphMatrix({ runtimeSpec: compiled.runtimeSpec, irMatrix: compiled.irMatrix, trace: compiled.trace, graph: workspace?.graph, activeSleeveId: workspace?.activeSleeveId, viewMode: 'compact' }))}>Export Glyph Matrix</button>
-            <button onClick={() => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config))}>Export Hermes Packet</button>
+            <details className="exportMenu">
+              <summary>Export ▾</summary>
+              <div className="exportMenuPanel">
+                <button className="exportMenuAction" disabled={!workspace} onClick={exportSleeveJson}>Sleeve JSON</button>
+                <button className="exportMenuAction" disabled={!compiled} onClick={exportIrJson}>IR Matrix</button>
+                <button className="exportMenuAction" disabled={!fullGlyphMatrix} onClick={exportGlyphMatrixJson}>Glyph Matrix</button>
+                <button className="exportMenuAction" disabled={!compiled} onClick={exportHermesPacketJson}>Hermes Packet</button>
+                <button className="exportMenuAction" disabled={!workspace} onClick={exportWorkspaceJson}>Workspace</button>
+              </div>
+            </details>
             <button className={graphViewMode === 'full' ? 'hot' : ''} onClick={() => setGraphViewMode('full')}>View: Full</button>
             <button className={graphViewMode === 'selected' ? 'hot' : ''} onClick={() => setGraphViewMode('selected')}>View: Selected context</button>
           </div>
