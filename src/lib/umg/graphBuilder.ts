@@ -1,6 +1,28 @@
-import { CompileResult, GateIRRow, GateKind, GateVisualPathState, GraphEdge, GraphFocus, GraphLayoutItem, GraphNode, IRMatrixRow, Sleeve } from './types';
+import { CompileResult, GateIRRow, GateKind, GateVisualPathState, GraphEdge, GraphFocus, GraphLayoutItem, GraphNode, IRMatrixRow, MOLTRole, MOLTDisplayType, Sleeve } from './types';
+
+const knownMoltRoles: Array<MOLTRole | 'meta' | MOLTDisplayType> = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint', 'meta'];
+
+const normalizeMoltRole = (value?: string): MOLTDisplayType | 'unknown' => {
+  if (!value) return 'unknown';
+  const role = value.toLowerCase();
+  return knownMoltRoles.includes(role as MOLTRole | 'meta') ? (role as MOLTDisplayType) : 'unknown';
+};
 
 const active = (off: boolean) => ({ selected: false, active: !off, off, triggered: false, invalid: false });
+
+const containmentRelationFor = (sourceType: GraphNode['nodeType'], targetType: GraphNode['nodeType']) => {
+  if (sourceType === 'molt_block' && targetType === 'neoblock') return 'sequence';
+  if (sourceType === 'neoblock' && targetType === 'neostack') return 'supports';
+  if (sourceType === 'neostack' && targetType === 'sleeve') return 'governs';
+  return 'contains';
+};
+
+const nodeSnapBaseOffset = (sourceType: GraphNode['nodeType'], targetType: GraphNode['nodeType']) => {
+  if (sourceType === 'molt_block' && targetType === 'neoblock') return { x: 290, y: 100, strideY: 82 };
+  if (sourceType === 'neoblock' && targetType === 'neostack') return { x: 290, y: 140, strideY: 170 };
+  if (sourceType === 'neostack' && targetType === 'sleeve') return { x: 260, y: 260, strideY: 220 };
+  return { x: 240, y: 120, strideY: 90 };
+};
 
 export function buildGraphFromSleeve(sleeve: Sleeve) {
   const nodes: GraphNode[] = [];
@@ -23,7 +45,8 @@ export function buildGraphFromSleeve(sleeve: Sleeve) {
           label: b.title,
           position: { x: 940, y: 20 + si * 280 + ni * 170 + bi * 72 },
           layout: { row: bi, column: 0, width: 1, height: 1, priorityRank: b.priorityOrder ?? bi, relation: bi === 0 ? 'governs' : b.role === 'blueprint' ? 'supports' : 'sequence' },
-          state: { ...active(b.defaultState === 'off'), invalid: !b.content, warning: !b.content ? 'Empty block content' : undefined }
+          state: { ...active(b.defaultState === 'off'), invalid: !b.content, warning: !b.content ? 'Empty block content' : undefined },
+          moltRole: normalizeMoltRole(b.role)
         });
         edges.push({ id: `e_${nb.id}_${b.id}`, source: nid, target: bid, type: 'contains', label: b.role });
       });
@@ -227,6 +250,71 @@ export function applyCompileResultToGraph(graph: { nodes: GraphNode[]; edges: Gr
   return { ...graph, nodes };
 }
 
+export function canContainGraphNodes(sourceType: GraphNode['nodeType'], targetType: GraphNode['nodeType']) {
+  if (sourceType === 'molt_block') {
+    return targetType === 'neoblock';
+  }
+  if (sourceType === 'neoblock') return targetType === 'neostack';
+  if (sourceType === 'neostack') return targetType === 'sleeve';
+  return false;
+}
+
+export function collectContainmentChildren(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId: string, acc = new Set<string>()) {
+  graph.edges.forEach((edge) => {
+    if (edge.type !== 'contains' || edge.source !== sourceId || acc.has(edge.target)) return;
+    acc.add(edge.target);
+    collectContainmentChildren(graph, edge.target, acc);
+  });
+  return acc;
+}
+
+export function applyContainmentSnap(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceSourceId: string, targetSourceId: string) {
+  const source = graph.nodes.find((node) => node.sourceId === sourceSourceId || node.id === sourceSourceId);
+  const target = graph.nodes.find((node) => node.sourceId === targetSourceId || node.id === targetSourceId);
+  if (!source || !target) return graph;
+  if (!canContainGraphNodes(source.nodeType, target.nodeType)) return graph;
+
+  const siblings = graph.edges
+    .filter((edge) => edge.type === 'contains' && edge.source === target.id)
+    .map((edge) => edge.target);
+
+  const base = nodeSnapBaseOffset(source.nodeType, target.nodeType);
+  const position = {
+    x: target.position.x + base.x,
+    y: target.position.y + base.y + Math.min(base.strideY, 0) * 0 + siblings.length * base.strideY
+  };
+
+  const relation = containmentRelationFor(source.nodeType, target.nodeType);
+
+  const edgeId = `e_${target.id}_contains_${source.id}`;
+  const filtered = graph.edges.filter((edge) => !(edge.type === 'contains' && edge.target === source.id));
+  if (!filtered.some((edge) => edge.type === 'contains' && edge.source === target.id && edge.target === source.id)) {
+    filtered.push({ id: edgeId, source: target.id, target: source.id, type: 'contains' });
+  }
+
+  const nextNodes = graph.nodes.map((node) => {
+    if (node.id !== source.id) return node;
+    return {
+      ...node,
+      position,
+      layout: {
+        ...(node.layout ?? {}),
+        manual: true,
+        manualOverride: true,
+        relation,
+        snapTargetId: target.sourceId,
+        snapGroupId: `snap_${target.sourceId}`
+      }
+    };
+  });
+
+  return {
+    ...graph,
+    nodes: nextNodes,
+    edges: filtered
+  };
+}
+
 export function applyManualLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, sourceId: string, layout: GraphLayoutItem) {
   const nodes = graph.nodes.map((node) => {
     if (node.sourceId !== sourceId && node.id !== sourceId) return node;
@@ -280,7 +368,21 @@ export function resetManualLayout(graph: { nodes: GraphNode[]; edges: GraphEdge[
 
 export function focusGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, focus: GraphFocus) {
   const focusNode = focus.sourceId ? graph.nodes.find((node) => node.sourceId === focus.sourceId || node.id === focus.sourceId) : graph.nodes.find((node) => node.nodeType === 'sleeve');
-  let keep = new Set<string>();
+
+  const collectContainmentAncestors = (nodeId: string, acc: Set<string>) => {
+    const frontier = [nodeId];
+    while (frontier.length > 0) {
+      const current = frontier.shift();
+      if (!current) continue;
+      for (const edge of graph.edges) {
+        if (edge.type !== 'contains' || edge.target !== current || acc.has(edge.source)) continue;
+        acc.add(edge.source);
+        frontier.push(edge.source);
+      }
+    }
+  };
+
+  const keep = new Set<string>();
   if (focus.mode === 'sleeve') {
     for (const node of graph.nodes) if (node.nodeType === 'sleeve' || node.nodeType === 'neostack') keep.add(node.id);
   } else if (focus.mode === 'molt_block') {
@@ -288,6 +390,9 @@ export function focusGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, fo
   } else if (focusNode) {
     keep.add(focusNode.id);
     for (const edge of graph.edges) if (edge.type === 'contains' && edge.source === focusNode.id) keep.add(edge.target);
+    if (focus.mode === 'neostack' || focus.mode === 'neoblock') {
+      collectContainmentAncestors(focusNode.id, keep);
+    }
   } else {
     for (const node of graph.nodes) if (node.nodeType === 'sleeve') keep.add(node.id);
   }

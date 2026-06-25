@@ -9,7 +9,7 @@ import migrationReport from '../data/library/migration-report.json';
 import sourceAuditData from '../data/library/source-assets.json';
 import { normalizeImportedBlocks, classifyLibraryDisplay, sectionLibraryByDisplayType } from './lib/umg/migrateLibrary';
 import { composeBlocks } from './lib/umg/composeBlocks';
-import { applyCompileResultToGraph, applyManualLayout, buildGraphFromSleeve, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
+import { applyCompileResultToGraph, applyManualLayout, applyContainmentSnap, buildGraphFromSleeve, focusGraph, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
 import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { redactKey, testHermesConnection } from './lib/hermes/hermesClient';
@@ -53,7 +53,7 @@ export default function App() {
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('ready');
   const [runtimeTab, setRuntimeTab] = useState<RuntimeDrawerTab>('RuntimeSpec');
-  const [graphViewMode, setGraphViewMode] = useState<'full' | 'selected'>('full');
+  const [graphViewMode, setGraphViewMode] = useState<'full_sleeve' | 'neostack' | 'neoblock' | 'molt' | 'gate'>('full_sleeve');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('canvas');
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
   const [search, setSearch] = useState('');
@@ -111,17 +111,62 @@ export default function App() {
   const graph = workspace?.graph;
   const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
   const viewedGraph = useMemo(() => {
-    if (graphViewMode === 'full' || !graph || !selected) {
-      return graph;
+    if (!graph) return graph;
+    if (graphViewMode === 'full_sleeve') return graph;
+
+    const fallbackSleeve = graph.nodes.find((node) => node.nodeType === 'sleeve');
+    const fallbackNeostack = graph.nodes.find((node) => node.nodeType === 'neostack');
+    const fallbackNeoblock = graph.nodes.find((node) => node.nodeType === 'neoblock');
+
+    if (graphViewMode === 'neostack') {
+      const focusNode = selected?.nodeType === 'neostack' ? selected : fallbackNeostack;
+      if (!focusNode) return graph;
+      return focusGraph(graph, { mode: 'neostack', sourceId: focusNode.sourceId ?? focusNode.id });
     }
-    const focusedNodes = new Set<string>([selected.id]);
-    graph.edges.forEach((edge) => {
-      if (edge.source === selected.id) focusedNodes.add(edge.target);
-      if (edge.target === selected.id) focusedNodes.add(edge.source);
-    });
-    const nodes = graph.nodes.filter((node) => focusedNodes.has(node.id));
-    const edges = graph.edges.filter((edge) => focusedNodes.has(edge.source) && focusedNodes.has(edge.target));
-    return { nodes, edges };
+
+    if (graphViewMode === 'neoblock') {
+      const focusNode = selected?.nodeType === 'neoblock' ? selected : fallbackNeoblock ?? fallbackNeostack;
+      if (!focusNode) return graph;
+      return focusGraph(graph, { mode: 'neoblock', sourceId: focusNode.sourceId ?? focusNode.id });
+    }
+
+    if (graphViewMode === 'molt') {
+      const moltNodes = new Set<string>(graph.nodes.filter((node) => node.nodeType === 'molt_block').map((node) => node.id));
+      if (moltNodes.size === 0) return graph;
+      const include = new Set<string>(moltNodes);
+      for (const edge of graph.edges) {
+        if (moltNodes.has(edge.target) || moltNodes.has(edge.source)) {
+          include.add(edge.source);
+          include.add(edge.target);
+        }
+      }
+      const nodes = graph.nodes.filter((node) => include.has(node.id));
+      const edges = graph.edges.filter((edge) => include.has(edge.source) && include.has(edge.target));
+      return { nodes, edges };
+    }
+
+    const gateNodes = new Set<string>(
+      graph.nodes
+        .filter((node) =>
+          node.nodeType === 'gate'
+          || node.nodeType === 'sleeve'
+          || (node.governingGateIds ?? []).length > 0
+          || nodePathHasGateSignals(node)
+        )
+        .map((node) => node.id)
+    );
+    if (gateNodes.size === 0) return graph;
+    const edges = graph.edges.filter((edge) => gateNodes.has(edge.source) || gateNodes.has(edge.target));
+    const include = new Set<string>(gateNodes);
+    for (const edge of edges) {
+      include.add(edge.source);
+      include.add(edge.target);
+    }
+    return { nodes: graph.nodes.filter((node) => include.has(node.id)), edges: graph.edges.filter((edge) => include.has(edge.source) && include.has(edge.target)) };
+
+    function nodePathHasGateSignals(node: GraphNode) {
+      return Boolean(node.pathState);
+    }
   }, [graph, graphViewMode, selected]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
   const inspectedGateSource = isTriggerGateSourceCard(inspected) ? inspected : undefined;
@@ -215,8 +260,7 @@ export default function App() {
   const layoutStyle = {
     '--leftWidth': `${layout.leftWidth}px`,
     '--rightWidth': `${layout.rightWidth}px`,
-    '--bottomHeight': `${layout.bottomHeight}px`,
-    '--composeHeight': workspaceMode === 'compose' ? '176px' : '0px'
+    '--bottomHeight': `${layout.bottomHeight}px`
   } as React.CSSProperties;
 
   const compose = () => {
@@ -323,12 +367,108 @@ export default function App() {
     }
   };
 
+  const resolveGraphNodeById = (graph: UMGWorkspace['graph'], nodeId: string) => graph.nodes.find((candidate) => candidate.id === nodeId || candidate.sourceId === nodeId);
+
+  const getContainmentDescendants = (graph: UMGWorkspace['graph'], parentId: string, visited = new Set<string>()) => {
+    graph.edges.forEach((edge) => {
+      if (edge.type === 'contains' && edge.source === parentId && !visited.has(edge.target)) {
+        visited.add(edge.target);
+        getContainmentDescendants(graph, edge.target, visited);
+      }
+    });
+    return visited;
+  };
+
+  const moveContainedSubtree = (graph: UMGWorkspace['graph'], sourceNodeId: string, x: number, y: number) => {
+    const source = graph.nodes.find((node) => node.id === sourceNodeId);
+    if (!source) return graph;
+    const descendants = getContainmentDescendants(graph, source.id);
+    const dx = x - source.position.x;
+    const dy = y - source.position.y;
+
+    const withManualLayout = (node: GraphNode, nextX: number, nextY: number): GraphNode => ({
+      ...node,
+      position: { x: nextX, y: nextY },
+      layout: {
+        ...node.layout,
+        manual: true,
+        manualOverride: true,
+        relation: 'contains',
+        x: nextX,
+        y: nextY
+      }
+    });
+
+    const newNodes = graph.nodes.map((node) => {
+      if (node.id === source.id) {
+        return withManualLayout(node, x, y);
+      }
+      if (!descendants.has(node.id)) return node;
+      return withManualLayout(node, node.position.x + dx, node.position.y + dy);
+    });
+    return { ...graph, nodes: newNodes };
+  };
+
+  const canSnapAsChild = (child: GraphNode, target: GraphNode, graphForRules: UMGWorkspace['graph']) => {
+    if (child.id === target.id) return false;
+
+    if (child.nodeType === 'molt_block') {
+      if (target.nodeType === 'neoblock') return true;
+      return false;
+    }
+
+    if (child.nodeType === 'neoblock') {
+      return target.nodeType === 'neostack';
+    }
+
+    if (child.nodeType === 'neostack') {
+      return target.nodeType === 'sleeve';
+    }
+
+    // Trigger gates are prompt boundaries only and are not valid prompt children in drag/drop.
+    if (child.nodeType === 'gate') {
+      return false;
+    }
+
+    return false;
+  };
+
   const updateNodePosition = (nodeId: string, x: number, y: number) => {
     if (!workspace) return;
     setWorkspace((previous) => {
       if (!previous) return previous;
-      const nextGraph = applyManualLayout(previous.graph, nodeId, { x, y, relation: 'contains' });
+      const nextGraph = moveContainedSubtree(previous.graph, nodeId, x, y);
       return { ...previous, graph: nextGraph };
+    });
+    setCompiled(undefined);
+  };
+
+  const applyDropContainment = (nodeSourceId: string, x: number, y: number, targetSourceId?: string) => {
+    if (!workspace) return;
+    setWorkspace((previous) => {
+      if (!previous) return previous;
+      if (!targetSourceId) {
+        const updatedGraph = applyManualLayout(previous.graph, nodeSourceId, {
+          x,
+          y,
+          relation: 'contains',
+          snapTargetId: undefined,
+          snapGroupId: undefined
+        }) as UMGWorkspace['graph'];
+        return { ...previous, graph: updatedGraph };
+      }
+
+      const source = resolveGraphNodeById(previous.graph, nodeSourceId);
+      const target = resolveGraphNodeById(previous.graph, targetSourceId);
+      if (!source || !target || !canSnapAsChild(source, target, previous.graph)) {
+        return previous;
+      }
+
+      const updatedGraph = applyContainmentSnap(previous.graph, source.sourceId, target.sourceId) as UMGWorkspace['graph'];
+      return {
+        ...previous,
+        graph: updatedGraph
+      };
     });
     setCompiled(undefined);
   };
@@ -421,11 +561,15 @@ export default function App() {
                 <button className="exportMenuAction" disabled={!workspace} onClick={exportWorkspaceJson}>Workspace</button>
               </div>
             </details>
-            <button className={graphViewMode === 'full' ? 'hot' : ''} onClick={() => setGraphViewMode('full')}>View: Full</button>
-            <button className={graphViewMode === 'selected' ? 'hot' : ''} onClick={() => setGraphViewMode('selected')}>View: Selected context</button>
+            <button className={graphViewMode === 'full_sleeve' ? 'hot' : ''} onClick={() => setGraphViewMode('full_sleeve')}>Full Sleeve</button>
+            <button className={graphViewMode === 'neostack' ? 'hot' : ''} onClick={() => setGraphViewMode('neostack')}>NeoStack</button>
+            <button className={graphViewMode === 'neoblock' ? 'hot' : ''} onClick={() => setGraphViewMode('neoblock')}>NeoBlock</button>
+            <button className={graphViewMode === 'molt' ? 'hot' : ''} onClick={() => setGraphViewMode('molt')}>MOLT</button>
+            <button className={graphViewMode === 'gate' ? 'hot' : ''} onClick={() => setGraphViewMode('gate')}>Gate</button>
+            <button onClick={() => setGraphViewMode('full_sleeve')} className={graphViewMode === 'full_sleeve' ? 'hot' : ''}>Reset View</button>
           </div>
         </div>
-        {viewedGraph ? <Graph nodes={viewedGraph.nodes} edges={viewedGraph.edges} selected={selected?.id} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
+        {viewedGraph ? <Graph nodes={viewedGraph.nodes} edges={viewedGraph.edges} selected={selected?.id} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target, graph || { nodes: [], edges: [] })} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
       </section>
       <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
       <aside className="inspect card">
@@ -433,7 +577,7 @@ export default function App() {
           <h2>Inspector / Config</h2>
           <button onClick={() => setLayout((current) => ({ ...current, rightCollapsed: !current.rightCollapsed }))}>{layout.rightCollapsed ? 'Expand' : 'Collapse'}</button>
         </div>
-        {selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}
+        {selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType === 'molt_block' ? (selected.moltRole || 'MOLT') : labelDisplayType(selected.nodeType)}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}
         <RuntimeGateDebugPanel view={runtimeGateDebugView} />
         <BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} />
         <h3>Hermes</h3>
@@ -518,8 +662,36 @@ function gateStripStyle(edge: any) {
   return { left: (x1 + x2) / 2, top: (y1 + y2) / 2 };
 }
 
-function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void; onMove?: (nodeId: string, x: number, y: number) => void }) {
-  const dragging = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
+function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMode }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void; onMove?: (nodeId: string, x: number, y: number) => void; onDrop?: (nodeId: string, x: number, y: number, targetNodeId?: string) => void; canSnap?: (sourceNode: GraphNode, targetNodeId: GraphNode) => boolean; viewMode?: string }) {
+  const dragging = useRef<{ id: string; sourceId: string; offsetX: number; offsetY: number; lastX: number; lastY: number } | null>(null);
+  const [snapTargetId, setSnapTargetId] = useState<string | undefined>(undefined);
+
+  const pickTypeLabel = (node: GraphNode) => {
+    if (node.nodeType === 'molt_block') {
+      if (node.moltRole) return node.moltRole.replace(/_/g, ' ').replace(/^\w/, (char: string) => char.toUpperCase());
+      return 'MOLT';
+    }
+    if (node.nodeType === 'neoblock') return 'NeoBlock';
+    if (node.nodeType === 'neostack') return 'NeoStack';
+    if (node.nodeType === 'sleeve') return 'Sleeve';
+    return node.nodeType;
+  };
+
+  const getDropCandidate = (source: GraphNode, x: number, y: number): string | undefined => {
+    if (!canSnap) return undefined;
+    let candidate: GraphNode | undefined;
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const node of nodes) {
+      if (node.id === source.id) continue;
+      if (!canSnap(source, node)) continue;
+      const distance = Math.hypot((x + 150) - (node.position.x + 100), (y + 30) - (node.position.y + 24));
+      if (distance < 120 && distance < nearest) {
+        nearest = distance;
+        candidate = node;
+      }
+    }
+    return candidate?.sourceId;
+  };
 
   const onCanvasPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     dragging.current = null;
@@ -531,14 +703,32 @@ function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[];
   const onCanvasPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const active = dragging.current;
     if (!active || !onMove) return;
-    onMove(active.id, event.clientX - active.offsetX, event.clientY - active.offsetY);
+    const nextX = event.clientX - active.offsetX;
+    const nextY = event.clientY - active.offsetY;
+    onMove(active.id, nextX, nextY);
+    const source = nodes.find((node) => node.id === active.id);
+    if (!source) return;
+    setSnapTargetId(getDropCandidate(source, nextX, nextY));
   };
 
   const onCanvasPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const active = dragging.current;
+    const source = active ? nodes.find((node) => node.id === active.id) : undefined;
     dragging.current = null;
+    if (!active || !source || !onDrop) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      setSnapTargetId(undefined);
+      return;
+    }
+
+    onDrop(active.sourceId, active.lastX, active.lastY, snapTargetId);
+
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    setSnapTargetId(undefined);
   };
 
   const onNodePointerDown = (event: React.PointerEvent<HTMLButtonElement>, node: GraphNode) => {
@@ -547,30 +737,50 @@ function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[];
     event.preventDefault();
     dragging.current = {
       id: node.id,
+      sourceId: node.sourceId || node.id,
       offsetX: event.clientX - node.position.x,
-      offsetY: event.clientY - node.position.y
+      offsetY: event.clientY - node.position.y,
+      lastX: node.position.x,
+      lastY: node.position.y
     };
   };
 
   const onNodePointerMove = (event: React.PointerEvent<HTMLButtonElement>, node: GraphNode) => {
     if (!onMove || dragging.current?.id !== node.id) return;
-    onMove(dragging.current.id, event.clientX - dragging.current.offsetX, event.clientY - dragging.current.offsetY);
+    const nextX = event.clientX - dragging.current.offsetX;
+    const nextY = event.clientY - dragging.current.offsetY;
+    dragging.current.lastX = nextX;
+    dragging.current.lastY = nextY;
+    onMove(dragging.current.id, nextX, nextY);
+    setSnapTargetId(getDropCandidate(node, nextX, nextY));
   };
 
-  const onNodePointerUp = () => {
+  const onNodePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = dragging.current;
+    event.preventDefault();
+    event.stopPropagation();
+    if (active && onDrop) {
+      onDrop(active.sourceId, active.lastX, active.lastY, snapTargetId);
+    }
     dragging.current = null;
+    setSnapTargetId(undefined);
   };
 
   return (
-    <div className="canvas" onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+    <div className={`canvas graph-view-${viewMode ?? 'full_sleeve'}`} onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
       {edges.map((edge) => {
         const gateStrip = gateVisualMetadataForEdge(edge);
         return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
-      })}{nodes.map((node) => {
+      })}
+      {nodes.map((node) => {
         const gateBadge = gateVisualMetadataForNode(node);
+        const isDropTarget = snapTargetId === (node.sourceId || node.id);
+        const roleClass = node.nodeType === 'molt_block' && node.moltRole
+          ? `moltRole${node.moltRole.replace(/(^|_)([a-z])/g, (_, _prefix: string, char: string) => char.toUpperCase())}`
+          : '';
         return <button
           key={node.id}
-          className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)}`}
+          className={`node ${selected === node.id ? 'picked' : ''} ${node.state.active ? 'active' : ''} ${node.state.off ? 'off' : ''} ${node.state.triggered ? 'triggered' : ''} ${node.state.invalid ? 'invalid' : ''} ${nodePathClass(node.pathState)} node-${node.nodeType} ${node.moltRole ? 'molt' : ''} ${roleClass} ${isDropTarget ? 'dropTarget' : ''}`}
           style={{ left: node.position.x, top: node.position.y }}
           onPointerDown={(event) => onNodePointerDown(event, node)}
           onPointerMove={(event) => onNodePointerMove(event, node)}
@@ -578,7 +788,7 @@ function Graph({ nodes, edges, selected, onPick, onMove }: { nodes: GraphNode[];
           onClick={() => onPick(node)}
         >
           <b>{node.label}</b>
-          <small>{node.nodeType}</small>
+          <small>{pickTypeLabel(node)}</small>
           {gateBadge.renderGateBadge && <span className={gateBadge.className}>{gateBadge.label}</span>}
           {node.state.warning && <em>{node.state.warning}</em>}
         </button>;
