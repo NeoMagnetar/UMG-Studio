@@ -33,3 +33,23 @@ main.leftCollapsed .library>*:not(.panelTitle),main.rightCollapsed .inspect>*:no
 .graph-view-molt{--graph-view-mode: #8b5cf6;box-shadow: inset 0 0 0 1px #8b5cf655}
 .graph-view-gate{--graph-view-mode: #f97316;box-shadow: inset 0 0 0 1px #f9731655}
 .graph-view-full_sleeve,.graph-view-neostack,.graph-view-neoblock,.graph-view-molt,.graph-view-gate{transition:box-shadow .2s ease, border-color .2s ease}
+
+main.focusGraph{grid-template-rows:minmax(0,1fr) 8px 44px}
+main.focusGraph .compose{display:none}
+main.focusGraph .library,main.focusGraph .graph,main.focusGraph .inspect{grid-row:1/2}
+main.focusGraph .drawer{grid-row:3}
+main.focusGraph .graph{margin-top:0}
+
+.graph-view-molt_builder{--graph-view-mode:#8b5cf6;box-shadow:inset 0 0 0 1px #8b5cf655}
+.graph-view-full_sleeve,.graph-view-neostack,.graph-view-neoblock,.graph-view-molt_builder{transition:box-shadow .2s ease,border-color .2s ease}
+
+.moltBuilderPanel{height:100%;display:grid;grid-template-rows:auto 1fr;gap:12px}
+.moltBuilderHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 2px 4px}.moltBuilderHeader h3{margin:0 0 4px;color:#c4b5fd}.moltBuilderHeader p{margin:0;color:#a5b4fc}
+.moltBuilderSections{display:grid;gap:12px;overflow:auto;padding-right:4px}
+.moltBuilderSection{border:1px solid #273249;border-radius:14px;background:#0b1020;padding:12px}
+.moltSectionHeader{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;color:#cbd5f5}
+.moltSectionEmpty{border:1px dashed #334155;border-radius:12px;padding:12px;color:#8aa0c2;background:#0f172a}
+.moltBuilderCards{display:grid;gap:10px}
+.moltBuilderCard{border:1px solid #334155;border-radius:12px;padding:12px;background:#111827;box-shadow:inset 0 0 0 1px #ffffff08}
+.moltBuilderCard p{margin:6px 0 8px;color:#dbe7ff}.moltBuilderCard small{display:block;color:#aab8d4;margin:4px 0}
+.moltBuilderActions{margin-top:10px}

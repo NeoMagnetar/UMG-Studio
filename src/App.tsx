@@ -36,8 +36,19 @@ type InspectorTab = typeof inspectorTabs[number];
 type ResizeTarget = 'left' | 'right' | 'bottom';
 type ShelfMode = AssetShelfId;
 type WorkspaceMode = 'compose' | 'canvas' | 'runtime';
+type GraphViewMode = 'full_sleeve' | 'neostack' | 'neoblock' | 'molt_builder';
 type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
+
+const moltBuilderSections = [
+  { key: 'directive', label: 'Directive', className: 'moltRoleDirective' },
+  { key: 'instruction', label: 'Instruction', className: 'moltRoleInstruction' },
+  { key: 'subject', label: 'Subject', className: 'moltRoleSubject' },
+  { key: 'primary', label: 'Primary', className: 'moltRolePrimary' },
+  { key: 'philosophy', label: 'Philosophy', className: 'moltRolePhilosophy' },
+  { key: 'blueprint', label: 'Blueprint', className: 'moltRoleBlueprint' },
+  { key: 'meta_other', label: 'Meta / Other', className: 'moltRoleMeta' }
+] as const;
 
 export default function App() {
   const initialHermesGenerate = resolveHermesGenerateConfig(import.meta.env as Record<string, string | undefined>);
@@ -53,8 +64,11 @@ export default function App() {
   const [output, setOutput] = useState('');
   const [status, setStatus] = useState('ready');
   const [runtimeTab, setRuntimeTab] = useState<RuntimeDrawerTab>('RuntimeSpec');
-  const [graphViewMode, setGraphViewMode] = useState<'full_sleeve' | 'neostack' | 'neoblock' | 'molt' | 'gate'>('full_sleeve');
+  const [graphViewMode, setGraphViewMode] = useState<GraphViewMode>('full_sleeve');
+  const [showGates, setShowGates] = useState(true);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('canvas');
+  const [focusGraphMode, setFocusGraphMode] = useState(false);
+  const [focusGraphBackup, setFocusGraphBackup] = useState<{ layout: WorkbenchLayoutState; workspaceMode: WorkspaceMode } | undefined>();
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
   const [search, setSearch] = useState('');
   const [tagFilters, setTagFilters] = useState<string[]>([]);
@@ -109,7 +123,17 @@ export default function App() {
   }, [resolvedShelf, search, tagFilters, activeShelf, roleFilter, statusFilter, isTriggerCategoryActive]);
   const visibleTags = useMemo(() => [...new Set(resolvedShelf.items.flatMap((item) => item.tags))].filter(Boolean).slice(0, 24), [resolvedShelf]);
   const graph = workspace?.graph;
+  const activeSleeve = useMemo(() => {
+    if (!workspace?.sleeves?.length) return undefined;
+    return workspace.sleeves.find((sleeve) => sleeve.id === workspace.activeSleeveId) ?? workspace.sleeves[0];
+  }, [workspace]);
   const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
+  const currentNeoBlock = useMemo(() => {
+    if (!activeSleeve) return undefined;
+    if (selected?.nodeType === 'neoblock') return findNeoBlockInSleeve(activeSleeve, selected.sourceId);
+    if (selectedBlock) return findParentNeoBlockForBlock(activeSleeve, selectedBlock.id);
+    return activeSleeve.stacks.flatMap((stack) => stack.neoblocks)[0];
+  }, [activeSleeve, selected, selectedBlock]);
   const viewedGraph = useMemo(() => {
     if (!graph) return graph;
     if (graphViewMode === 'full_sleeve') return graph;
@@ -130,44 +154,21 @@ export default function App() {
       return focusGraph(graph, { mode: 'neoblock', sourceId: focusNode.sourceId ?? focusNode.id });
     }
 
-    if (graphViewMode === 'molt') {
-      const moltNodes = new Set<string>(graph.nodes.filter((node) => node.nodeType === 'molt_block').map((node) => node.id));
-      if (moltNodes.size === 0) return graph;
-      const include = new Set<string>(moltNodes);
-      for (const edge of graph.edges) {
-        if (moltNodes.has(edge.target) || moltNodes.has(edge.source)) {
-          include.add(edge.source);
-          include.add(edge.target);
-        }
-      }
-      const nodes = graph.nodes.filter((node) => include.has(node.id));
-      const edges = graph.edges.filter((edge) => include.has(edge.source) && include.has(edge.target));
-      return { nodes, edges };
-    }
-
-    const gateNodes = new Set<string>(
-      graph.nodes
-        .filter((node) =>
-          node.nodeType === 'gate'
-          || node.nodeType === 'sleeve'
-          || (node.governingGateIds ?? []).length > 0
-          || nodePathHasGateSignals(node)
-        )
-        .map((node) => node.id)
-    );
-    if (gateNodes.size === 0) return graph;
-    const edges = graph.edges.filter((edge) => gateNodes.has(edge.source) || gateNodes.has(edge.target));
-    const include = new Set<string>(gateNodes);
-    for (const edge of edges) {
-      include.add(edge.source);
-      include.add(edge.target);
-    }
-    return { nodes: graph.nodes.filter((node) => include.has(node.id)), edges: graph.edges.filter((edge) => include.has(edge.source) && include.has(edge.target)) };
-
-    function nodePathHasGateSignals(node: GraphNode) {
-      return Boolean(node.pathState);
+    if (graphViewMode === 'molt_builder') {
+      const focusNode = selected?.nodeType === 'neoblock' ? selected : fallbackNeoblock ?? fallbackNeostack;
+      if (!focusNode) return graph;
+      return focusGraph(graph, { mode: 'neoblock', sourceId: focusNode.sourceId ?? focusNode.id });
     }
   }, [graph, graphViewMode, selected]);
+  const displayGraph = useMemo(() => {
+    if (!viewedGraph) return viewedGraph;
+    if (showGates) return viewedGraph;
+    const gateNodeIds = new Set(viewedGraph.nodes.filter((node) => node.nodeType === 'gate').map((node) => node.id));
+    return {
+      nodes: viewedGraph.nodes.filter((node) => node.nodeType !== 'gate'),
+      edges: viewedGraph.edges.filter((edge) => !gateNodeIds.has(edge.source) && !gateNodeIds.has(edge.target))
+    };
+  }, [showGates, viewedGraph]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
   const inspectedGateSource = isTriggerGateSourceCard(inspected) ? inspected : undefined;
   const inspectorBlock = inspectedBlock ?? selectedBlock;
@@ -254,6 +255,7 @@ export default function App() {
     layout.leftCollapsed ? 'leftCollapsed' : '',
     layout.rightCollapsed ? 'rightCollapsed' : '',
     layout.bottomCollapsed ? 'bottomCollapsed' : '',
+    focusGraphMode ? 'focusGraph' : '',
     `mode-${workspaceMode}`
   ].filter(Boolean).join(' ');
 
@@ -262,6 +264,110 @@ export default function App() {
     '--rightWidth': `${layout.rightWidth}px`,
     '--bottomHeight': `${layout.bottomHeight}px`
   } as React.CSSProperties;
+
+  const enterFocusGraph = () => {
+    if (focusGraphMode) return;
+    setFocusGraphBackup({ layout, workspaceMode });
+    setLayout((current) => ({ ...current, leftCollapsed: true, rightCollapsed: true, bottomCollapsed: true }));
+    setWorkspaceMode('canvas');
+    setFocusGraphMode(true);
+    setStatus('focus graph enabled');
+  };
+
+  const exitFocusGraph = () => {
+    const backup = focusGraphBackup;
+    if (!focusGraphMode) return;
+    if (backup) {
+      setLayout(backup.layout);
+      setWorkspaceMode(backup.workspaceMode);
+    }
+    setFocusGraphMode(false);
+    setFocusGraphBackup(undefined);
+    setStatus('focus graph disabled');
+  };
+
+  const replaceActiveSleeve = (nextSleeve: Sleeve, nextSelectedSourceId?: string) => {
+    if (!workspace) return;
+    const activeSleeveId = activeSleeve?.id ?? workspace.activeSleeveId ?? workspace.sleeves[0]?.id;
+    const nextSleeves = workspace.sleeves.map((sleeve) => sleeve.id === activeSleeveId ? nextSleeve : sleeve);
+    const nextGraph = buildGraphFromSleeve(nextSleeve);
+    const selectedSourceId = nextSelectedSourceId ?? selected?.sourceId;
+    setWorkspace({ ...workspace, activeSleeveId: nextSleeve.id, sleeves: nextSleeves, graph: nextGraph });
+    setCompiled(undefined);
+    if (selectedSourceId) {
+      setSelected(nextGraph.nodes.find((node) => node.sourceId === selectedSourceId || node.id === selectedSourceId));
+      return;
+    }
+    setSelected(undefined);
+  };
+
+  const updateCurrentNeoBlock = (mutator: (neoblock: NeoBlock) => NeoBlock, nextSelectedSourceId?: string) => {
+    if (!activeSleeve || !currentNeoBlock) return;
+    const nextSleeve = structuredClone(activeSleeve);
+    nextSleeve.stacks = nextSleeve.stacks.map((stack) => ({
+      ...stack,
+      neoblocks: stack.neoblocks.map((neoblock) => neoblock.id === currentNeoBlock.id ? mutator(neoblock) : neoblock)
+    }));
+    replaceActiveSleeve(nextSleeve, nextSelectedSourceId ?? currentNeoBlock.id);
+  };
+
+  const moveBlockWithinRole = (blockId: string, direction: 'up' | 'down') => {
+    if (!currentNeoBlock) return;
+    const index = currentNeoBlock.blocks.findIndex((block) => block.id === blockId);
+    if (index < 0) return;
+    const currentBlock = currentNeoBlock.blocks[index];
+    const roleIndices = currentNeoBlock.blocks
+      .map((block: UMGBlock, blockIndex: number) => block.role === currentBlock.role ? blockIndex : -1)
+      .filter((blockIndex: number) => blockIndex >= 0);
+    const roleIndex = roleIndices.indexOf(index);
+    const targetIndex = direction === 'up' ? roleIndices[roleIndex - 1] : roleIndices[roleIndex + 1];
+    if (targetIndex === undefined) {
+      setStatus(`cannot move ${currentBlock.title} ${direction} outside the ${labelDisplayType(currentBlock.role)} section`);
+      return;
+    }
+    updateCurrentNeoBlock((neoblock) => {
+      const nextBlocks = [...neoblock.blocks];
+      [nextBlocks[index], nextBlocks[targetIndex]] = [nextBlocks[targetIndex], nextBlocks[index]];
+      return { ...neoblock, blocks: nextBlocks };
+    }, currentBlock.id);
+    setStatus(`moved ${currentBlock.title} ${direction} within ${labelDisplayType(currentBlock.role)}`);
+  };
+
+  const duplicateBuilderBlock = (blockId: string) => {
+    if (!currentNeoBlock) return;
+    const sourceBlock = currentNeoBlock.blocks.find((block: UMGBlock) => block.id === blockId);
+    if (!sourceBlock) return;
+    const duplicate = structuredClone(sourceBlock);
+    duplicate.id = `${sourceBlock.id}_copy_${Date.now()}`;
+    duplicate.source = { origin: 'workspace', sourceId: sourceBlock.id, version: '0.1' };
+    updateCurrentNeoBlock((neoblock) => {
+      const nextBlocks = [...neoblock.blocks];
+      const roleIndices = nextBlocks
+        .map((block: UMGBlock, index: number) => block.role === sourceBlock.role ? index : -1)
+        .filter((index: number) => index >= 0);
+      const insertAt = (roleIndices[roleIndices.length - 1] ?? nextBlocks.length - 1) + 1;
+      nextBlocks.splice(insertAt, 0, duplicate);
+      return { ...neoblock, blocks: nextBlocks };
+    }, duplicate.id);
+    setStatus(`duplicated ${sourceBlock.title} to bottom of ${labelDisplayType(sourceBlock.role)}`);
+  };
+
+  const removeBuilderBlock = (blockId: string) => {
+    if (!currentNeoBlock) return;
+    const block = currentNeoBlock.blocks.find((entry: UMGBlock) => entry.id === blockId);
+    if (!block) return;
+    updateCurrentNeoBlock((neoblock) => ({ ...neoblock, blocks: neoblock.blocks.filter((entry: UMGBlock) => entry.id !== blockId) }), currentNeoBlock.id);
+    setStatus(`removed ${block.title} from ${currentNeoBlock.title}`);
+  };
+
+  const focusBuilderBlock = (blockId: string) => {
+    const node = graph?.nodes.find((candidate) => candidate.sourceId === blockId || candidate.id === blockId);
+    if (node) {
+      setSelected(node);
+      setInspectorTab('Card');
+      setInspected(undefined);
+    }
+  };
 
   const compose = () => {
     const composition = composeBlocks({ freeform_request: request, target_type: target as any, depth }, libraryWithStatus);
@@ -409,7 +515,7 @@ export default function App() {
     return { ...graph, nodes: newNodes };
   };
 
-  const canSnapAsChild = (child: GraphNode, target: GraphNode, graphForRules: UMGWorkspace['graph']) => {
+  const canSnapAsChild = (child: GraphNode, target: GraphNode) => {
     if (child.id === target.id) return false;
 
     if (child.nodeType === 'molt_block') {
@@ -460,7 +566,7 @@ export default function App() {
 
       const source = resolveGraphNodeById(previous.graph, nodeSourceId);
       const target = resolveGraphNodeById(previous.graph, targetSourceId);
-      if (!source || !target || !canSnapAsChild(source, target, previous.graph)) {
+      if (!source || !target || !canSnapAsChild(source, target)) {
         return previous;
       }
 
@@ -564,12 +670,29 @@ export default function App() {
             <button className={graphViewMode === 'full_sleeve' ? 'hot' : ''} onClick={() => setGraphViewMode('full_sleeve')}>Full Sleeve</button>
             <button className={graphViewMode === 'neostack' ? 'hot' : ''} onClick={() => setGraphViewMode('neostack')}>NeoStack</button>
             <button className={graphViewMode === 'neoblock' ? 'hot' : ''} onClick={() => setGraphViewMode('neoblock')}>NeoBlock</button>
-            <button className={graphViewMode === 'molt' ? 'hot' : ''} onClick={() => setGraphViewMode('molt')}>MOLT</button>
-            <button className={graphViewMode === 'gate' ? 'hot' : ''} onClick={() => setGraphViewMode('gate')}>Gate</button>
+            <button className={graphViewMode === 'molt_builder' ? 'hot' : ''} onClick={() => setGraphViewMode('molt_builder')}>MOLT Builder</button>
+            <button className={showGates ? 'hot' : ''} onClick={() => setShowGates((current) => !current)}>Show Gates</button>
+            <button className={focusGraphMode ? 'hot' : ''} onClick={() => focusGraphMode ? exitFocusGraph() : enterFocusGraph()}>{focusGraphMode ? 'Exit Focus' : 'Focus Graph'}</button>
             <button onClick={() => setGraphViewMode('full_sleeve')} className={graphViewMode === 'full_sleeve' ? 'hot' : ''}>Reset View</button>
           </div>
         </div>
-        {viewedGraph ? <Graph nodes={viewedGraph.nodes} edges={viewedGraph.edges} selected={selected?.id} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target, graph || { nodes: [], edges: [] })} /> : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
+        {graphViewMode === 'molt_builder'
+          ? <MoltBuilderPanel
+            neoblock={currentNeoBlock}
+            onAddBlock={() => { setActiveShelf('molt_blocks'); setWorkspaceMode('canvas'); setStatus(currentNeoBlock ? `choose a library card and add it to ${currentNeoBlock.title}` : 'select a NeoBlock or compose a workspace first'); }}
+            onEdit={(blockId) => { focusBuilderBlock(blockId); setStatus('opened block in inspector'); }}
+            onDuplicate={duplicateBuilderBlock}
+            onSaveAsNew={(blockId) => {
+              const block = currentNeoBlock?.blocks.find((entry: UMGBlock) => entry.id === blockId);
+              setStatus(block ? `save as new is UI-only for now: ${block.title}` : 'save as new is UI-only for now');
+            }}
+            onRemove={removeBuilderBlock}
+            onMoveUp={(blockId) => moveBlockWithinRole(blockId, 'up')}
+            onMoveDown={(blockId) => moveBlockWithinRole(blockId, 'down')}
+          />
+          : displayGraph
+            ? <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={selected?.id} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
+            : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
       </section>
       <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
       <aside className="inspect card">
@@ -645,6 +768,97 @@ function AssetCards({ items, onAdd, onInspect }: { items: ShelfAsset[]; onAdd: (
   })}</div>;
 }
 
+function findNeoBlockInSleeve(sleeve: Sleeve, neoblockId: string) {
+  for (const stack of sleeve.stacks) {
+    const match = stack.neoblocks.find((neoblock) => neoblock.id === neoblockId);
+    if (match) return match;
+  }
+  return undefined;
+}
+
+function findParentNeoBlockForBlock(sleeve: Sleeve, blockId: string) {
+  for (const stack of sleeve.stacks) {
+    for (const neoblock of stack.neoblocks) {
+      if (neoblock.blocks.some((block) => block.id === blockId)) return neoblock;
+    }
+  }
+  return undefined;
+}
+
+function builderSectionForBlock(block: UMGBlock) {
+  const roleKey = block.displayType === 'meta' ? 'meta_other' : block.role;
+  return moltBuilderSections.find((section) => section.key === roleKey) ?? moltBuilderSections[moltBuilderSections.length - 1];
+}
+
+function MoltBuilderPanel({
+  neoblock,
+  onAddBlock,
+  onEdit,
+  onDuplicate,
+  onSaveAsNew,
+  onRemove,
+  onMoveUp,
+  onMoveDown
+}: {
+  neoblock?: NeoBlock;
+  onAddBlock: () => void;
+  onEdit: (blockId: string) => void;
+  onDuplicate: (blockId: string) => void;
+  onSaveAsNew: (blockId: string) => void;
+  onRemove: (blockId: string) => void;
+  onMoveUp: (blockId: string) => void;
+  onMoveDown: (blockId: string) => void;
+}) {
+  if (!neoblock) return <div className="empty">Select a NeoBlock to open MOLT Builder.</div>;
+
+  const sectionEntries = moltBuilderSections.map((section) => ({
+    ...section,
+    blocks: neoblock.blocks.filter((block) => builderSectionForBlock(block).key === section.key)
+  }));
+
+  return <div className="moltBuilderPanel">
+    <div className="moltBuilderHeader">
+      <div>
+        <h3>MOLT Builder</h3>
+        <p>NeoBlock: {neoblock.title}</p>
+      </div>
+      <div className="row">
+        <button onClick={onAddBlock}>Add Block</button>
+      </div>
+    </div>
+    <div className="moltBuilderSections">
+      {sectionEntries.map((section) => <section key={section.key} className="moltBuilderSection">
+        <div className="moltSectionHeader">
+          <b>{section.label}</b>
+          <span>{section.blocks.length} block{section.blocks.length === 1 ? '' : 's'}</span>
+        </div>
+        {section.blocks.length === 0
+          ? <div className="moltSectionEmpty">No {section.label} blocks in this NeoBlock.</div>
+          : <div className="moltBuilderCards">{section.blocks.map((block: UMGBlock, index: number) => {
+            const roleStyle = builderSectionForBlock(block).className;
+            return <article key={block.id} className={`moltBuilderCard ${roleStyle}`}>
+              <div className="cardtop">
+                <b>{block.title}</b>
+                <span className="badge">{builderSectionForBlock(block).label}</span>
+              </div>
+              <p>{block.description || block.content.slice(0, 180)}</p>
+              <small>Role: {builderSectionForBlock(block).label}</small>
+              <small>Position in section: {index + 1}</small>
+              <div className="row moltBuilderActions">
+                <button onClick={() => onEdit(block.id)}>Edit</button>
+                <button onClick={() => onDuplicate(block.id)}>Duplicate</button>
+                <button onClick={() => onSaveAsNew(block.id)}>Save as New</button>
+                <button onClick={() => onRemove(block.id)}>Remove from NeoBlock</button>
+                <button onClick={() => onMoveUp(block.id)}>Move Up</button>
+                <button onClick={() => onMoveDown(block.id)}>Move Down</button>
+              </div>
+            </article>;
+          })}</div>}
+      </section>)}
+    </div>
+  </div>;
+}
+
 function nodePathClass(pathState?: GraphNode['pathState']) {
   return pathState ? `path-${pathState.replace('_', '-')}` : '';
 }
@@ -662,7 +876,7 @@ function gateStripStyle(edge: any) {
   return { left: (x1 + x2) / 2, top: (y1 + y2) / 2 };
 }
 
-function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMode }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void; onMove?: (nodeId: string, x: number, y: number) => void; onDrop?: (nodeId: string, x: number, y: number, targetNodeId?: string) => void; canSnap?: (sourceNode: GraphNode, targetNodeId: GraphNode) => boolean; viewMode?: string }) {
+function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMode, showGates = true }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void; onMove?: (nodeId: string, x: number, y: number) => void; onDrop?: (nodeId: string, x: number, y: number, targetNodeId?: string) => void; canSnap?: (sourceNode: GraphNode, targetNodeId: GraphNode) => boolean; viewMode?: string; showGates?: boolean }) {
   const dragging = useRef<{ id: string; sourceId: string; offsetX: number; offsetY: number; lastX: number; lastY: number } | null>(null);
   const [snapTargetId, setSnapTargetId] = useState<string | undefined>(undefined);
 
@@ -770,7 +984,7 @@ function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMo
     <div className={`canvas graph-view-${viewMode ?? 'full_sleeve'}`} onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
       {edges.map((edge) => {
         const gateStrip = gateVisualMetadataForEdge(edge);
-        return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
+        return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{showGates && gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
       })}
       {nodes.map((node) => {
         const gateBadge = gateVisualMetadataForNode(node);
@@ -789,7 +1003,7 @@ function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMo
         >
           <b>{node.label}</b>
           <small>{pickTypeLabel(node)}</small>
-          {gateBadge.renderGateBadge && <span className={gateBadge.className}>{gateBadge.label}</span>}
+          {showGates && gateBadge.renderGateBadge && <span className={gateBadge.className}>{gateBadge.label}</span>}
           {node.state.warning && <em>{node.state.warning}</em>}
         </button>;
       })}
