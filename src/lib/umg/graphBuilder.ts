@@ -382,15 +382,32 @@ export function focusGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, fo
     }
   };
 
+  const parentContains = (nodeId: string) => graph.edges.find((edge) => edge.type === 'contains' && edge.target === nodeId)?.source;
+  const containmentChildren = (nodeId: string) => graph.edges.filter((edge) => edge.type === 'contains' && edge.source === nodeId).map((edge) => edge.target);
+
   const keep = new Set<string>();
   if (focus.mode === 'sleeve') {
     for (const node of graph.nodes) if (node.nodeType === 'sleeve' || node.nodeType === 'neostack') keep.add(node.id);
   } else if (focus.mode === 'molt_block') {
     if (focusNode) keep.add(focusNode.id);
+  } else if (focus.mode === 'neoblock' && focusNode) {
+    const neostackNode = focusNode.nodeType === 'neostack'
+      ? focusNode
+      : graph.nodes.find((node) => node.id === parentContains(focusNode.id) && node.nodeType === 'neostack');
+    if (neostackNode) {
+      keep.add(neostackNode.id);
+      collectContainmentAncestors(neostackNode.id, keep);
+      for (const childId of containmentChildren(neostackNode.id)) {
+        const childNode = graph.nodes.find((node) => node.id === childId);
+        if (childNode?.nodeType === 'neoblock') keep.add(childId);
+      }
+    } else {
+      keep.add(focusNode.id);
+    }
   } else if (focusNode) {
     keep.add(focusNode.id);
     for (const edge of graph.edges) if (edge.type === 'contains' && edge.source === focusNode.id) keep.add(edge.target);
-    if (focus.mode === 'neostack' || focus.mode === 'neoblock') {
+    if (focus.mode === 'neostack') {
       collectContainmentAncestors(focusNode.id, keep);
     }
   } else {
@@ -404,7 +421,7 @@ export function focusGraph(graph: { nodes: GraphNode[]; edges: GraphEdge[] }, fo
     return { ...node, position, visual: { focused, dimmed: false } };
   });
   const nodeIds = new Set(nodes.map((node) => node.id));
-  const edges = focus.mode === 'sleeve' ? graph.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)).map((edge) => ({ ...edge })) : [];
+  const edges = graph.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target)).map((edge) => ({ ...edge }));
   return { ...graph, nodes, edges, viewport: { ...(graph as any).viewport, zoom: focus.mode === 'sleeve' ? 0.75 : focus.mode === 'neostack' ? 0.9 : 1.05, x: focusNode?.position.x ?? 0, y: focusNode?.position.y ?? 0, focusNodeId: focusNode?.id } };
 }
 

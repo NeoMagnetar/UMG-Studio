@@ -134,6 +134,14 @@ export default function App() {
     if (selectedBlock) return findParentNeoBlockForBlock(activeSleeve, selectedBlock.id);
     return activeSleeve.stacks.flatMap((stack) => stack.neoblocks)[0];
   }, [activeSleeve, selected, selectedBlock]);
+  const currentNeoStack = useMemo(() => {
+    if (!activeSleeve) return undefined;
+    if (selected?.nodeType === 'neostack') return activeSleeve.stacks.find((stack) => stack.id === selected.sourceId);
+    if (selected?.nodeType === 'neoblock') return findParentStackForNeoBlock(activeSleeve, selected.sourceId);
+    if (selectedBlock) return findParentStackForBlock(activeSleeve, selectedBlock.id);
+    if (currentNeoBlock) return findParentStackForNeoBlock(activeSleeve, currentNeoBlock.id);
+    return activeSleeve.stacks[0];
+  }, [activeSleeve, currentNeoBlock, selected, selectedBlock]);
   const viewedGraph = useMemo(() => {
     if (!graph) return graph;
     if (graphViewMode === 'full_sleeve') return graph;
@@ -143,15 +151,15 @@ export default function App() {
     const fallbackNeoblock = graph.nodes.find((node) => node.nodeType === 'neoblock');
 
     if (graphViewMode === 'neostack') {
-      const focusNode = selected?.nodeType === 'neostack' ? selected : fallbackNeostack;
+      const focusNode = fallbackSleeve;
       if (!focusNode) return graph;
-      return focusGraph(graph, { mode: 'neostack', sourceId: focusNode.sourceId ?? focusNode.id });
+      return focusGraph(graph, { mode: 'sleeve', sourceId: focusNode.sourceId ?? focusNode.id });
     }
 
     if (graphViewMode === 'neoblock') {
-      const focusNode = selected?.nodeType === 'neoblock' ? selected : fallbackNeoblock ?? fallbackNeostack;
-      if (!focusNode) return graph;
-      return focusGraph(graph, { mode: 'neoblock', sourceId: focusNode.sourceId ?? focusNode.id });
+      const focusSourceId = currentNeoStack?.id ?? selected?.sourceId ?? fallbackNeostack?.sourceId ?? fallbackNeoblock?.sourceId;
+      if (!focusSourceId) return graph;
+      return focusGraph(graph, { mode: 'neoblock', sourceId: focusSourceId });
     }
 
     if (graphViewMode === 'molt_builder') {
@@ -159,16 +167,36 @@ export default function App() {
       if (!focusNode) return graph;
       return focusGraph(graph, { mode: 'neoblock', sourceId: focusNode.sourceId ?? focusNode.id });
     }
-  }, [graph, graphViewMode, selected]);
+  }, [currentNeoStack, graph, graphViewMode, selected]);
   const displayGraph = useMemo(() => {
     if (!viewedGraph) return viewedGraph;
-    if (showGates) return viewedGraph;
-    const gateNodeIds = new Set(viewedGraph.nodes.filter((node) => node.nodeType === 'gate').map((node) => node.id));
-    return {
-      nodes: viewedGraph.nodes.filter((node) => node.nodeType !== 'gate'),
-      edges: viewedGraph.edges.filter((edge) => !gateNodeIds.has(edge.source) && !gateNodeIds.has(edge.target))
-    };
-  }, [showGates, viewedGraph]);
+
+    let nextNodes = viewedGraph.nodes.filter((node) => node.nodeType !== 'output');
+    let nextEdges = viewedGraph.edges;
+
+    if (graphViewMode === 'neostack') {
+      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neostack').map((node) => node.id));
+      nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
+      nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+    }
+
+    if (graphViewMode === 'neoblock') {
+      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neoblock').map((node) => node.id));
+      nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
+      nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+    }
+
+    if (!showGates) {
+      const gateNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'gate').map((node) => node.id));
+      nextNodes = nextNodes.filter((node) => node.nodeType !== 'gate');
+      nextEdges = nextEdges.filter((edge) => !gateNodeIds.has(edge.source) && !gateNodeIds.has(edge.target));
+    }
+
+    const visibleNodeIds = new Set(nextNodes.map((node) => node.id));
+    nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+
+    return { ...viewedGraph, nodes: nextNodes, edges: nextEdges };
+  }, [graphViewMode, showGates, viewedGraph]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
   const inspectedGateSource = isTriggerGateSourceCard(inspected) ? inspected : undefined;
   const inspectorBlock = inspectedBlock ?? selectedBlock;
@@ -785,6 +813,14 @@ function findParentNeoBlockForBlock(sleeve: Sleeve, blockId: string) {
   return undefined;
 }
 
+function findParentStackForNeoBlock(sleeve: Sleeve, neoblockId: string) {
+  return sleeve.stacks.find((stack) => stack.neoblocks.some((neoblock) => neoblock.id === neoblockId));
+}
+
+function findParentStackForBlock(sleeve: Sleeve, blockId: string) {
+  return sleeve.stacks.find((stack) => stack.neoblocks.some((neoblock) => neoblock.blocks.some((block) => block.id === blockId)));
+}
+
 function builderSectionForBlock(block: UMGBlock) {
   const roleKey = block.displayType === 'meta' ? 'meta_other' : block.role;
   return moltBuilderSections.find((section) => section.key === roleKey) ?? moltBuilderSections[moltBuilderSections.length - 1];
@@ -868,17 +904,39 @@ function edgePathClass(edge: any) {
   return `${routeClass} ${edge.governanceOverride ? 'edge-governance-override' : ''}`.trim();
 }
 
-function gateStripStyle(edge: any) {
-  const x1 = edge.sourcePosition?.x ?? 40;
-  const y1 = edge.sourcePosition?.y ?? 40;
-  const x2 = edge.targetPosition?.x ?? 180;
-  const y2 = edge.targetPosition?.y ?? 120;
-  return { left: (x1 + x2) / 2, top: (y1 + y2) / 2 };
+function graphNodeDimensions(node: GraphNode) {
+  if (node.nodeType === 'sleeve') return { width: 280, height: 150 };
+  if (node.nodeType === 'neostack') return { width: 260, height: 132 };
+  if (node.nodeType === 'neoblock') return { width: 250, height: 108 };
+  return { width: 220, height: 92 };
+}
+
+function edgeEndpoints(edge: any, nodesById: Map<string, GraphNode>) {
+  const sourceNode = nodesById.get(edge.source);
+  const targetNode = nodesById.get(edge.target);
+  if (!sourceNode || !targetNode) return undefined;
+  const sourceSize = graphNodeDimensions(sourceNode);
+  const targetSize = graphNodeDimensions(targetNode);
+  const x1 = sourceNode.position.x + sourceSize.width;
+  const y1 = sourceNode.position.y + sourceSize.height / 2;
+  const x2 = targetNode.position.x;
+  const y2 = targetNode.position.y + targetSize.height / 2;
+  if (![x1, y1, x2, y2].every((value) => Number.isFinite(value))) return undefined;
+  if (x1 === x2 && y1 === y2) return undefined;
+  return { x1, y1, x2, y2 };
+}
+
+function gateStripStyle(edge: any, nodesById: Map<string, GraphNode>) {
+  const points = edgeEndpoints(edge, nodesById);
+  if (!points) return { display: 'none' };
+  return { left: (points.x1 + points.x2) / 2, top: (points.y1 + points.y2) / 2 };
 }
 
 function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMode, showGates = true }: { nodes: GraphNode[]; edges: any[]; selected?: string; onPick: (node: GraphNode) => void; onMove?: (nodeId: string, x: number, y: number) => void; onDrop?: (nodeId: string, x: number, y: number, targetNodeId?: string) => void; canSnap?: (sourceNode: GraphNode, targetNodeId: GraphNode) => boolean; viewMode?: string; showGates?: boolean }) {
   const dragging = useRef<{ id: string; sourceId: string; offsetX: number; offsetY: number; lastX: number; lastY: number } | null>(null);
   const [snapTargetId, setSnapTargetId] = useState<string | undefined>(undefined);
+  const sleeveRootNode = viewMode === 'full_sleeve' ? nodes.find((node) => node.nodeType === 'sleeve') : undefined;
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
   const pickTypeLabel = (node: GraphNode) => {
     if (node.nodeType === 'molt_block') {
@@ -947,6 +1005,7 @@ function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMo
 
   const onNodePointerDown = (event: React.PointerEvent<HTMLButtonElement>, node: GraphNode) => {
     if (!onMove) return;
+    if (node.nodeType === 'sleeve' && viewMode === 'full_sleeve') return;
     event.stopPropagation();
     event.preventDefault();
     dragging.current = {
@@ -982,11 +1041,15 @@ function Graph({ nodes, edges, selected, onPick, onMove, onDrop, canSnap, viewMo
 
   return (
     <div className={`canvas graph-view-${viewMode ?? 'full_sleeve'}`} onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp}>
+      {sleeveRootNode && <div className="sleeveRootFrame"><div className="sleeveRootBackdrop" /><div className="sleeveRootHeader"><span className="sleeveRootEyebrow">Sleeve Root</span><b>{`Sleeve: ${sleeveRootNode.label}`}</b><small>Architecture root for NeoStacks and NeoBlocks</small></div></div>}
       {edges.map((edge) => {
         const gateStrip = gateVisualMetadataForEdge(edge);
-        return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={edge.sourcePosition?.x ?? 40} y1={edge.sourcePosition?.y ?? 40} x2={edge.targetPosition?.x ?? 180} y2={edge.targetPosition?.y ?? 120} /></svg>{showGates && gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge)}>{gateStrip.label}</span>}</div>;
+        const points = edgeEndpoints(edge, nodesById);
+        if (!points) return null;
+        return <div key={edge.id} className="edgeLayer"><svg className={`edge ${edgePathClass(edge)}`} style={{ left: 0, top: 0 }}><line x1={points.x1} y1={points.y1} x2={points.x2} y2={points.y2} /></svg>{showGates && gateStrip.renderGateStrip && <span className={gateStrip.className} style={gateStripStyle(edge, nodesById)}>{gateStrip.label}</span>}</div>;
       })}
       {nodes.map((node) => {
+        if (sleeveRootNode && node.id === sleeveRootNode.id) return null;
         const gateBadge = gateVisualMetadataForNode(node);
         const isDropTarget = snapTargetId === (node.sourceId || node.id);
         const roleClass = node.nodeType === 'molt_block' && node.moltRole
