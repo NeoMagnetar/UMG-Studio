@@ -22,7 +22,7 @@ import { buildRuntimeGateFromSourceCard, attachRuntimeGateToGraph } from './lib/
 import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from './lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from './lib/umg/gateDebug';
 import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from './lib/umg/workbenchLayout';
-import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
+import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -38,6 +38,8 @@ type ShelfMode = AssetShelfId;
 type WorkspaceMode = 'compose' | 'canvas' | 'runtime';
 type GraphViewMode = 'full_sleeve' | 'neostack' | 'neoblock' | 'molt_builder';
 type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
+type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
+type PlacementTargetChoice = { id: string; label: string; detail?: string; neostackId?: string; neoblockId?: string };
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
 
 const moltBuilderSections = [
@@ -70,6 +72,8 @@ export default function App() {
   const [focusGraphMode, setFocusGraphMode] = useState(false);
   const [focusGraphBackup, setFocusGraphBackup] = useState<{ layout: WorkbenchLayoutState; workspaceMode: WorkspaceMode } | undefined>();
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
+  const [pendingTargetItem, setPendingTargetItem] = useState<ShelfAsset | undefined>();
+  const [chosenTargets, setChosenTargets] = useState<PlacementTargetIds>({});
   const [search, setSearch] = useState('');
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [roleFilter, setRoleFilter] = useState('all');
@@ -127,21 +131,72 @@ export default function App() {
     if (!workspace?.sleeves?.length) return undefined;
     return workspace.sleeves.find((sleeve) => sleeve.id === workspace.activeSleeveId) ?? workspace.sleeves[0];
   }, [workspace]);
+  useEffect(() => {
+    if (!activeSleeve) {
+      setChosenTargets({});
+      setPendingTargetItem(undefined);
+      return;
+    }
+    setChosenTargets((current) => {
+      const next: PlacementTargetIds = {
+        neostackId: current.neostackId && activeSleeve.stacks.some((stack) => stack.id === current.neostackId) ? current.neostackId : undefined,
+        neoblockId: current.neoblockId && activeSleeve.stacks.some((stack) => stack.neoblocks.some((neoblock) => neoblock.id === current.neoblockId)) ? current.neoblockId : undefined
+      };
+      return next.neostackId === current.neostackId && next.neoblockId === current.neoblockId ? current : next;
+    });
+  }, [activeSleeve]);
   const selectedBlock = useMemo(() => selected ? findWorkspaceBlock(workspace, selected.sourceId) : undefined, [workspace, selected]);
+  const selectedNeoBlock = useMemo(() => {
+    if (!activeSleeve || !selected) return undefined;
+    if (selected.nodeType === 'neoblock') return findNeoBlockInSleeve(activeSleeve, selected.sourceId);
+    if (selectedBlock) return findParentNeoBlockForBlock(activeSleeve, selectedBlock.id);
+    return undefined;
+  }, [activeSleeve, selected, selectedBlock]);
+  const selectedNeoStack = useMemo(() => {
+    if (!activeSleeve || !selected) return undefined;
+    if (selected.nodeType === 'neostack') return activeSleeve.stacks.find((stack) => stack.id === selected.sourceId);
+    if (selected.nodeType === 'neoblock') return findParentStackForNeoBlock(activeSleeve, selected.sourceId);
+    if (selectedBlock) return findParentStackForBlock(activeSleeve, selectedBlock.id);
+    return undefined;
+  }, [activeSleeve, selected, selectedBlock]);
+  const chosenNeoBlock = useMemo(() => activeSleeve && chosenTargets.neoblockId ? findNeoBlockInSleeve(activeSleeve, chosenTargets.neoblockId) : undefined, [activeSleeve, chosenTargets.neoblockId]);
   const currentNeoBlock = useMemo(() => {
     if (!activeSleeve) return undefined;
-    if (selected?.nodeType === 'neoblock') return findNeoBlockInSleeve(activeSleeve, selected.sourceId);
-    if (selectedBlock) return findParentNeoBlockForBlock(activeSleeve, selectedBlock.id);
+    if (selectedNeoBlock) return selectedNeoBlock;
+    if (chosenNeoBlock) return chosenNeoBlock;
     return activeSleeve.stacks.flatMap((stack) => stack.neoblocks)[0];
-  }, [activeSleeve, selected, selectedBlock]);
+  }, [activeSleeve, chosenNeoBlock, selectedNeoBlock]);
+  const chosenNeoStack = useMemo(() => activeSleeve && chosenTargets.neostackId ? activeSleeve.stacks.find((stack) => stack.id === chosenTargets.neostackId) : undefined, [activeSleeve, chosenTargets.neostackId]);
   const currentNeoStack = useMemo(() => {
     if (!activeSleeve) return undefined;
-    if (selected?.nodeType === 'neostack') return activeSleeve.stacks.find((stack) => stack.id === selected.sourceId);
-    if (selected?.nodeType === 'neoblock') return findParentStackForNeoBlock(activeSleeve, selected.sourceId);
-    if (selectedBlock) return findParentStackForBlock(activeSleeve, selectedBlock.id);
+    if (selectedNeoStack) return selectedNeoStack;
+    if (selectedNeoBlock) return findParentStackForNeoBlock(activeSleeve, selectedNeoBlock.id);
+    if (chosenNeoBlock) return findParentStackForNeoBlock(activeSleeve, chosenNeoBlock.id);
+    if (chosenNeoStack) return chosenNeoStack;
     if (currentNeoBlock) return findParentStackForNeoBlock(activeSleeve, currentNeoBlock.id);
     return activeSleeve.stacks[0];
-  }, [activeSleeve, currentNeoBlock, selected, selectedBlock]);
+  }, [activeSleeve, chosenNeoBlock, chosenNeoStack, currentNeoBlock, selectedNeoBlock, selectedNeoStack]);
+  const activeTargetNeoStack = selected ? selectedNeoStack : chosenNeoStack;
+  const activeTargetNeoBlock = selected ? selectedNeoBlock : chosenNeoBlock;
+  const neostackTargetChoices = useMemo<PlacementTargetChoice[]>(() => activeSleeve?.stacks.map((stack) => ({
+    id: stack.id,
+    label: stack.title,
+    detail: `${stack.neoblocks.length} NeoBlock${stack.neoblocks.length === 1 ? '' : 's'}`,
+    neostackId: stack.id
+  })) ?? [], [activeSleeve]);
+  const neoblockTargetChoices = useMemo<PlacementTargetChoice[]>(() => activeSleeve?.stacks.flatMap((stack) => stack.neoblocks.map((neoblock) => ({
+    id: neoblock.id,
+    label: neoblock.title,
+    detail: `NeoStack ${stack.title}`,
+    neostackId: stack.id,
+    neoblockId: neoblock.id
+  }))) ?? [], [activeSleeve]);
+  const pendingTargetChoices = useMemo<PlacementTargetChoice[]>(() => {
+    if (!pendingTargetItem) return [];
+    if (pendingTargetItem.kind === 'neoblock') return neostackTargetChoices;
+    if (pendingTargetItem.kind === 'molt_block') return neoblockTargetChoices;
+    return [];
+  }, [neoblockTargetChoices, neostackTargetChoices, pendingTargetItem]);
   const viewedGraph = useMemo(() => {
     if (!graph) return graph;
     if (graphViewMode === 'full_sleeve') return graph;
@@ -314,16 +369,29 @@ export default function App() {
     setStatus('focus graph disabled');
   };
 
-  const replaceActiveSleeve = (nextSleeve: Sleeve, nextSelectedSourceId?: string) => {
+  const rebuildGraphWithRuntimeGates = (nextSleeve: Sleeve, runtimeGates: RuntimeGate[] = workspace?.runtimeGates ?? []) => {
+    const baseGraph = buildGraphFromSleeve(nextSleeve);
+    const validNodeIds = new Set(baseGraph.nodes.map((node) => node.id));
+    const validEdgeIds = new Set(baseGraph.edges.map((edge) => edge.id));
+    const filteredRuntimeGates = runtimeGates.filter((gate) => gate.placement && (gate.placement.kind === 'node_boundary' ? validNodeIds.has(gate.placement.targetId) : validEdgeIds.has(gate.placement.targetId)));
+    return filteredRuntimeGates.reduce<{ graph: UMGWorkspace['graph']; runtimeGates: RuntimeGate[] }>((current, gate) => {
+      const placement = gate.placement?.kind === 'edge'
+        ? { kind: 'edge' as const, edgeId: gate.placement.targetId }
+        : { kind: 'node_boundary' as const, nodeId: gate.placement!.targetId };
+      return attachRuntimeGateToGraph(current.graph, gate, placement, current.runtimeGates);
+    }, { graph: baseGraph, runtimeGates: [] });
+  };
+
+  const replaceActiveSleeve = (nextSleeve: Sleeve, nextSelectedSourceId?: string, runtimeGates: RuntimeGate[] = workspace?.runtimeGates ?? []) => {
     if (!workspace) return;
     const activeSleeveId = activeSleeve?.id ?? workspace.activeSleeveId ?? workspace.sleeves[0]?.id;
     const nextSleeves = workspace.sleeves.map((sleeve) => sleeve.id === activeSleeveId ? nextSleeve : sleeve);
-    const nextGraph = buildGraphFromSleeve(nextSleeve);
+    const rebuilt = rebuildGraphWithRuntimeGates(nextSleeve, runtimeGates);
     const selectedSourceId = nextSelectedSourceId ?? selected?.sourceId;
-    setWorkspace({ ...workspace, activeSleeveId: nextSleeve.id, sleeves: nextSleeves, graph: nextGraph });
+    setWorkspace({ ...workspace, activeSleeveId: nextSleeve.id, sleeves: nextSleeves, graph: rebuilt.graph, runtimeGates: rebuilt.runtimeGates });
     setCompiled(undefined);
     if (selectedSourceId) {
-      setSelected(nextGraph.nodes.find((node) => node.sourceId === selectedSourceId || node.id === selectedSourceId));
+      setSelected(rebuilt.graph.nodes.find((node) => node.sourceId === selectedSourceId || node.id === selectedSourceId));
       return;
     }
     setSelected(undefined);
@@ -404,6 +472,8 @@ export default function App() {
     setWorkspace(nextWorkspace);
     setCompiled(undefined);
     setSelected(undefined);
+    setPendingTargetItem(undefined);
+    setChosenTargets({});
     setStatus(`composed ${nextWorkspace.graph.nodes.length} nodes with ${composition.warnings.length} warnings`);
   };
 
@@ -421,8 +491,50 @@ export default function App() {
     setInspectorTab('Card');
   };
 
-  const addAsset = (item: ShelfAsset) => {
-    if (item.kind === 'source_asset') { setInspected(item.asset); setInspectorTab('Legacy Source'); return; }
+  const setActivePlacementChoice = (choice: PlacementTargetChoice) => {
+    setChosenTargets((current) => ({
+      neostackId: choice.neostackId ?? current.neostackId,
+      neoblockId: choice.neoblockId ?? current.neoblockId
+    }));
+  };
+
+  const cloneWorkspaceBlock = (block: UMGBlock) => {
+    const nextBlock = structuredClone(block);
+    nextBlock.id = `${block.id}_copy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    nextBlock.source = { origin: 'workspace', sourceId: block.id, version: '0.1' };
+    return nextBlock;
+  };
+
+  const cloneWorkspaceNeoBlock = (neoblock: NeoBlock) => {
+    const nextNeoBlock = structuredClone(neoblock);
+    nextNeoBlock.id = `${neoblock.id}_copy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    nextNeoBlock.blocks = nextNeoBlock.blocks.map((block) => cloneWorkspaceBlock(block));
+    return nextNeoBlock;
+  };
+
+  const cloneWorkspaceNeoStack = (neostack: NeoStack) => {
+    const nextNeoStack = structuredClone(neostack);
+    nextNeoStack.id = `${neostack.id}_copy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    nextNeoStack.neoblocks = nextNeoStack.neoblocks.map((neoblock) => cloneWorkspaceNeoBlock(neoblock));
+    nextNeoStack.directBlocks = nextNeoStack.directBlocks?.map((block) => cloneWorkspaceBlock(block));
+    return nextNeoStack;
+  };
+
+  const addActionLabel = (item: ShelfAsset) => {
+    if (item.kind === 'trigger_gate_source') return 'Attach Gate';
+    if (item.kind === 'sleeve') return 'Open Sleeve';
+    if (item.kind === 'neostack') return workspace ? 'Add to Sleeve' : 'Add to Workspace';
+    if (item.kind === 'neoblock') return activeTargetNeoStack ? 'Add to NeoStack' : 'Choose Target...';
+    if (item.kind === 'molt_block') return activeTargetNeoBlock ? 'Add to NeoBlock' : 'Choose Target...';
+    return 'Add to Workspace';
+  };
+
+  const addAsset = (item: ShelfAsset, targetIds: PlacementTargetIds = {}) => {
+    if (item.kind === 'source_asset') {
+      setInspected(item.asset);
+      setInspectorTab('Legacy Source');
+      return;
+    }
     if (item.kind === 'trigger_gate_source') {
       const card = item.asset as TriggerGateSourceCard;
       setInspected(card);
@@ -434,7 +546,7 @@ export default function App() {
       setWorkspace({ ...workspace, graph: attached.graph, runtimeGates: attached.runtimeGates });
       setCompiled(undefined);
       setSelected(attached.graph.nodes.find((node) => node.id === selected.id));
-      setStatus(`gate attached as candidate control geometry: ${card.id}; not evaluated, not prompt content, no live execution`);
+      setStatus(`gate attached as candidate control geometry on ${selected.label}: ${card.id}; not evaluated, not prompt content, no live execution`);
       return;
     }
     if (item.kind === 'sleeve') {
@@ -442,38 +554,131 @@ export default function App() {
       const nextWorkspace: UMGWorkspace = { id: `ws_${sleeve.id}`, title: sleeve.title, activeSleeveId: sleeve.id, sleeves: [sleeve], libraryRefs: [], graph: buildGraphFromSleeve(sleeve) };
       setWorkspace(nextWorkspace);
       setCompiled(undefined);
+      setPendingTargetItem(undefined);
+      setChosenTargets({});
+      setSelected(undefined);
       setStatus(`opened Sleeve ${item.title}`);
       return;
     }
-    if (!workspace) return setStatus('compose a workspace first');
-    const sleeve = structuredClone(workspace.sleeves[0]);
+    if (!workspace || !activeSleeve) return setStatus('compose a workspace first');
+    const sleeve = structuredClone(activeSleeve);
+
     if (item.kind === 'molt_block') {
-      const block = structuredClone(item.asset as UMGBlock);
-      block.id = `${block.id}_copy_${Date.now()}`;
-      block.source = { origin: 'workspace', sourceId: (item.asset as UMGBlock).id, version: '0.1' };
-      sleeve.stacks[0].neoblocks[0].blocks.push(block);
-      setStatus(`added MOLT block ${item.title}`);
+      const targetNeoBlockId = targetIds.neoblockId ?? activeTargetNeoBlock?.id;
+      const targetNeoBlock = targetNeoBlockId ? findNeoBlockInSleeve(sleeve, targetNeoBlockId) : undefined;
+      if (!targetNeoBlock) {
+        setPendingTargetItem(item);
+        return setStatus('Select a NeoBlock first or choose a target.');
+      }
+      const block = cloneWorkspaceBlock(item.asset as UMGBlock);
+      sleeve.stacks = sleeve.stacks.map((stack) => ({
+        ...stack,
+        neoblocks: stack.neoblocks.map((neoblock) => neoblock.id === targetNeoBlock.id ? { ...neoblock, blocks: [...neoblock.blocks, block] } : neoblock)
+      }));
+      setActivePlacementChoice({ id: targetNeoBlock.id, label: targetNeoBlock.title, neoblockId: targetNeoBlock.id, neostackId: findParentStackForNeoBlock(sleeve, targetNeoBlock.id)?.id });
+      setPendingTargetItem(undefined);
+      replaceActiveSleeve(sleeve, block.id);
+      setStatus(`added MOLT block ${item.title} to NeoBlock ${targetNeoBlock.title}`);
+      return;
     }
+
     if (item.kind === 'neoblock') {
-      sleeve.stacks[0].neoblocks.push(structuredClone(item.asset as NeoBlock));
-      setStatus(`added NeoBlock ${item.title}`);
+      const targetNeoStackId = targetIds.neostackId ?? activeTargetNeoStack?.id;
+      const targetNeoStack = targetNeoStackId ? sleeve.stacks.find((stack) => stack.id === targetNeoStackId) : undefined;
+      if (!targetNeoStack) {
+        setPendingTargetItem(item);
+        return setStatus('Select a NeoStack first or choose a target.');
+      }
+      const nextNeoBlock = cloneWorkspaceNeoBlock(item.asset as NeoBlock);
+      sleeve.stacks = sleeve.stacks.map((stack) => stack.id === targetNeoStack.id ? { ...stack, neoblocks: [...stack.neoblocks, nextNeoBlock] } : stack);
+      setActivePlacementChoice({ id: nextNeoBlock.id, label: nextNeoBlock.title, neoblockId: nextNeoBlock.id, neostackId: targetNeoStack.id });
+      setPendingTargetItem(undefined);
+      replaceActiveSleeve(sleeve, nextNeoBlock.id);
+      setStatus(`added NeoBlock ${item.title} to NeoStack ${targetNeoStack.title}`);
+      return;
     }
+
     if (item.kind === 'neostack') {
-      sleeve.stacks.push(structuredClone(item.asset as NeoStack));
-      setStatus(`added NeoStack ${item.title}`);
+      const nextNeoStack = cloneWorkspaceNeoStack(item.asset as NeoStack);
+      sleeve.stacks.push(nextNeoStack);
+      setChosenTargets((current) => ({ ...current, neostackId: nextNeoStack.id }));
+      setPendingTargetItem(undefined);
+      replaceActiveSleeve(sleeve, nextNeoStack.id);
+      setStatus(`added NeoStack ${item.title} to Sleeve ${sleeve.title}`);
     }
-    setWorkspace({ ...workspace, sleeves: [sleeve], graph: buildGraphFromSleeve(sleeve) });
-    setCompiled(undefined);
+  };
+
+  const requestAddAsset = (item: ShelfAsset) => {
+    if (item.kind === 'molt_block' && !activeTargetNeoBlock) {
+      setPendingTargetItem(item);
+      setStatus('Select a NeoBlock first or choose a target.');
+      return;
+    }
+    if (item.kind === 'neoblock' && !activeTargetNeoStack) {
+      setPendingTargetItem(item);
+      setStatus('Select a NeoStack first or choose a target.');
+      return;
+    }
+    addAsset(item);
+  };
+
+  const detachGateGeometry = (gateId: string) => {
+    if (!activeSleeve || !workspace) return;
+    const remainingRuntimeGates = (workspace.runtimeGates ?? []).filter((gate) => gate.id !== gateId);
+    replaceActiveSleeve(structuredClone(activeSleeve), selected?.sourceId, remainingRuntimeGates);
+    setStatus(`detached gate geometry ${gateId}`);
+  };
+
+  const removeSelectedFromWorkspace = () => {
+    if (!selected || !activeSleeve) return;
+    if (selected.nodeType === 'sleeve') {
+      setStatus('cannot remove the Sleeve root from this workspace');
+      return;
+    }
+    if (selected.nodeType === 'molt_block') {
+      const parentNeoBlock = findParentNeoBlockForBlock(activeSleeve, selected.sourceId);
+      if (!parentNeoBlock) return setStatus('selected MOLT is not inside a NeoBlock');
+      const nextSleeve = structuredClone(activeSleeve);
+      nextSleeve.stacks = nextSleeve.stacks.map((stack) => ({
+        ...stack,
+        neoblocks: stack.neoblocks.map((neoblock) => neoblock.id === parentNeoBlock.id ? { ...neoblock, blocks: neoblock.blocks.filter((block) => block.id !== selected.sourceId) } : neoblock)
+      }));
+      setChosenTargets((current) => ({ ...current, neoblockId: parentNeoBlock.id, neostackId: findParentStackForNeoBlock(nextSleeve, parentNeoBlock.id)?.id ?? current.neostackId }));
+      replaceActiveSleeve(nextSleeve, parentNeoBlock.id);
+      setStatus(`removed ${selected.label} from NeoBlock ${parentNeoBlock.title}`);
+      return;
+    }
+    if (selected.nodeType === 'neoblock') {
+      const parentNeoStack = findParentStackForNeoBlock(activeSleeve, selected.sourceId);
+      if (!parentNeoStack) return setStatus('selected NeoBlock is not inside a NeoStack');
+      const nextSleeve = structuredClone(activeSleeve);
+      nextSleeve.stacks = nextSleeve.stacks.map((stack) => stack.id === parentNeoStack.id ? { ...stack, neoblocks: stack.neoblocks.filter((neoblock) => neoblock.id !== selected.sourceId) } : stack);
+      setChosenTargets((current) => ({ ...current, neoblockId: current.neoblockId === selected.sourceId ? undefined : current.neoblockId }));
+      replaceActiveSleeve(nextSleeve, parentNeoStack.id);
+      setStatus(`removed ${selected.label} from NeoStack ${parentNeoStack.title}`);
+      return;
+    }
+    if (selected.nodeType === 'neostack') {
+      const nextSleeve = structuredClone(activeSleeve);
+      nextSleeve.stacks = nextSleeve.stacks.filter((stack) => stack.id !== selected.sourceId);
+      setChosenTargets((current) => ({
+        neostackId: current.neostackId === selected.sourceId ? undefined : current.neostackId,
+        neoblockId: current.neoblockId && activeSleeve.stacks.some((stack) => stack.id === selected.sourceId && stack.neoblocks.some((neoblock) => neoblock.id === current.neoblockId)) ? undefined : current.neoblockId
+      }));
+      replaceActiveSleeve(nextSleeve, nextSleeve.id);
+      setStatus(`removed ${selected.label} from Sleeve ${activeSleeve.title}`);
+      return;
+    }
+    setStatus(`remove is not available for ${labelDisplayType(selected.nodeType)}`);
   };
 
   const toggleSelected = () => {
-    if (!workspace || !selected) return;
-    const sleeve = structuredClone(workspace.sleeves[0]);
+    if (!workspace || !selected || !activeSleeve) return;
+    const sleeve = structuredClone(activeSleeve);
     sleeve.stacks.forEach((stack) => stack.neoblocks.forEach((nb) => nb.blocks.forEach((block) => {
       if (block.id === selected.sourceId) block.defaultState = block.defaultState === 'off' ? 'on' : 'off';
     })));
-    setWorkspace({ ...workspace, sleeves: [sleeve], graph: buildGraphFromSleeve(sleeve) });
-    setCompiled(undefined);
+    replaceActiveSleeve(sleeve, selected.sourceId);
     setStatus(`toggled ${selected.label}`);
   };
 
@@ -677,7 +882,7 @@ export default function App() {
         {activeShelf === 'control_sources' && <ControlSourcesBanner total={currentShelf.items.length} />}
         {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Role filter</b><div className="filterBar roleSubsections"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => setRoleFilter('all')}>All MOLT + Meta ({countForRoleFilter('all')})</button>{roles.map((role) => <button key={role} className={roleFilter === role ? 'hot roleHot' : ''} onClick={() => setRoleFilter(role)}>{labelDisplayType(role)} ({countForRoleFilter(role)})</button>)}<button className={roleFilter === 'meta' ? 'hot metaHot roleHot' : ''} onClick={() => setRoleFilter('meta')}>Meta ({countForRoleFilter('meta')})</button></div></div>}
         {activeShelf === 'molt_blocks' && roleFilter !== 'trigger' && <div className="filterGroup"><b>Status filter</b><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? roleFilter === 'all' ? libraryWithStatus.length : countForRoleFilter(roleFilter) : statusCounts[s] ?? 0)}</button>)}</div></div>}
-        {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <AssetCards items={visibleItems} onAdd={addAsset} onInspect={inspectAsset} />}
+        {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <><ActiveTargetBanner sleeve={activeSleeve} neostack={activeTargetNeoStack} neoblock={activeTargetNeoBlock} pendingItem={pendingTargetItem} onClearPending={() => setPendingTargetItem(undefined)} onTryRemoveSleeveRoot={() => setStatus('cannot remove the Sleeve root from this workspace')} />{pendingTargetItem && <TargetPickerPanel item={pendingTargetItem} choices={pendingTargetChoices} onChoose={(choice) => { setActivePlacementChoice(choice); addAsset(pendingTargetItem, { neostackId: choice.neostackId, neoblockId: choice.neoblockId }); }} onCancel={() => { setPendingTargetItem(undefined); setStatus('target selection cancelled'); }} />}<AssetCards items={visibleItems} onAdd={requestAddAsset} onInspect={inspectAsset} getAddLabel={addActionLabel} /></>}
         {activeShelf === 'molt_blocks' && <details className="secondaryAudit"><summary>Source Assets / Audit — secondary import accountability</summary><LibraryAudit report={migrationReport as any} />{sections.map((section) => <div key={section.type}>{section.label} ({section.blocks.length})</div>)}</details>}
       </section>
       <div className="split vertical leftSplit" onPointerDown={(event) => startResize('left', event)} role="separator" aria-label="Resize library panel" />
@@ -728,7 +933,7 @@ export default function App() {
           <h2>Inspector / Config</h2>
           <button onClick={() => setLayout((current) => ({ ...current, rightCollapsed: !current.rightCollapsed }))}>{layout.rightCollapsed ? 'Expand' : 'Collapse'}</button>
         </div>
-        {selected && <div className="report"><span>node {selected.label}</span><span>type {selected.nodeType === 'molt_block' ? (selected.moltRole || 'MOLT') : labelDisplayType(selected.nodeType)}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><button onClick={toggleSelected}>Toggle on/off</button></div>}
+        {selected && <div className="report selectionReport"><span>node {selected.label}</span><span>type {selected.nodeType === 'molt_block' ? (selected.moltRole || 'MOLT') : labelDisplayType(selected.nodeType)}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><div className="row"><button onClick={toggleSelected} disabled={selected.nodeType !== 'molt_block'}>Toggle on/off</button><SelectionActions selected={selected} onRemove={removeSelectedFromWorkspace} onDetachGate={detachGateGeometry} /></div></div>}
         <RuntimeGateDebugPanel view={runtimeGateDebugView} />
         <BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} />
         <h3>Hermes</h3>
@@ -785,14 +990,27 @@ function SourceAuditTable({ items, onInspect }: { items: ShelfAsset[]; onInspect
   return <div className="auditTable"><div className="auditHeader"><span>title</span><span>detected type</span><span>role</span><span>outcome</span><span>source / reason</span></div>{items.map((item, index) => { const audit = item.asset as SourceAuditItem; return <div key={`${item.id}:${index}`} className={`auditRow outcome-${audit.outcome}`}><span><b>{audit.title}</b><small>{audit.tags.join(', ') || 'no tags'}</small></span><span>{audit.detectedType}</span><span>{audit.normalizedRole ?? 'n/a'}</span><span className="badge">{audit.outcome}</span><span><code>{audit.sourcePath}</code><small>{audit.reason ?? 'accounted'}</small><button onClick={() => onInspect(item)}>Inspect JSON / Legacy Source</button></span></div>; })}</div>;
 }
 
-function AssetCards({ items, onAdd, onInspect }: { items: ShelfAsset[]; onAdd: (item: ShelfAsset) => void; onInspect: (item: ShelfAsset) => void }) {
+function ActiveTargetBanner({ sleeve, neostack, neoblock, pendingItem, onClearPending, onTryRemoveSleeveRoot }: { sleeve?: Sleeve; neostack?: NeoStack; neoblock?: NeoBlock; pendingItem?: ShelfAsset; onClearPending: () => void; onTryRemoveSleeveRoot: () => void }) {
+  return <div className="report targetContextBanner"><b>Active targets</b><span>Sleeve: {sleeve?.title ?? 'none'}</span><span>NeoStack: {neostack?.title ?? 'none selected'}</span><span>NeoBlock: {neoblock?.title ?? 'none selected'}</span>{sleeve && <span><button onClick={onTryRemoveSleeveRoot}>Try Remove Sleeve Root</button></span>}{pendingItem && <span>Pending: {pendingItem.title} <button onClick={onClearPending}>Clear target request</button></span>}</div>;
+}
+
+function TargetPickerPanel({ item, choices, onChoose, onCancel }: { item: ShelfAsset; choices: PlacementTargetChoice[]; onChoose: (choice: PlacementTargetChoice) => void; onCancel: () => void }) {
+  return <div className="report targetPicker"><b>Choose target for {item.title}</b>{choices.length === 0 ? <span>No valid targets available yet.</span> : choices.map((choice) => <div key={choice.id} className="targetChoice"><span>{choice.label}</span><small>{choice.detail ?? ''}</small><button onClick={() => onChoose(choice)}>Use target</button></div>)}<div className="row"><button onClick={onCancel}>Cancel</button></div></div>;
+}
+
+function SelectionActions({ selected, onRemove, onDetachGate }: { selected: GraphNode; onRemove: () => void; onDetachGate: (gateId: string) => void }) {
+  const hasGateGeometry = (selected.governingGateIds ?? []).length > 0;
+  return <>{selected.nodeType === 'molt_block' && <button onClick={onRemove}>Remove from NeoBlock</button>}{selected.nodeType === 'neoblock' && <button onClick={onRemove}>Remove from NeoStack</button>}{selected.nodeType === 'neostack' && <button onClick={onRemove}>Remove from Sleeve</button>}{selected.nodeType === 'sleeve' && <button onClick={onRemove}>Removal blocked</button>}{hasGateGeometry && (selected.governingGateIds ?? []).map((gateId) => <button key={gateId} onClick={() => onDetachGate(gateId)}>Detach Gate Geometry</button>)}</>;
+}
+
+function AssetCards({ items, onAdd, onInspect, getAddLabel }: { items: ShelfAsset[]; onAdd: (item: ShelfAsset) => void; onInspect: (item: ShelfAsset) => void; getAddLabel: (item: ShelfAsset) => string }) {
   return <div className="cards builderCards">{items.map((item, index) => {
     const block = item.asset as UMGBlock;
     const gateCard = item.asset as TriggerGateSourceCard;
     const isGateSource = item.kind === 'trigger_gate_source';
     const instId = item.kind === 'molt_block' ? block.legacy?.libraryEntryId : isGateSource ? gateCard.id : undefined;
     const category = item.kind === 'molt_block' ? block.category : isGateSource ? `${gateCard.category} / ${gateCard.subcategory}` : undefined;
-    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}{isGateSource && <p>activation: {gateCard.activation.conditionSummary}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)}>{isGateSource ? 'Attach Gate' : item.kind === 'sleeve' ? 'Open Sleeve' : 'Add to Workspace'}</button><button onClick={() => onInspect(item)}>{isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source'}</button></div></div>;
+    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}{isGateSource && <p>activation: {gateCard.activation.conditionSummary}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)}>{getAddLabel(item)}</button><button onClick={() => onInspect(item)}>{isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source'}</button></div></div>;
   })}</div>;
 }
 
