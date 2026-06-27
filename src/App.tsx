@@ -55,6 +55,8 @@ const moltBuilderSections = [
 export default function App() {
   const initialHermesGenerate = resolveHermesGenerateConfig(import.meta.env as Record<string, string | undefined>);
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
+  const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
+  const [sessionNeoStacks, setSessionNeoStacks] = useState<NeoStack[]>([]);
   const [request, setRequest] = useState(demo);
   const [depth, setDepth] = useState<'lean' | 'balanced' | 'full'>('balanced');
   const [target, setTarget] = useState('chatbot');
@@ -96,7 +98,9 @@ export default function App() {
   const triggerGateSourceCards = useMemo(() => normalizeTriggerGateSourceCards(Object.entries(triggerGateSourceModules).map(([sourcePath, markdown]) => ({ sourcePath, markdown }))), []);
   const sections = useMemo(() => sectionLibraryByDisplayType(libraryWithStatus), [libraryWithStatus]);
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
-  const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: savedNeoBlocks as NeoBlock[], neostacks: savedNeoStacks as NeoStack[], sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, triggerGateSourceCards]);
+  const localLibraryNeoBlocks = useMemo(() => [...(savedNeoBlocks as NeoBlock[]), ...sessionNeoBlocks], [sessionNeoBlocks]);
+  const localLibraryNeoStacks = useMemo(() => [...(savedNeoStacks as NeoStack[]), ...sessionNeoStacks], [sessionNeoStacks]);
+  const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: localLibraryNeoBlocks, neostacks: localLibraryNeoStacks, sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, localLibraryNeoBlocks, localLibraryNeoStacks, triggerGateSourceCards]);
   const controlSourceShelf = useMemo(() => shelves.find((shelf) => shelf.id === 'control_sources'), [shelves]);
   const currentShelf = shelves.find((shelf) => shelf.id === activeShelf) ?? shelves[0];
   const isTriggerCategoryActive = activeShelf === 'molt_blocks' && roleFilter === 'trigger';
@@ -199,38 +203,48 @@ export default function App() {
   }, [neoblockTargetChoices, neostackTargetChoices, pendingTargetItem]);
   const viewedGraph = useMemo(() => {
     if (!graph) return graph;
-    if (graphViewMode === 'full_sleeve') return graph;
-
     const fallbackSleeve = graph.nodes.find((node) => node.nodeType === 'sleeve');
     const fallbackNeostack = graph.nodes.find((node) => node.nodeType === 'neostack');
     const fallbackNeoblock = graph.nodes.find((node) => node.nodeType === 'neoblock');
 
+    if (graphViewMode === 'full_sleeve') {
+      const focusSourceId = activeSleeve?.id ?? fallbackSleeve?.sourceId ?? fallbackSleeve?.id;
+      if (!focusSourceId) return graph;
+      return focusGraph(graph, { mode: 'sleeve', sourceId: focusSourceId });
+    }
+
     if (graphViewMode === 'neostack') {
-      const focusNode = fallbackSleeve;
-      if (!focusNode) return graph;
-      return focusGraph(graph, { mode: 'sleeve', sourceId: focusNode.sourceId ?? focusNode.id });
+      const focusSourceId = currentNeoStack?.id ?? fallbackNeostack?.sourceId ?? fallbackNeostack?.id;
+      if (!focusSourceId) return graph;
+      return focusGraph(graph, { mode: 'neostack', sourceId: focusSourceId });
     }
 
     if (graphViewMode === 'neoblock') {
-      const focusSourceId = currentNeoStack?.id ?? selected?.sourceId ?? fallbackNeostack?.sourceId ?? fallbackNeoblock?.sourceId;
+      const focusSourceId = currentNeoBlock?.id ?? selectedNeoBlock?.id ?? selected?.sourceId ?? fallbackNeoblock?.sourceId ?? fallbackNeoblock?.id;
       if (!focusSourceId) return graph;
       return focusGraph(graph, { mode: 'neoblock', sourceId: focusSourceId });
     }
 
     if (graphViewMode === 'molt_builder') {
-      const focusNode = selected?.nodeType === 'neoblock' ? selected : fallbackNeoblock ?? fallbackNeostack;
-      if (!focusNode) return graph;
-      return focusGraph(graph, { mode: 'neoblock', sourceId: focusNode.sourceId ?? focusNode.id });
+      const focusSourceId = currentNeoBlock?.id ?? selectedNeoBlock?.id ?? fallbackNeoblock?.sourceId ?? fallbackNeoblock?.id;
+      if (!focusSourceId) return graph;
+      return focusGraph(graph, { mode: 'neoblock', sourceId: focusSourceId });
     }
-  }, [currentNeoStack, graph, graphViewMode, selected]);
+  }, [activeSleeve, currentNeoBlock, currentNeoStack, graph, graphViewMode, selected, selectedNeoBlock]);
   const displayGraph = useMemo(() => {
     if (!viewedGraph) return viewedGraph;
 
     let nextNodes = viewedGraph.nodes.filter((node) => node.nodeType !== 'output');
     let nextEdges = viewedGraph.edges;
 
+    if (graphViewMode === 'full_sleeve') {
+      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'sleeve' || node.nodeType === 'neostack').map((node) => node.id));
+      nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
+      nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+    }
+
     if (graphViewMode === 'neostack') {
-      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neostack').map((node) => node.id));
+      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neoblock').map((node) => node.id));
       nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
       nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
     }
@@ -518,6 +532,77 @@ export default function App() {
     nextNeoStack.neoblocks = nextNeoStack.neoblocks.map((neoblock) => cloneWorkspaceNeoBlock(neoblock));
     nextNeoStack.directBlocks = nextNeoStack.directBlocks?.map((block) => cloneWorkspaceBlock(block));
     return nextNeoStack;
+  };
+
+  const createLocalId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const nextUniqueHierarchyTitle = (prefix: 'NeoStack' | 'NeoBlock', existingTitles: string[]) => {
+    const usedTitles = new Set(existingTitles.map((title) => title.trim().toLowerCase()));
+    let index = 1;
+    while (usedTitles.has(`${prefix} ${index}`.toLowerCase())) index += 1;
+    return `${prefix} ${index}`;
+  };
+
+  const createNewNeoStack = () => {
+    if (!activeSleeve) return setStatus('compose a workspace first');
+    const nextSleeve = structuredClone(activeSleeve);
+    const title = nextUniqueHierarchyTitle('NeoStack', nextSleeve.stacks.map((stack) => stack.title));
+    const nextNeoStack: NeoStack = {
+      id: createLocalId('neostack'),
+      title,
+      type: 'neostack',
+      description: 'Local workspace NeoStack',
+      tags: ['local', 'session'],
+      neoblocks: [],
+      directBlocks: [],
+      defaultState: 'on',
+      compileStrategy: 'role_then_priority'
+    };
+    nextSleeve.stacks.push(nextNeoStack);
+    setChosenTargets({ neostackId: nextNeoStack.id, neoblockId: undefined });
+    replaceActiveSleeve(nextSleeve, nextNeoStack.id);
+    setStatus(`created ${title} in Sleeve ${nextSleeve.title}`);
+  };
+
+  const createNewNeoBlock = () => {
+    if (!activeSleeve || !currentNeoStack) return setStatus('select or compose a NeoStack first');
+    const nextSleeve = structuredClone(activeSleeve);
+    const targetNeoStack = nextSleeve.stacks.find((stack) => stack.id === currentNeoStack.id);
+    if (!targetNeoStack) return setStatus('active NeoStack is unavailable');
+    const title = nextUniqueHierarchyTitle('NeoBlock', targetNeoStack.neoblocks.map((neoblock) => neoblock.title));
+    const nextNeoBlock: NeoBlock = {
+      id: createLocalId('neoblock'),
+      title,
+      type: 'neoblock',
+      description: 'Local workspace NeoBlock',
+      tags: ['local', 'session'],
+      blocks: [],
+      defaultState: 'on'
+    };
+    targetNeoStack.neoblocks.push(nextNeoBlock);
+    setChosenTargets({ neostackId: targetNeoStack.id, neoblockId: nextNeoBlock.id });
+    replaceActiveSleeve(nextSleeve, nextNeoBlock.id);
+    setStatus(`created ${title} in NeoStack ${targetNeoStack.title}`);
+  };
+
+  const saveCurrentNeoBlockToLocalLibrary = () => {
+    if (!currentNeoBlock) return setStatus('select a NeoBlock first');
+    const savedNeoBlock = structuredClone(currentNeoBlock) as NeoBlock & { sourceLayer?: string };
+    savedNeoBlock.id = createLocalId('local_neoblock');
+    savedNeoBlock.sourceLayer = 'local';
+    setSessionNeoBlocks((current) => [...current, savedNeoBlock]);
+    setActiveShelf('neoblocks');
+    setStatus(`saved NeoBlock ${currentNeoBlock.title} to local library`);
+  };
+
+  const saveCurrentNeoStackToLocalLibrary = () => {
+    if (!currentNeoStack) return setStatus('select a NeoStack first');
+    const savedNeoStack = structuredClone(currentNeoStack) as NeoStack & { sourceLayer?: string };
+    savedNeoStack.id = createLocalId('local_neostack');
+    savedNeoStack.sourceLayer = 'local';
+    setSessionNeoStacks((current) => [...current, savedNeoStack]);
+    setActiveShelf('neostacks');
+    setStatus(`saved NeoStack ${currentNeoStack.title} to local library`);
   };
 
   const addActionLabel = (item: ShelfAsset) => {
@@ -923,9 +1008,22 @@ export default function App() {
             onMoveUp={(blockId) => moveBlockWithinRole(blockId, 'up')}
             onMoveDown={(blockId) => moveBlockWithinRole(blockId, 'down')}
           />
-          : displayGraph
-            ? <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={selected?.id} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
-            : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
+          : graphViewMode === 'neoblock'
+            ? <NeoBlockViewSummary
+              neoblock={currentNeoBlock}
+              parentStack={currentNeoBlock && activeSleeve ? findParentStackForNeoBlock(activeSleeve, currentNeoBlock.id) : undefined}
+              usingFallback={!selectedNeoBlock && Boolean(currentNeoBlock)}
+              onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
+              onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
+            />
+            : displayGraph
+              ? <>
+                {graphViewMode === 'full_sleeve'
+                  ? <FullSleeveViewSummary sleeve={activeSleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} />
+                  : <NeoStackViewSummary neostack={currentNeoStack} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} />}
+                <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={selected?.id} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
+              </>
+              : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
       </section>
       <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
       <aside className="inspect card">
@@ -996,6 +1094,24 @@ function ActiveTargetBanner({ sleeve, neostack, neoblock, pendingItem, onClearPe
 
 function TargetPickerPanel({ item, choices, onChoose, onCancel }: { item: ShelfAsset; choices: PlacementTargetChoice[]; onChoose: (choice: PlacementTargetChoice) => void; onCancel: () => void }) {
   return <div className="report targetPicker"><b>Choose target for {item.title}</b>{choices.length === 0 ? <span>No valid targets available yet.</span> : choices.map((choice) => <div key={choice.id} className="targetChoice"><span>{choice.label}</span><small>{choice.detail ?? ''}</small><button onClick={() => onChoose(choice)}>Use target</button></div>)}<div className="row"><button onClick={onCancel}>Cancel</button></div></div>;
+}
+
+function FullSleeveViewSummary({ sleeve, activeNeoStack, onNewNeoStack }: { sleeve?: Sleeve; activeNeoStack?: NeoStack; onNewNeoStack: () => void }) {
+  return <div className="report hierarchySummary"><b>Full Sleeve view</b><span>Purpose: What NeoStacks are in this Sleeve?</span><span>Active Sleeve: {sleeve?.title ?? 'none'}</span><span>NeoStacks shown: {sleeve?.stacks.length ?? 0}</span><span>Active NeoStack target: {activeNeoStack?.title ?? 'none selected'}</span><div className="row"><button onClick={onNewNeoStack}>+ New NeoStack</button></div></div>;
+}
+
+function NeoStackViewSummary({ neostack, usingFallback, onNewNeoBlock, onSaveToLibrary }: { neostack?: NeoStack; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void }) {
+  if (!neostack) return <div className="empty">No NeoStack available yet. Compose Blocks or create a NeoStack first.</div>;
+  return <div className="report hierarchySummary"><b>NeoStack view</b><span>Purpose: What NeoBlocks are in this NeoStack?</span><span>Active NeoStack: {neostack.title}{usingFallback ? ' (default first NeoStack)' : ''}</span><span>NeoBlocks shown: {neostack.neoblocks.length}</span><span>MOLT blocks stay in MOLT Builder only.</span><div className="row"><button onClick={onNewNeoBlock}>+ New NeoBlock</button><button onClick={onSaveToLibrary}>Save NeoStack to Library</button></div></div>;
+}
+
+function NeoBlockViewSummary({ neoblock, parentStack, usingFallback, onOpenMoltBuilder, onSaveToLibrary }: { neoblock?: NeoBlock; parentStack?: NeoStack; usingFallback: boolean; onOpenMoltBuilder: () => void; onSaveToLibrary: () => void }) {
+  if (!neoblock) return <div className="empty">No NeoBlock available yet. Select a NeoBlock or create one from NeoStack view.</div>;
+  const roleCounts = moltBuilderSections.map((section) => ({
+    label: section.label,
+    count: neoblock.blocks.filter((block) => builderSectionForBlock(block).key === section.key).length
+  }));
+  return <div className="canvas graph-view-neoblock neoblockSummaryCanvas"><div className="report hierarchySummary"><b>NeoBlock view</b><span>Purpose: Which NeoBlock am I editing?</span><span>Active NeoBlock: {neoblock.title}{usingFallback ? ' (default current NeoBlock)' : ''}</span><span>Parent NeoStack: {parentStack?.title ?? 'none'}</span><span>Total MOLT blocks: {neoblock.blocks.length}</span><div className="row"><button onClick={onOpenMoltBuilder}>Open MOLT Builder</button><button onClick={onSaveToLibrary}>Save NeoBlock to Library</button></div></div><div className="cards builderCards">{roleCounts.map((entry) => <div key={entry.label} className="block builderBlock metaCard"><div className="cardtop"><b>{entry.label}</b><span className="badge">Role summary</span></div><p>{entry.count} block{entry.count === 1 ? '' : 's'}</p><small>Contained MOLT blocks are edited and reordered only in MOLT Builder.</small></div>)}</div></div>;
 }
 
 function SelectionActions({ selected, onRemove, onDetachGate }: { selected: GraphNode; onRemove: () => void; onDetachGate: (gateId: string) => void }) {
