@@ -22,7 +22,8 @@ import { buildRuntimeGateFromSourceCard, attachRuntimeGateToGraph } from './lib/
 import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from './lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from './lib/umg/gateDebug';
 import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from './lib/umg/workbenchLayout';
-import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGWorkspace } from './lib/umg/types';
+import { normalizeSleeve } from './lib/umg/scopeModel';
+import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGControllerBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -135,6 +136,7 @@ export default function App() {
     if (!workspace?.sleeves?.length) return undefined;
     return workspace.sleeves.find((sleeve) => sleeve.id === workspace.activeSleeveId) ?? workspace.sleeves[0];
   }, [workspace]);
+  const displaySleeve = useMemo(() => activeSleeve ? normalizeSleeve(activeSleeve) : undefined, [activeSleeve]);
   useEffect(() => {
     if (!activeSleeve) {
       setChosenTargets({});
@@ -238,7 +240,7 @@ export default function App() {
     let nextEdges = viewedGraph.edges;
 
     if (graphViewMode === 'full_sleeve') {
-      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'sleeve' || node.nodeType === 'neostack').map((node) => node.id));
+      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neostack').map((node) => node.id));
       nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
       nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
     }
@@ -1017,7 +1019,7 @@ export default function App() {
           : displayGraph
             ? <>
               {graphViewMode === 'full_sleeve'
-                ? <FullSleeveViewSummary sleeve={activeSleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} />
+                ? <FullSleeveViewSummary sleeve={activeSleeve} displaySleeve={displaySleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} />
                 : graphViewMode === 'neoblock'
                   ? <NeoBlockViewSummary
                     neoblock={currentNeoBlock}
@@ -1103,8 +1105,72 @@ function TargetPickerPanel({ item, choices, onChoose, onCancel }: { item: ShelfA
   return <div className="report targetPicker"><b>Choose target for {item.title}</b>{choices.length === 0 ? <span>No valid targets available yet.</span> : choices.map((choice) => <div key={choice.id} className="targetChoice"><span>{choice.label}</span><small>{choice.detail ?? ''}</small><button onClick={() => onChoose(choice)}>Use target</button></div>)}<div className="row"><button onClick={onCancel}>Cancel</button></div></div>;
 }
 
-function FullSleeveViewSummary({ sleeve, activeNeoStack, onNewNeoStack }: { sleeve?: Sleeve; activeNeoStack?: NeoStack; onNewNeoStack: () => void }) {
-  return <div className="report hierarchySummary"><b>Full Sleeve view</b><span>Purpose: What NeoStacks are in this Sleeve?</span><span>Active Sleeve: {sleeve?.title ?? 'none'}</span><span>NeoStacks shown: {sleeve?.stacks.length ?? 0}</span><span>Active NeoStack target: {activeNeoStack?.title ?? 'none selected'}</span><div className="row"><button onClick={onNewNeoStack}>+ New NeoStack</button></div></div>;
+function FullSleeveViewSummary({ sleeve, displaySleeve, activeNeoStack, onNewNeoStack }: { sleeve?: Sleeve; displaySleeve?: Sleeve; activeNeoStack?: NeoStack; onNewNeoStack: () => void }) {
+  if (!sleeve) return <div className="empty">No Sleeve available yet. Compose Blocks to project a Full Sleeve view.</div>;
+
+  const controller = displaySleeve?.rootController;
+  const directiveLabel = controller ? controllerDirectiveLabel(controller) : undefined;
+  const directiveCount = controller?.directiveBundle?.directives.length ?? countControllerRole(controller, 'directive');
+  const subjectSummary = controller ? summarizeControllerRole(controller, 'subject') : undefined;
+  const primarySummary = controller ? summarizeControllerRole(controller, 'primary') : undefined;
+  const blueprintSummary = controller ? summarizeControllerRole(controller, 'blueprint') : undefined;
+  const controllerRoleCount = controller ? new Set(controller.molts.map((block) => block.role)).size : 0;
+  const isVirtualController = controller?.metadata?.createdBy === 'virtual';
+
+  return <div className="report hierarchySummary sleeveRootSummary">
+    <div className="sleeveRootSummaryCard">
+      <div className="sleeveRootSummaryBadgeRow">
+        <span className="badge sleeveRootBadge">Sleeve Root Controller</span>
+        {isVirtualController && <span className="badge sleeveRootVirtualBadge">Virtual fallback</span>}
+      </div>
+      <b>{controller?.title ?? `${sleeve.title} Controller`}</b>
+      <span>Root authority for Sleeve scope. Not counted as a NeoStack child.</span>
+      <span>Role blocks available: {controller?.molts.length ?? 0} across {controllerRoleCount} role{controllerRoleCount === 1 ? '' : 's'}.</span>
+      {subjectSummary && <span>Subject: {subjectSummary}</span>}
+      {primarySummary && <span>Primary: {primarySummary}</span>}
+      <span>Directive bundle: {directiveLabel ?? 'No directive label available'} · {directiveCount} directive{directiveCount === 1 ? '' : 's'}</span>
+      <span>Blueprint: {blueprintSummary ?? `${countControllerRole(controller, 'blueprint')} blueprint block${countControllerRole(controller, 'blueprint') === 1 ? '' : 's'}`}</span>
+      {isVirtualController && <small>Display-only compatibility controller derived via normalizeSleeve(). It is not persisted back into workspace state.</small>}
+      {!isVirtualController && <small>Controller editing planned. Read-only projection only in this phase.</small>}
+    </div>
+    <div className="sleeveRootSummaryConnector" aria-hidden="true" />
+    <div className="sleeveRootChildArea">
+      <b>Full Sleeve view</b>
+      <span>Child graph below remains NeoStacks only.</span>
+      <span>Active Sleeve: {sleeve.title}</span>
+      <span>NeoStacks shown: {sleeve.stacks.length}</span>
+      <span>Active NeoStack target: {activeNeoStack?.title ?? 'none selected'}</span>
+      <div className="row"><button onClick={onNewNeoStack}>+ New NeoStack</button></div>
+    </div>
+  </div>;
+}
+
+function controllerBlocksForRole(controller: UMGControllerBlock | undefined, role: UMGBlock['role']) {
+  return controller?.molts.filter((block) => block.role === role) ?? [];
+}
+
+function countControllerRole(controller: UMGControllerBlock | undefined, role: UMGBlock['role']) {
+  return controllerBlocksForRole(controller, role).length;
+}
+
+function summarizeControllerRole(controller: UMGControllerBlock, role: UMGBlock['role']) {
+  const block = controllerBlocksForRole(controller, role)[0];
+  if (!block) return undefined;
+  return summarizeControllerText(block.description || block.content || block.title);
+}
+
+function controllerDirectiveLabel(controller: UMGControllerBlock) {
+  const activeDirectiveId = controller.directiveBundle?.activeDirectiveId ?? controller.directiveBundle?.defaultDirectiveId;
+  if (!activeDirectiveId) return controllerBlocksForRole(controller, 'directive')[0]?.title;
+  return controller.molts.find((block) => block.id === activeDirectiveId)?.title
+    ?? controller.directiveBundle?.directives.find((directive) => directive.moltId === activeDirectiveId)?.label
+    ?? controllerBlocksForRole(controller, 'directive')[0]?.title;
+}
+
+function summarizeControllerText(value: string, maxLength = 96) {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function NeoStackViewSummary({ neostack, usingFallback, onNewNeoBlock, onSaveToLibrary }: { neostack?: NeoStack; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void }) {
