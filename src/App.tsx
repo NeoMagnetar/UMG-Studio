@@ -243,13 +243,7 @@ export default function App() {
       nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
     }
 
-    if (graphViewMode === 'neostack') {
-      const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neoblock').map((node) => node.id));
-      nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
-      nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
-    }
-
-    if (graphViewMode === 'neoblock') {
+    if (graphViewMode === 'neostack' || graphViewMode === 'neoblock') {
       const visibleNodeIds = new Set(nextNodes.filter((node) => node.nodeType === 'neoblock').map((node) => node.id));
       nextNodes = nextNodes.filter((node) => visibleNodeIds.has(node.id));
       nextEdges = nextEdges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
@@ -266,6 +260,18 @@ export default function App() {
 
     return { ...viewedGraph, nodes: nextNodes, edges: nextEdges };
   }, [graphViewMode, showGates, viewedGraph]);
+
+  const graphSelectedId = useMemo(() => {
+    if (!displayGraph) return undefined;
+    if (selected?.id && displayGraph.nodes.some((node) => node.id === selected.id)) return selected.id;
+    if (graphViewMode === 'neoblock' && currentNeoBlock) {
+      return displayGraph.nodes.find((node) => node.nodeType === 'neoblock' && node.sourceId === currentNeoBlock.id)?.id;
+    }
+    if (graphViewMode === 'neostack' && currentNeoBlock) {
+      return displayGraph.nodes.find((node) => node.nodeType === 'neoblock' && node.sourceId === currentNeoBlock.id)?.id;
+    }
+    return undefined;
+  }, [currentNeoBlock, displayGraph, graphViewMode, selected]);
   const inspectedBlock = isUMGBlock(inspected) ? inspected : undefined;
   const inspectedGateSource = isTriggerGateSourceCard(inspected) ? inspected : undefined;
   const inspectorBlock = inspectedBlock ?? selectedBlock;
@@ -1008,22 +1014,23 @@ export default function App() {
             onMoveUp={(blockId) => moveBlockWithinRole(blockId, 'up')}
             onMoveDown={(blockId) => moveBlockWithinRole(blockId, 'down')}
           />
-          : graphViewMode === 'neoblock'
-            ? <NeoBlockViewSummary
-              neoblock={currentNeoBlock}
-              parentStack={currentNeoBlock && activeSleeve ? findParentStackForNeoBlock(activeSleeve, currentNeoBlock.id) : undefined}
-              usingFallback={!selectedNeoBlock && Boolean(currentNeoBlock)}
-              onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
-              onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
-            />
-            : displayGraph
-              ? <>
-                {graphViewMode === 'full_sleeve'
-                  ? <FullSleeveViewSummary sleeve={activeSleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} />
+          : displayGraph
+            ? <>
+              {graphViewMode === 'full_sleeve'
+                ? <FullSleeveViewSummary sleeve={activeSleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} />
+                : graphViewMode === 'neoblock'
+                  ? <NeoBlockViewSummary
+                    neoblock={currentNeoBlock}
+                    parentStack={currentNeoBlock && activeSleeve ? findParentStackForNeoBlock(activeSleeve, currentNeoBlock.id) : undefined}
+                    siblingCount={Math.max(0, (currentNeoStack?.neoblocks.length ?? 0) - 1)}
+                    usingFallback={!selectedNeoBlock && Boolean(currentNeoBlock)}
+                    onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
+                    onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
+                  />
                   : <NeoStackViewSummary neostack={currentNeoStack} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} />}
-                <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={selected?.id} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
-              </>
-              : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
+              <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={graphSelectedId} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
+            </>
+            : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
       </section>
       <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
       <aside className="inspect card">
@@ -1105,13 +1112,9 @@ function NeoStackViewSummary({ neostack, usingFallback, onNewNeoBlock, onSaveToL
   return <div className="report hierarchySummary"><b>NeoStack view</b><span>Purpose: What NeoBlocks are in this NeoStack?</span><span>Active NeoStack: {neostack.title}{usingFallback ? ' (default first NeoStack)' : ''}</span><span>NeoBlocks shown: {neostack.neoblocks.length}</span><span>MOLT blocks stay in MOLT Builder only.</span><div className="row"><button onClick={onNewNeoBlock}>+ New NeoBlock</button><button onClick={onSaveToLibrary}>Save NeoStack to Library</button></div></div>;
 }
 
-function NeoBlockViewSummary({ neoblock, parentStack, usingFallback, onOpenMoltBuilder, onSaveToLibrary }: { neoblock?: NeoBlock; parentStack?: NeoStack; usingFallback: boolean; onOpenMoltBuilder: () => void; onSaveToLibrary: () => void }) {
+function NeoBlockViewSummary({ neoblock, parentStack, siblingCount, usingFallback, onOpenMoltBuilder, onSaveToLibrary }: { neoblock?: NeoBlock; parentStack?: NeoStack; siblingCount: number; usingFallback: boolean; onOpenMoltBuilder: () => void; onSaveToLibrary: () => void }) {
   if (!neoblock) return <div className="empty">No NeoBlock available yet. Select a NeoBlock or create one from NeoStack view.</div>;
-  const roleCounts = moltBuilderSections.map((section) => ({
-    label: section.label,
-    count: neoblock.blocks.filter((block) => builderSectionForBlock(block).key === section.key).length
-  }));
-  return <div className="canvas graph-view-neoblock neoblockSummaryCanvas"><div className="report hierarchySummary"><b>NeoBlock view</b><span>Purpose: Which NeoBlock am I editing?</span><span>Active NeoBlock: {neoblock.title}{usingFallback ? ' (default current NeoBlock)' : ''}</span><span>Parent NeoStack: {parentStack?.title ?? 'none'}</span><span>Total MOLT blocks: {neoblock.blocks.length}</span><div className="row"><button onClick={onOpenMoltBuilder}>Open MOLT Builder</button><button onClick={onSaveToLibrary}>Save NeoBlock to Library</button></div></div><div className="cards builderCards">{roleCounts.map((entry) => <div key={entry.label} className="block builderBlock metaCard"><div className="cardtop"><b>{entry.label}</b><span className="badge">Role summary</span></div><p>{entry.count} block{entry.count === 1 ? '' : 's'}</p><small>Contained MOLT blocks are edited and reordered only in MOLT Builder.</small></div>)}</div></div>;
+  return <div className="report hierarchySummary"><b>NeoBlock view</b><span>Purpose: Focus the current NeoBlock on the canvas while keeping sibling NeoBlocks visible.</span><span>Active NeoBlock: {neoblock.title}{usingFallback ? ' (default current NeoBlock)' : ''}</span><span>Parent NeoStack: {parentStack?.title ?? 'none'}</span><span>Sibling NeoBlocks visible: {siblingCount}</span><span>Total MOLT blocks: {neoblock.blocks.length} — role details stay in MOLT Builder.</span><div className="row"><button onClick={onOpenMoltBuilder}>Open MOLT Builder</button><button onClick={onSaveToLibrary}>Save NeoBlock to Library</button></div></div>;
 }
 
 function SelectionActions({ selected, onRemove, onDetachGate }: { selected: GraphNode; onRemove: () => void; onDetachGate: (gateId: string) => void }) {
