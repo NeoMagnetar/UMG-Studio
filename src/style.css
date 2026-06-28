@@ -15,6 +15,7 @@ main.leftCollapsed .library>*:not(.panelTitle),main.rightCollapsed .inspect>*:no
 
 
 /* Phase 2 semantic graph + snapping style layer */
+.tagPicker{position:relative}.tagPicker input{margin-bottom:0}.tagAutocompleteMenu{margin-top:6px;border:1px solid #334155;border-radius:10px;background:#0b1020;display:grid;gap:4px;padding:6px;max-height:220px;overflow:auto;box-shadow:0 12px 24px #02061799}.tagAutocompleteOption{text-align:left;border-color:#273249;background:#0f172a}.tagAutocompleteOption:hover{border-color:#67e8f9}.tagAutocompleteEmpty{padding:6px 8px;color:#94a3b8;font-size:12px}
 .node-sleeve{width:280px;min-height:150px;border-color:#a78bfa;background:linear-gradient(155deg,#0f1022,#1f2937);box-shadow:0 16px 36px #a78bfa22, inset 0 0 0 2px #8b5cf61a}
 .node-neostack{width:260px;min-height:132px;border-color:#38bdf8;background:linear-gradient(155deg,#071527,#10213a)}
 .node-neoblock{width:250px;min-height:108px;border-color:#22d3ee;background:linear-gradient(155deg,#0a1f2e,#0f2937)}

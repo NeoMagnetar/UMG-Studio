@@ -2,8 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './style.css';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
-import savedNeoBlocks from '../data/library/neoblocks.json';
-import savedNeoStacks from '../data/library/neostacks.json';
 import savedSleeves from '../data/library/sleeves.json';
 import migrationReport from '../data/library/migration-report.json';
 import sourceAuditData from '../data/library/source-assets.json';
@@ -63,6 +61,21 @@ const ensureSegmentChildPlacement = (segment: UMGSegmentLayout, seededScopeSegme
     nextSegment = normalizePeerRelations(nextSegment);
   }
   return moveChildToRow(nextSegment, childId, targetRowId);
+};
+
+const sortMatchingTags = (tags: string[], query: string) => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...tags].sort((a, b) => a.localeCompare(b));
+  return [...tags]
+    .filter((tag) => tag.toLowerCase().includes(needle))
+    .sort((a, b) => {
+      const aLower = a.toLowerCase();
+      const bLower = b.toLowerCase();
+      const aPrefix = aLower.startsWith(needle) ? 0 : 1;
+      const bPrefix = bLower.startsWith(needle) ? 0 : 1;
+      if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+      return aLower.localeCompare(bLower);
+    });
 };
 
 type InspectorTab = typeof inspectorTabs[number];
@@ -144,8 +157,8 @@ export default function App() {
   const triggerGateSourceCards = useMemo(() => normalizeTriggerGateSourceCards(Object.entries(triggerGateSourceModules).map(([sourcePath, markdown]) => ({ sourcePath, markdown }))), []);
   const sections = useMemo(() => sectionLibraryByDisplayType(libraryWithStatus), [libraryWithStatus]);
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
-  const localLibraryNeoBlocks = useMemo(() => [...(savedNeoBlocks as NeoBlock[]), ...sessionNeoBlocks], [sessionNeoBlocks]);
-  const localLibraryNeoStacks = useMemo(() => [...(savedNeoStacks as NeoStack[]), ...sessionNeoStacks], [sessionNeoStacks]);
+  const localLibraryNeoBlocks = useMemo(() => [...sessionNeoBlocks], [sessionNeoBlocks]);
+  const localLibraryNeoStacks = useMemo(() => [...sessionNeoStacks], [sessionNeoStacks]);
   const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: localLibraryNeoBlocks, neostacks: localLibraryNeoStacks, sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, localLibraryNeoBlocks, localLibraryNeoStacks, triggerGateSourceCards]);
   const controlSourceShelf = useMemo(() => shelves.find((shelf) => shelf.id === 'control_sources'), [shelves]);
   const currentShelf = shelves.find((shelf) => shelf.id === activeShelf) ?? shelves[0];
@@ -175,7 +188,7 @@ export default function App() {
     }
     return items;
   }, [resolvedShelf, search, tagFilters, activeShelf, roleFilter, statusFilter, isTriggerCategoryActive]);
-  const visibleTags = useMemo(() => [...new Set(resolvedShelf.items.flatMap((item) => item.tags))].filter(Boolean).slice(0, 24), [resolvedShelf]);
+  const visibleTags = useMemo(() => [...new Set(resolvedShelf.items.flatMap((item) => item.tags))].filter(Boolean).sort((a, b) => a.localeCompare(b)), [resolvedShelf]);
   const graph = workspace?.graph;
   const activeSleeve = useMemo(() => {
     if (!workspace?.sleeves?.length) return undefined;
@@ -1366,9 +1379,65 @@ function LibraryAudit({ report }: { report: any }) {
 }
 
 function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, visibleTags, filtered, shown, total, roleFilter = 'all', clear }: any) {
+  const [tagQuery, setTagQuery] = useState('');
+  const [tagMenuOpen, setTagMenuOpen] = useState(false);
+  const tagPickerRef = useRef<HTMLDivElement | null>(null);
   const toggleTag = (tag: string) => setTagFilters(tagFilters.includes(tag) ? tagFilters.filter((t: string) => t !== tag) : [...tagFilters, tag]);
   const searchLabel = activeShelf === 'source_audit' ? 'Search audit accountability rows' : activeShelf === 'control_sources' || roleFilter === 'trigger' ? 'Search TriggerGate source cards' : 'Search active builder shelf first';
-  return <><div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelf.items.length})</button>)}</div><label className="searchLabel">{searchLabel}<input placeholder="title, INST id, tags, sourcePath, role/status" value={search} onChange={(event) => setSearch(event.target.value)} /></label>{filtered && <div className="filterNotice"><b>Filtered view active</b><span>{shown} of {total} shown</span><button onClick={clear}>Clear filters</button></div>}{tagFilters.length > 0 && <div className="activeTags"><b>Active filters</b>{tagFilters.map((tag: string) => <button key={tag} className="tag active" onClick={() => toggleTag(tag)}>{tag} ×</button>)}</div>}<div className="tagCloud">{visibleTags.map((tag: string) => <button key={tag} className={`tag ${tagFilters.includes(tag) ? 'active' : ''}`} onClick={() => toggleTag(tag)}>{tag}</button>)}</div></>;
+  const tagSuggestions = useMemo(() => sortMatchingTags(visibleTags, tagQuery).filter((tag) => !tagFilters.includes(tag)).slice(0, 20), [tagFilters, tagQuery, visibleTags]);
+  const applyTag = (tag: string) => {
+    if (!tag || tagFilters.includes(tag)) {
+      setTagQuery('');
+      setTagMenuOpen(false);
+      return;
+    }
+    setTagFilters([...tagFilters, tag]);
+    setTagQuery('');
+    setTagMenuOpen(false);
+  };
+
+  useEffect(() => {
+    setTagQuery('');
+    setTagMenuOpen(false);
+  }, [activeShelf]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!tagPickerRef.current?.contains(event.target as Node)) setTagMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  return <>
+    <div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelf.items.length})</button>)}</div>
+    <label className="searchLabel">{searchLabel}<input placeholder="title, INST id, tags, sourcePath, role/status" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+    <div className="searchLabel tagPicker" ref={tagPickerRef}>
+      Type to filter tags...
+      <input
+        placeholder="Search tags..."
+        value={tagQuery}
+        onFocus={() => setTagMenuOpen(true)}
+        onChange={(event) => {
+          setTagQuery(event.target.value);
+          setTagMenuOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            setTagMenuOpen(false);
+            return;
+          }
+          if (event.key === 'Enter' && tagSuggestions[0]) {
+            event.preventDefault();
+            applyTag(tagSuggestions[0]);
+          }
+        }}
+      />
+      {tagMenuOpen && <div className="tagAutocompleteMenu">{tagSuggestions.length ? tagSuggestions.map((tag) => <button key={tag} type="button" className="tagAutocompleteOption" onClick={() => applyTag(tag)}>{tag}</button>) : <div className="tagAutocompleteEmpty">No matching tags.</div>}</div>}
+    </div>
+    {filtered && <div className="filterNotice"><b>Filtered view active</b><span>{shown} of {total} shown</span><button onClick={clear}>Clear filters</button></div>}
+    {tagFilters.length > 0 && <div className="activeTags"><b>Active filters</b>{tagFilters.map((tag: string) => <button key={tag} className="tag active" onClick={() => toggleTag(tag)}>{tag} ×</button>)}</div>}
+  </>;
 }
 
 function BuilderShelfHeader({ roleFilter, statusFilter, shown, total, triggerGateSourceCount, promptTriggerCount, aiInstructionCount, aiSubjectCount, aiPrimaryCount, aiDirectiveCount, aiPhilosophyCount, aiBlueprintCount }: { roleFilter: string; statusFilter: string; shown: number; total: number; triggerGateSourceCount: number; promptTriggerCount: number; aiInstructionCount: number; aiSubjectCount: number; aiPrimaryCount: number; aiDirectiveCount: number; aiPhilosophyCount: number; aiBlueprintCount: number }) {
