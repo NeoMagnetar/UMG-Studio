@@ -23,7 +23,7 @@ import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from '
 import { buildRuntimeGateDebugView } from './lib/umg/gateDebug';
 import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from './lib/umg/workbenchLayout';
 import { normalizeNeoStack, normalizeSleeve } from './lib/umg/scopeModel';
-import { buildDefaultSegmentForScope, getSlotsByRow } from './lib/umg/segmentLayout';
+import { buildDefaultSegmentForScope, cloneSegmentLayout, getEditableRows, getSlotsByRow } from './lib/umg/segmentLayout';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGControllerBlock, UMGSegmentLayout, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
@@ -32,6 +32,23 @@ const statuses = ['all', 'runnable', 'warning-bearing', 'meta', 'reference-only'
 const defaultStatusFilter = 'runnable';
 const inspectorTabs = ['Card', 'Runtime', 'Runtime Preview', 'NL', 'JSON', 'Legacy Source', 'Attach / Placement Preview', 'Trace / IR Preview', 'Trace', 'IR Row'] as const;
 const triggerGateSourceModules = import.meta.glob('../../umg-block-library/HUMAN/GATES/TRG.*.md', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+
+const universalLayerLabel = (rowLabel: string) => ({
+  Strategy: 'Frame',
+  Domains: 'Sectors',
+  Specialization: 'Modules',
+  Details: 'Units'
+}[rowLabel] ?? rowLabel);
+
+const segmentLayerDisplayLabel = (row: { index: number; label: string }) => `Layer ${row.index} · ${universalLayerLabel(row.label)}`;
+
+const defaultEditableLayerId = (segment?: UMGSegmentLayout) => {
+  if (!segment) return undefined;
+  const editableRows = getEditableRows(segment);
+  if (!editableRows.length) return undefined;
+  const firstOccupiedRow = editableRows.find((row) => getSlotsByRow(segment, row.id).some((slot) => slot.occupantKind === 'scope_child' && slot.occupantId));
+  return firstOccupiedRow?.id ?? editableRows[0]?.id;
+};
 
 type InspectorTab = typeof inspectorTabs[number];
 
@@ -97,7 +114,9 @@ export default function App() {
   const [isEditingNeoStackLayout, setIsEditingNeoStackLayout] = useState(false);
   const [editingNeoStackLayoutId, setEditingNeoStackLayoutId] = useState<string | undefined>();
   const [draftNeoStackSegment, setDraftNeoStackSegment] = useState<UMGSegmentLayout | undefined>();
-  const [neoStackLayoutNotice, setNeoStackLayoutNotice] = useState('Start Layout Draft to test Save / Cancel / Reset. NeoBlock movement controls are planned next.');
+  const [selectedNeoStackRowId, setSelectedNeoStackRowId] = useState<string | undefined>();
+  const selectedNeoStackOwnerRef = useRef<string | undefined>();
+  const [neoStackLayoutNotice, setNeoStackLayoutNotice] = useState('Select a layer row to target future NeoBlock placement actions. Start Layout Draft preserves the existing Save Layout / Exit Draft / Reset Layout shell.');
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -184,7 +203,7 @@ export default function App() {
     return activeSleeve.stacks.flatMap((stack) => stack.neoblocks)[0];
   }, [activeSleeve, chosenNeoBlock, selectedNeoBlock]);
   const chosenNeoStack = useMemo(() => activeSleeve && chosenTargets.neostackId ? activeSleeve.stacks.find((stack) => stack.id === chosenTargets.neostackId) : undefined, [activeSleeve, chosenTargets.neostackId]);
-  const buildNeoStackLayoutDraft = (neoStack: NeoStack) => neoStack.segmentLayout ? structuredClone(neoStack.segmentLayout) : buildDefaultSegmentForScope(normalizeNeoStack(neoStack));
+  const buildNeoStackLayoutDraft = (neoStack: NeoStack) => neoStack.segmentLayout ? cloneSegmentLayout(neoStack.segmentLayout) : buildDefaultSegmentForScope(normalizeNeoStack(neoStack));
   const currentNeoStack = useMemo(() => {
     if (!activeSleeve) return undefined;
     if (selectedNeoStack) return selectedNeoStack;
@@ -198,6 +217,7 @@ export default function App() {
   const persistedNeoStackSegment = useMemo(() => currentNeoStack?.segmentLayout ? structuredClone(currentNeoStack.segmentLayout) : undefined, [currentNeoStack]);
   const displayNeoStackSegment = useMemo(() => persistedNeoStackSegment ?? (displayNeoStack ? buildDefaultSegmentForScope(displayNeoStack) : undefined), [displayNeoStack, persistedNeoStackSegment]);
   const activeNeoStackSegment = useMemo(() => isEditingNeoStackLayout && editingNeoStackLayoutId === currentNeoStack?.id ? (draftNeoStackSegment ?? displayNeoStackSegment) : displayNeoStackSegment, [currentNeoStack, displayNeoStackSegment, draftNeoStackSegment, editingNeoStackLayoutId, isEditingNeoStackLayout]);
+  const selectedNeoStackRow = useMemo(() => activeNeoStackSegment ? getEditableRows(activeNeoStackSegment).find((row) => row.id === selectedNeoStackRowId) : undefined, [activeNeoStackSegment, selectedNeoStackRowId]);
   const setBuilderFeedback = (message: string, blockId?: string, badgeLabel?: string) => {
     setMoltBuilderNotice(message);
     setLastAffectedMoltId(blockId);
@@ -220,6 +240,20 @@ export default function App() {
       setLastAffectedMoltLabel(undefined);
     }
   }, [currentNeoBlock, editingMoltId, lastAffectedMoltId]);
+  useEffect(() => {
+    const editableRows = activeNeoStackSegment ? getEditableRows(activeNeoStackSegment) : [];
+    if (selectedNeoStackOwnerRef.current !== currentNeoStack?.id) {
+      selectedNeoStackOwnerRef.current = currentNeoStack?.id;
+      setSelectedNeoStackRowId(defaultEditableLayerId(activeNeoStackSegment));
+      return;
+    }
+    if (!editableRows.length) {
+      if (selectedNeoStackRowId) setSelectedNeoStackRowId(undefined);
+      return;
+    }
+    if (selectedNeoStackRowId && editableRows.some((row) => row.id === selectedNeoStackRowId)) return;
+    setSelectedNeoStackRowId(defaultEditableLayerId(activeNeoStackSegment));
+  }, [activeNeoStackSegment, currentNeoStack?.id, selectedNeoStackRowId]);
   useEffect(() => {
     if (!isEditingNeoStackLayout) return;
     if (!currentNeoStack || editingNeoStackLayoutId !== currentNeoStack.id) {
@@ -637,7 +671,7 @@ export default function App() {
     setDraftNeoStackSegment(buildNeoStackLayoutDraft(currentNeoStack));
     setEditingNeoStackLayoutId(currentNeoStack.id);
     setIsEditingNeoStackLayout(true);
-    setNeoStackLayoutNotice(`Editing layout draft for ${currentNeoStack.title}. Save / Exit Draft / Reset are enabled in this pass; NeoBlock movement controls come next.`);
+    setNeoStackLayoutNotice(`Editing layout draft for ${currentNeoStack.title}. Select a target layer now; future Add NeoBlock and library insert actions will use the selected layer.`);
   };
 
   const saveNeoStackLayout = () => {
@@ -1219,7 +1253,7 @@ export default function App() {
                     onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
                     onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
                   />
-                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} displaySegment={activeNeoStackSegment} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} onFocusNeoBlock={focusNeoBlockCard} isEditingLayout={isEditingNeoStackLayout && editingNeoStackLayoutId === currentNeoStack?.id} layoutNotice={neoStackLayoutNotice} onBeginLayoutEdit={beginNeoStackLayoutEdit} onSaveLayout={saveNeoStackLayout} onCancelLayout={cancelNeoStackLayoutEdit} onResetLayout={resetNeoStackLayoutDraft} />}
+                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} displaySegment={activeNeoStackSegment} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} onFocusNeoBlock={focusNeoBlockCard} isEditingLayout={isEditingNeoStackLayout && editingNeoStackLayoutId === currentNeoStack?.id} layoutNotice={neoStackLayoutNotice} selectedLayer={selectedNeoStackRow} onSelectLayer={setSelectedNeoStackRowId} onBeginLayoutEdit={beginNeoStackLayoutEdit} onSaveLayout={saveNeoStackLayout} onCancelLayout={cancelNeoStackLayoutEdit} onResetLayout={resetNeoStackLayoutDraft} />}
               <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={graphSelectedId} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
             </>
             : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
@@ -1363,7 +1397,7 @@ function summarizeControllerText(value: string, maxLength = 96) {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingFallback, onNewNeoBlock, onSaveToLibrary, onFocusNeoBlock, isEditingLayout, layoutNotice, onBeginLayoutEdit, onSaveLayout, onCancelLayout, onResetLayout }: { neostack?: NeoStack; displayNeoStack?: NeoStack; displaySegment?: UMGSegmentLayout; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void; onFocusNeoBlock: (neoblockId: string) => void; isEditingLayout: boolean; layoutNotice: string; onBeginLayoutEdit: () => void; onSaveLayout: () => void; onCancelLayout: () => void; onResetLayout: () => void }) {
+function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingFallback, onNewNeoBlock, onSaveToLibrary, onFocusNeoBlock, isEditingLayout, layoutNotice, selectedLayer, onSelectLayer, onBeginLayoutEdit, onSaveLayout, onCancelLayout, onResetLayout }: { neostack?: NeoStack; displayNeoStack?: NeoStack; displaySegment?: UMGSegmentLayout; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void; onFocusNeoBlock: (neoblockId: string) => void; isEditingLayout: boolean; layoutNotice: string; selectedLayer?: { id: string; index: number; label: string }; onSelectLayer: (rowId: string | undefined) => void; onBeginLayoutEdit: () => void; onSaveLayout: () => void; onCancelLayout: () => void; onResetLayout: () => void }) {
   if (!neostack) return <div className="empty">No NeoStack available yet. Compose Blocks or create a NeoStack first.</div>;
 
   const controller = displayNeoStack?.rootController;
@@ -1376,12 +1410,6 @@ function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingF
   const isVirtualController = controller?.metadata?.createdBy === 'virtual';
   const segmentRows = displaySegment?.rows.filter((row) => row.index > 0) ?? [];
   const neoblockMap = new Map(neostack.neoblocks.map((block) => [block.id, block]));
-  const universalLayerLabel = (rowLabel: string) => ({
-    Strategy: 'Frame',
-    Domains: 'Sectors',
-    Specialization: 'Modules',
-    Details: 'Units'
-  }[rowLabel] ?? rowLabel);
   const emptyRowLabel = (rowLabel: string) => `No NeoBlocks assigned to ${universalLayerLabel(rowLabel)} yet.`;
 
   return <div className="report hierarchySummary sleeveRootSummary">
@@ -1419,29 +1447,46 @@ function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingF
                   <button title="Restore the default projection inside this draft." onClick={onResetLayout}>Reset Layout</button>
                   <span className="badge segmentDraftBadge">Draft layout</span>
                 </>
-              : <button title="Start layout draft mode for Save / Cancel / Reset only. NeoBlock movement controls are planned next." onClick={onBeginLayoutEdit}>Start Layout Draft</button>}
+              : <button title="Start layout draft mode while keeping selected-layer targeting active for future placement actions." onClick={onBeginLayoutEdit}>Start Layout Draft</button>}
           </div>
           <small className="segmentLayoutNotice">{layoutNotice}</small>
+          <div className="segmentTargetNotice">
+            <span className="badge segmentTargetBadge">Target Layer: {selectedLayer ? segmentLayerDisplayLabel(selectedLayer) : 'No editable layer selected'}</span>
+            <small>Future Add NeoBlock and library insert actions will target the selected layer.</small>
+          </div>
         </div>
-        <div className="segmentAuthorityHint">{isEditingLayout ? 'Draft NeoStack authority layout. Row 0 is the Controller. Layers below are universal UMG depth bands. This pass verifies draft Save / Exit Draft / Reset only; NeoBlock movement controls come next.' : 'Read-only NeoStack authority layout preview. Row 0 is the Controller. Layers below are universal UMG depth bands. Layout placement controls arrive next. Current pass supports draft mode, Save, Exit Draft, and Reset only.'}</div>
+        <div className="segmentAuthorityHint">{isEditingLayout ? 'Draft NeoStack authority layout. Row 0 is the Controller. Layers below are universal UMG depth bands. Select a layer now; movement and insert actions arrive in later passes.' : 'Read-only NeoStack authority layout preview. Row 0 is the Controller. Layers below are universal UMG depth bands. Click a layer to target future NeoBlock placement actions.'}</div>
         {segmentRows.map((row) => {
           const rowSlots = displaySegment ? getSlotsByRow(displaySegment, row.id) : [];
           const occupiedSlots = rowSlots.filter((slot) => slot.occupantKind === 'scope_child' && slot.occupantId);
-          return <section key={row.id} className="segmentRowBand">
+          const isSelectedLayer = selectedLayer?.id === row.id;
+          return <section
+            key={row.id}
+            className={`segmentRowBand ${isSelectedLayer ? 'segmentRowBandSelected' : ''}`}
+            onClick={() => onSelectLayer(row.id)}
+          >
             <div className="segmentRowHeader">
-              <span>{`Layer ${row.index} · ${universalLayerLabel(row.label)}`}</span>
-              <small>{occupiedSlots.length ? `${occupiedSlots.length} NeoBlock${occupiedSlots.length === 1 ? ' in this row' : 's in this row'}` : emptyRowLabel(row.label)}</small>
+              <span>{segmentLayerDisplayLabel(row)}</span>
+              <div className="segmentRowMeta">
+                {isSelectedLayer && <span className="badge segmentSelectedBadge">Selected Layer</span>}
+                <small>{occupiedSlots.length ? `${occupiedSlots.length} NeoBlock${occupiedSlots.length === 1 ? ' in this row' : 's in this row'}` : emptyRowLabel(row.label)}</small>
+              </div>
             </div>
             <div className="segmentSlotGrid">
               {occupiedSlots.length
                 ? occupiedSlots.map((slot) => {
                     const neoblock = slot.occupantId ? neoblockMap.get(slot.occupantId) : undefined;
                     if (!neoblock) return <div key={slot.id} className="segmentEmptySlot">Unresolved NeoBlock slot</div>;
-                    return <button key={slot.id} type="button" className="segmentSlotCard" onClick={() => onFocusNeoBlock(neoblock.id)}>
-                      <span className="segmentSlotEyebrow">Under Controller</span>
-                      <b>{neoblock.title}</b>
-                      <small>{neoblock.blocks.length} MOLT block{neoblock.blocks.length === 1 ? '' : 's'}</small>
-                    </button>;
+                    return <div key={slot.id} className="segmentSlotCard">
+                      <button type="button" className="segmentSlotCardButton" onClick={(event) => {
+                        event.stopPropagation();
+                        onFocusNeoBlock(neoblock.id);
+                      }}>
+                        <span className="segmentSlotEyebrow">Under Controller</span>
+                        <b>{neoblock.title}</b>
+                        <small>{neoblock.blocks.length} MOLT block{neoblock.blocks.length === 1 ? '' : 's'}</small>
+                      </button>
+                    </div>;
                   })
                 : <div className="segmentEmptySlot">{emptyRowLabel(row.label)}</div>}
             </div>
