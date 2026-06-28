@@ -86,6 +86,46 @@ function cloneSegment(segment: UMGSegmentLayout): UMGSegmentLayout {
   };
 }
 
+function getRowMap(segment: UMGSegmentLayout): Map<string, UMGSegmentRow> {
+  return new Map(segment.rows.map((row) => [row.id, row]));
+}
+
+function isLockedRootRow(row: UMGSegmentRow | undefined): boolean {
+  return !row || row.index === 0 || row.role === 'root_controller';
+}
+
+function makeEmptySlotId(segment: UMGSegmentLayout, rowIdValue: string): string {
+  const prefix = `${rowIdValue}:slot:empty:`;
+  let nextIndex = 1;
+  for (const slot of segment.slots) {
+    if (!slot.id.startsWith(prefix)) continue;
+    const suffix = Number(slot.id.slice(prefix.length));
+    if (Number.isFinite(suffix)) nextIndex = Math.max(nextIndex, suffix + 1);
+  }
+  return `${prefix}${nextIndex}`;
+}
+
+function makeMovedChildSlotId(segment: UMGSegmentLayout, childKind: UMGScopeChildKind, childIdValue: string): string {
+  const baseId = childSlotId(segment.ownerScopeKind, segment.ownerScopeId, childKind, childIdValue);
+  const exactMatchCount = segment.slots.filter((slot) => slot.id === baseId).length;
+  if (exactMatchCount === 0) return baseId;
+
+  let nextIndex = 1;
+  while (segment.slots.some((slot) => slot.id === `${baseId}:placed:${nextIndex}`)) {
+    nextIndex += 1;
+  }
+  return `${baseId}:placed:${nextIndex}`;
+}
+
+function stripSlotRelations(segment: UMGSegmentLayout, slotIds: string[]): UMGSegmentLayout {
+  if (!slotIds.length) return segment;
+  const slotIdSet = new Set(slotIds);
+  return {
+    ...segment,
+    relations: segment.relations.filter((relation) => !slotIdSet.has(relation.sourceSlotId) && !slotIdSet.has(relation.targetSlotId))
+  };
+}
+
 function getScopeKind(scope: SupportedScope): UMGScopeKind {
   return scope.type === 'sleeve' ? 'sleeve' : 'neostack';
 }
@@ -206,6 +246,249 @@ export function getSlotsByRow(segment: UMGSegmentLayout, rowIdValue: string): UM
 
 export function getOccupiedSlots(segment: UMGSegmentLayout): UMGSegmentSlot[] {
   return segment.slots.filter((slot) => slot.occupantKind !== 'empty').map((slot) => cloneSlot(slot));
+}
+
+export function cloneSegmentLayout(segment: UMGSegmentLayout): UMGSegmentLayout {
+  return cloneSegment(segment);
+}
+
+export function getEditableRows(segment: UMGSegmentLayout): UMGSegmentRow[] {
+  return segment.rows.filter((row) => !isLockedRootRow(row)).map((row) => cloneRow(row));
+}
+
+export function findSlotByOccupantId(segment: UMGSegmentLayout, occupantId: string): UMGSegmentSlot | undefined {
+  const slot = segment.slots.find((candidate) => candidate.occupantKind === 'scope_child' && candidate.occupantId === occupantId);
+  return slot ? cloneSlot(slot) : undefined;
+}
+
+export function reindexRowSlots(segment: UMGSegmentLayout, rowIdValue: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const row = nextSegment.rows.find((candidate) => candidate.id === rowIdValue);
+  if (!row) return nextSegment;
+
+  const sortedRowSlots = nextSegment.slots
+    .filter((slot) => slot.rowId === rowIdValue)
+    .sort((a, b) => a.columnIndex - b.columnIndex || a.id.localeCompare(b.id));
+
+  const slotIds = new Set(sortedRowSlots.map((slot) => slot.id));
+  const updates = new Map(sortedRowSlots.map((slot, index) => [slot.id, { rowIndex: row.index, columnIndex: index }]));
+
+  nextSegment.slots = nextSegment.slots.map((slot) => {
+    if (!slotIds.has(slot.id)) return slot;
+    const update = updates.get(slot.id)!;
+    return {
+      ...slot,
+      rowId: row.id,
+      rowIndex: update.rowIndex,
+      columnIndex: update.columnIndex
+    };
+  });
+
+  return nextSegment;
+}
+
+export function normalizeAuthorityRelationsToController(segment: UMGSegmentLayout): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const rootSlot = getRootControllerSlot(nextSegment);
+  if (!rootSlot) return nextSegment;
+
+  nextSegment.slots = nextSegment.slots.map((slot) => {
+    if (slot.occupantKind === 'scope_child') {
+      return { ...slot, parentSlotId: rootSlot.id };
+    }
+    if (slot.occupantKind === 'root_controller') {
+      return { ...slot, parentSlotId: undefined };
+    }
+    return { ...slot, parentSlotId: slot.occupantKind === 'empty' ? undefined : slot.parentSlotId };
+  });
+
+  const nonAuthorityRelations = nextSegment.relations.filter((relation) => relation.kind !== 'authority_child');
+  const controllerRelations = nextSegment.slots
+    .filter((slot) => slot.occupantKind === 'scope_child' && slot.rowIndex > 0)
+    .map((slot) => createAuthorityRelation(rootSlot.id, slot.id));
+
+  nextSegment.relations = [...nonAuthorityRelations, ...controllerRelations];
+  return nextSegment;
+}
+
+function normalizeEditableSegment(segment: UMGSegmentLayout, rowIds: string[] = []): UMGSegmentLayout {
+  const normalizedRowIds = [...new Set(rowIds)];
+  let nextSegment = cloneSegment(segment);
+  for (const rowIdValue of normalizedRowIds) {
+    nextSegment = reindexRowSlots(nextSegment, rowIdValue);
+  }
+  nextSegment = normalizeAuthorityRelationsToController(nextSegment);
+  nextSegment = normalizePeerRelations(nextSegment);
+  return nextSegment;
+}
+
+export function createEmptySlot(segment: UMGSegmentLayout, rowIdValue: string, columnIndex?: number): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const row = getRowMap(nextSegment).get(rowIdValue);
+  if (!row || isLockedRootRow(row)) return nextSegment;
+
+  const nextColumnIndex = columnIndex ?? nextSegment.slots.filter((slot) => slot.rowId === rowIdValue).length;
+  nextSegment.slots.push({
+    id: makeEmptySlotId(nextSegment, rowIdValue),
+    rowId: row.id,
+    rowIndex: row.index,
+    columnIndex: nextColumnIndex,
+    occupantKind: 'empty',
+    visualWidth: 'normal'
+  });
+
+  return normalizeEditableSegment(nextSegment, [row.id]);
+}
+
+export function removeEmptySlot(segment: UMGSegmentLayout, slotId: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const slot = nextSegment.slots.find((candidate) => candidate.id === slotId);
+  if (!slot || slot.occupantKind !== 'empty') return nextSegment;
+
+  nextSegment.slots = nextSegment.slots.filter((candidate) => candidate.id !== slotId);
+  return normalizeEditableSegment(stripSlotRelations(nextSegment, [slotId]), [slot.rowId]);
+}
+
+export function clearChildFromSlot(segment: UMGSegmentLayout, childId: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const slot = nextSegment.slots.find((candidate) => candidate.occupantKind === 'scope_child' && candidate.occupantId === childId);
+  if (!slot) return nextSegment;
+
+  nextSegment.slots = nextSegment.slots.map((candidate) =>
+    candidate.id === slot.id
+      ? {
+          ...candidate,
+          occupantKind: 'empty',
+          occupantId: undefined,
+          occupantScopeChildKind: undefined,
+          parentSlotId: undefined
+        }
+      : candidate
+  );
+
+  return normalizeEditableSegment(nextSegment, [slot.rowId]);
+}
+
+export function moveChildToRow(segment: UMGSegmentLayout, childId: string, targetRowId: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const rowMap = getRowMap(nextSegment);
+  const targetRow = rowMap.get(targetRowId);
+  if (!targetRow || isLockedRootRow(targetRow)) return nextSegment;
+
+  const sourceSlot = nextSegment.slots.find((slot) => slot.occupantKind === 'scope_child' && slot.occupantId === childId);
+  if (!sourceSlot) return nextSegment;
+
+  const targetRowSlots = nextSegment.slots.filter((slot) => slot.rowId === targetRow!.id);
+  const nextColumnIndex = targetRowSlots.length;
+  const childKind = sourceSlot.occupantScopeChildKind ?? 'future_child';
+  nextSegment.slots = nextSegment.slots.map((slot) =>
+    slot.id === sourceSlot.id
+      ? {
+          ...slot,
+          occupantKind: 'empty',
+          occupantId: undefined,
+          occupantScopeChildKind: undefined,
+          parentSlotId: undefined
+        }
+      : slot
+  );
+
+  nextSegment.slots.push({
+    id: makeMovedChildSlotId(nextSegment, childKind, childId),
+    rowId: targetRow!.id,
+    rowIndex: targetRow!.index,
+    columnIndex: nextColumnIndex,
+    occupantKind: 'scope_child',
+    occupantId: childId,
+    occupantScopeChildKind: childKind,
+    visualWidth: sourceSlot.visualWidth ?? 'normal'
+  });
+
+  return normalizeEditableSegment(nextSegment, [sourceSlot.rowId, targetRow!.id]);
+}
+
+export function moveSlotOccupant(segment: UMGSegmentLayout, sourceSlotId: string, targetSlotId: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const rowMap = getRowMap(nextSegment);
+  const sourceSlot = nextSegment.slots.find((slot) => slot.id === sourceSlotId);
+  const targetSlot = nextSegment.slots.find((slot) => slot.id === targetSlotId);
+  if (!sourceSlot || !targetSlot) return nextSegment;
+  if (sourceSlot.occupantKind !== 'scope_child') return nextSegment;
+  if (targetSlot.occupantKind !== 'empty') return nextSegment;
+  if (isLockedRootRow(rowMap.get(targetSlot.rowId))) return nextSegment;
+
+  nextSegment.slots = nextSegment.slots.map((slot) => {
+    if (slot.id === sourceSlot.id) {
+      return {
+        ...slot,
+        occupantKind: 'empty',
+        occupantId: undefined,
+        occupantScopeChildKind: undefined,
+        parentSlotId: undefined
+      };
+    }
+    if (slot.id === targetSlot.id) {
+      return {
+        ...slot,
+        occupantKind: 'scope_child',
+        occupantId: sourceSlot.occupantId,
+        occupantScopeChildKind: sourceSlot.occupantScopeChildKind,
+        visualWidth: sourceSlot.visualWidth ?? slot.visualWidth ?? 'normal'
+      };
+    }
+    return slot;
+  });
+
+  return normalizeEditableSegment(nextSegment, [sourceSlot.rowId, targetSlot.rowId]);
+}
+
+export function moveSlotLeft(segment: UMGSegmentLayout, slotId: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const slot = nextSegment.slots.find((candidate) => candidate.id === slotId);
+  if (!slot || slot.occupantKind !== 'scope_child') return nextSegment;
+
+  const rowSlots = nextSegment.slots
+    .filter((candidate) => candidate.rowId === slot.rowId)
+    .sort((a, b) => a.columnIndex - b.columnIndex || a.id.localeCompare(b.id));
+  const index = rowSlots.findIndex((candidate) => candidate.id === slotId);
+  if (index <= 0) return nextSegment;
+
+  const left = rowSlots[index - 1];
+  nextSegment.slots = nextSegment.slots.map((candidate) => {
+    if (candidate.id === slot.id) return { ...candidate, columnIndex: left.columnIndex };
+    if (candidate.id === left.id) return { ...candidate, columnIndex: slot.columnIndex };
+    return candidate;
+  });
+
+  return normalizeEditableSegment(nextSegment, [slot.rowId]);
+}
+
+export function moveSlotRight(segment: UMGSegmentLayout, slotId: string): UMGSegmentLayout {
+  const nextSegment = cloneSegment(segment);
+  const slot = nextSegment.slots.find((candidate) => candidate.id === slotId);
+  if (!slot || slot.occupantKind !== 'scope_child') return nextSegment;
+
+  const rowSlots = nextSegment.slots
+    .filter((candidate) => candidate.rowId === slot.rowId)
+    .sort((a, b) => a.columnIndex - b.columnIndex || a.id.localeCompare(b.id));
+  const index = rowSlots.findIndex((candidate) => candidate.id === slotId);
+  if (index === -1 || index >= rowSlots.length - 1) return nextSegment;
+
+  const right = rowSlots[index + 1];
+  nextSegment.slots = nextSegment.slots.map((candidate) => {
+    if (candidate.id === slot.id) return { ...candidate, columnIndex: right.columnIndex };
+    if (candidate.id === right.id) return { ...candidate, columnIndex: slot.columnIndex };
+    return candidate;
+  });
+
+  return normalizeEditableSegment(nextSegment, [slot.rowId]);
+}
+
+export function summarizeSegmentWarnings(scope: SupportedScope, segment?: UMGSegmentLayout): string[] {
+  const warnings = [...validateSegmentLayout(scope, segment), ...(segment?.layoutWarnings ?? [])]
+    .map((warning) => warning.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  return [...new Set(warnings)];
 }
 
 export function buildDefaultSegmentForScope(scope: SupportedScope): UMGSegmentLayout {
