@@ -23,7 +23,8 @@ import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from '
 import { buildRuntimeGateDebugView } from './lib/umg/gateDebug';
 import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from './lib/umg/workbenchLayout';
 import { normalizeNeoStack, normalizeSleeve } from './lib/umg/scopeModel';
-import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGControllerBlock, UMGWorkspace } from './lib/umg/types';
+import { buildDefaultSegmentForScope, getSlotsByRow } from './lib/umg/segmentLayout';
+import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGControllerBlock, UMGSegmentLayout, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -189,6 +190,7 @@ export default function App() {
     return activeSleeve.stacks[0];
   }, [activeSleeve, chosenNeoBlock, chosenNeoStack, currentNeoBlock, selectedNeoBlock, selectedNeoStack]);
   const displayNeoStack = useMemo(() => currentNeoStack ? normalizeNeoStack(currentNeoStack) : undefined, [currentNeoStack]);
+  const displayNeoStackSegment = useMemo(() => displayNeoStack ? buildDefaultSegmentForScope(displayNeoStack) : undefined, [displayNeoStack]);
   const setBuilderFeedback = (message: string, blockId?: string, badgeLabel?: string) => {
     setMoltBuilderNotice(message);
     setLastAffectedMoltId(blockId);
@@ -591,6 +593,20 @@ export default function App() {
       setInspected(undefined);
     }
     setInspectorTab('Card');
+  };
+
+  const focusNeoBlockCard = (neoblockId: string) => {
+    const node = graph?.nodes.find((candidate) => candidate.nodeType === 'neoblock' && (candidate.sourceId === neoblockId || candidate.id === neoblockId));
+    if (node) {
+      setSelected(node);
+      setInspected(undefined);
+      return;
+    }
+    const neoblock = activeSleeve ? findNeoBlockInSleeve(activeSleeve, neoblockId) : undefined;
+    if (neoblock) {
+      setChosenTargets((current) => ({ ...current, neoblockId: neoblock.id }));
+      setInspected(undefined);
+    }
   };
 
   const compose = () => {
@@ -1140,7 +1156,7 @@ export default function App() {
                     onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
                     onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
                   />
-                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} />}
+                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} displaySegment={displayNeoStackSegment} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} onFocusNeoBlock={focusNeoBlockCard} />}
               <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={graphSelectedId} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
             </>
             : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
@@ -1284,7 +1300,7 @@ function summarizeControllerText(value: string, maxLength = 96) {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function NeoStackViewSummary({ neostack, displayNeoStack, usingFallback, onNewNeoBlock, onSaveToLibrary }: { neostack?: NeoStack; displayNeoStack?: NeoStack; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void }) {
+function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingFallback, onNewNeoBlock, onSaveToLibrary, onFocusNeoBlock }: { neostack?: NeoStack; displayNeoStack?: NeoStack; displaySegment?: UMGSegmentLayout; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void; onFocusNeoBlock: (neoblockId: string) => void }) {
   if (!neostack) return <div className="empty">No NeoStack available yet. Compose Blocks or create a NeoStack first.</div>;
 
   const controller = displayNeoStack?.rootController;
@@ -1295,11 +1311,15 @@ function NeoStackViewSummary({ neostack, displayNeoStack, usingFallback, onNewNe
   const blueprintSummary = controller ? summarizeControllerRole(controller, 'blueprint') : undefined;
   const controllerRoleCount = controller ? new Set(controller.molts.map((block) => block.role)).size : 0;
   const isVirtualController = controller?.metadata?.createdBy === 'virtual';
+  const segmentRows = displaySegment?.rows.filter((row) => row.index > 0) ?? [];
+  const neoblockMap = new Map(neostack.neoblocks.map((block) => [block.id, block]));
+  const emptyRowLabel = (rowLabel: string) => `No NeoBlocks assigned to ${rowLabel} yet.`;
 
   return <div className="report hierarchySummary sleeveRootSummary">
     <div className="sleeveRootSummaryCard">
       <div className="sleeveRootSummaryBadgeRow">
         <span className="badge sleeveRootBadge">NeoStack Root Controller</span>
+        <span className="badge segmentRowBadge">Row 0 · Controller</span>
         {isVirtualController && <span className="badge sleeveRootVirtualBadge">Virtual fallback</span>}
       </div>
       <b>{controller?.title ?? `${neostack.title} Controller`}</b>
@@ -1320,6 +1340,32 @@ function NeoStackViewSummary({ neostack, displayNeoStack, usingFallback, onNewNe
       <span>NeoBlocks shown: {neostack.neoblocks.length}</span>
       <span>MOLT blocks stay in MOLT Builder only.</span>
       <div className="row"><button onClick={onNewNeoBlock}>+ New NeoBlock</button><button onClick={onSaveToLibrary}>Save NeoStack to Library</button></div>
+      <div className="segmentSlotPreview">
+        <div className="segmentAuthorityHint">Read-only NeoStack authority layout preview. Row 0 is the controller; NeoBlocks below are display-only.</div>
+        {segmentRows.map((row) => {
+          const rowSlots = displaySegment ? getSlotsByRow(displaySegment, row.id) : [];
+          const occupiedSlots = rowSlots.filter((slot) => slot.occupantKind === 'scope_child' && slot.occupantId);
+          return <section key={row.id} className="segmentRowBand">
+            <div className="segmentRowHeader">
+              <span>{`Row ${row.index} · ${row.label}`}</span>
+              <small>{occupiedSlots.length ? `${occupiedSlots.length} NeoBlock${occupiedSlots.length === 1 ? ' in this row' : 's in this row'}` : emptyRowLabel(row.label)}</small>
+            </div>
+            <div className="segmentSlotGrid">
+              {occupiedSlots.length
+                ? occupiedSlots.map((slot) => {
+                    const neoblock = slot.occupantId ? neoblockMap.get(slot.occupantId) : undefined;
+                    if (!neoblock) return <div key={slot.id} className="segmentEmptySlot">Unresolved NeoBlock slot</div>;
+                    return <button key={slot.id} type="button" className="segmentSlotCard" onClick={() => onFocusNeoBlock(neoblock.id)}>
+                      <span className="segmentSlotEyebrow">Under Controller</span>
+                      <b>{neoblock.title}</b>
+                      <small>{neoblock.blocks.length} MOLT block{neoblock.blocks.length === 1 ? '' : 's'}</small>
+                    </button>;
+                  })
+                : <div className="segmentEmptySlot">{emptyRowLabel(row.label)}</div>}
+            </div>
+          </section>;
+        })}
+      </div>
     </div>
   </div>;
 }
