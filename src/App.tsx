@@ -22,7 +22,7 @@ import { buildRuntimeGateFromSourceCard, attachRuntimeGateToGraph } from './lib/
 import { projectGlyphMatrix, renderGlyphMatrixText, GlyphMatrixViewMode } from './lib/umg/glyphMatrix';
 import { buildRuntimeGateDebugView } from './lib/umg/gateDebug';
 import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from './lib/umg/workbenchLayout';
-import { normalizeSleeve } from './lib/umg/scopeModel';
+import { normalizeNeoStack, normalizeSleeve } from './lib/umg/scopeModel';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGControllerBlock, UMGWorkspace } from './lib/umg/types';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
@@ -56,6 +56,7 @@ const moltBuilderSections = [
 export default function App() {
   const initialHermesGenerate = resolveHermesGenerateConfig(import.meta.env as Record<string, string | undefined>);
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
+  const [sessionMoltBlocks, setSessionMoltBlocks] = useState<UMGBlock[]>([]);
   const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
   const [sessionNeoStacks, setSessionNeoStacks] = useState<NeoStack[]>([]);
   const [request, setRequest] = useState(demo);
@@ -87,15 +88,20 @@ export default function App() {
   const [layout, setLayout] = useState<WorkbenchLayoutState>(() =>
     typeof window === 'undefined' ? loadWorkbenchLayout(undefined) : loadWorkbenchLayout(window.localStorage)
   );
+  const [editingMoltId, setEditingMoltId] = useState<string | undefined>();
+  const [editingMoltDraft, setEditingMoltDraft] = useState<{ title: string; category: string; tagsText: string; content: string } | undefined>();
+  const [moltBuilderNotice, setMoltBuilderNotice] = useState('Choose a MOLT block to edit or reorganize.');
+  const [lastAffectedMoltId, setLastAffectedMoltId] = useState<string | undefined>();
+  const [lastAffectedMoltLabel, setLastAffectedMoltLabel] = useState<string | undefined>();
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
   }, [layout]);
 
-  const libraryWithStatus = useMemo(() => library.map((block) => {
+  const libraryWithStatus = useMemo(() => [...library, ...sessionMoltBlocks].map((block) => {
     const classification = classifyLibraryDisplay(block);
     return { ...block, displayType: classification.displayType, presentationStatus: classification.status };
-  }), [library]);
+  }), [library, sessionMoltBlocks]);
   const triggerGateSourceCards = useMemo(() => normalizeTriggerGateSourceCards(Object.entries(triggerGateSourceModules).map(([sourcePath, markdown]) => ({ sourcePath, markdown }))), []);
   const sections = useMemo(() => sectionLibraryByDisplayType(libraryWithStatus), [libraryWithStatus]);
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
@@ -182,6 +188,29 @@ export default function App() {
     if (currentNeoBlock) return findParentStackForNeoBlock(activeSleeve, currentNeoBlock.id);
     return activeSleeve.stacks[0];
   }, [activeSleeve, chosenNeoBlock, chosenNeoStack, currentNeoBlock, selectedNeoBlock, selectedNeoStack]);
+  const displayNeoStack = useMemo(() => currentNeoStack ? normalizeNeoStack(currentNeoStack) : undefined, [currentNeoStack]);
+  const setBuilderFeedback = (message: string, blockId?: string, badgeLabel?: string) => {
+    setMoltBuilderNotice(message);
+    setLastAffectedMoltId(blockId);
+    setLastAffectedMoltLabel(badgeLabel);
+  };
+  useEffect(() => {
+    if (!currentNeoBlock) {
+      setEditingMoltId(undefined);
+      setEditingMoltDraft(undefined);
+      setLastAffectedMoltId(undefined);
+      setLastAffectedMoltLabel(undefined);
+      return;
+    }
+    if (editingMoltId && !currentNeoBlock.blocks.some((block) => block.id === editingMoltId)) {
+      setEditingMoltId(undefined);
+      setEditingMoltDraft(undefined);
+    }
+    if (lastAffectedMoltId && !currentNeoBlock.blocks.some((block) => block.id === lastAffectedMoltId)) {
+      setLastAffectedMoltId(undefined);
+      setLastAffectedMoltLabel(undefined);
+    }
+  }, [currentNeoBlock, editingMoltId, lastAffectedMoltId]);
   const activeTargetNeoStack = selected ? selectedNeoStack : chosenNeoStack;
   const activeTargetNeoBlock = selected ? selectedNeoBlock : chosenNeoBlock;
   const neostackTargetChoices = useMemo<PlacementTargetChoice[]>(() => activeSleeve?.stacks.map((stack) => ({
@@ -449,6 +478,56 @@ export default function App() {
       return { ...neoblock, blocks: nextBlocks };
     }, currentBlock.id);
     setStatus(`moved ${currentBlock.title} ${direction} within ${labelDisplayType(currentBlock.role)}`);
+    setBuilderFeedback(`Moved ${currentBlock.title} ${direction} in ${labelDisplayType(currentBlock.role)}.`, currentBlock.id, direction === 'up' ? 'Moved up' : 'Moved down');
+  };
+
+  const openBuilderEdit = (blockId: string) => {
+    if (!currentNeoBlock) return;
+    const block = currentNeoBlock.blocks.find((entry: UMGBlock) => entry.id === blockId);
+    if (!block) return;
+    setEditingMoltId(block.id);
+    setEditingMoltDraft({
+      title: block.title,
+      category: block.category ?? '',
+      tagsText: block.tags.join(', '),
+      content: block.content
+    });
+    focusBuilderBlock(block.id);
+    setStatus(`editing ${block.title}`);
+    setBuilderFeedback(`Editing ${block.title}.`, block.id, 'Editing');
+  };
+
+  const saveBuilderEdit = () => {
+    if (!currentNeoBlock || !editingMoltId || !editingMoltDraft) return;
+    const sourceBlock = currentNeoBlock.blocks.find((entry: UMGBlock) => entry.id === editingMoltId);
+    if (!sourceBlock) return;
+    const nextTitle = editingMoltDraft.title.trim() || sourceBlock.title;
+    const nextCategory = editingMoltDraft.category.trim();
+    const nextTags = editingMoltDraft.tagsText.split(',').map((tag) => tag.trim()).filter(Boolean);
+    const nextContent = editingMoltDraft.content;
+    const nextBlock = {
+      ...sourceBlock,
+      title: nextTitle,
+      category: nextCategory || undefined,
+      tags: nextTags,
+      content: nextContent
+    };
+    updateCurrentNeoBlock((neoblock) => ({
+      ...neoblock,
+      blocks: neoblock.blocks.map((entry: UMGBlock) => entry.id === editingMoltId ? nextBlock : entry)
+    }), editingMoltId);
+    setInspected(nextBlock);
+    setEditingMoltId(undefined);
+    setEditingMoltDraft(undefined);
+    setStatus(`saved edits to ${nextTitle}`);
+    setBuilderFeedback(`Saved edits to ${nextTitle}.`, editingMoltId, 'Saved');
+  };
+
+  const cancelBuilderEdit = () => {
+    setEditingMoltId(undefined);
+    setEditingMoltDraft(undefined);
+    setStatus('edit canceled');
+    setBuilderFeedback('Edit canceled.', undefined, undefined);
   };
 
   const duplicateBuilderBlock = (blockId: string) => {
@@ -456,7 +535,8 @@ export default function App() {
     const sourceBlock = currentNeoBlock.blocks.find((block: UMGBlock) => block.id === blockId);
     if (!sourceBlock) return;
     const duplicate = structuredClone(sourceBlock);
-    duplicate.id = `${sourceBlock.id}_copy_${Date.now()}`;
+    duplicate.id = createLocalId('molt_block');
+    duplicate.sourceLayer = 'workspace';
     duplicate.source = { origin: 'workspace', sourceId: sourceBlock.id, version: '0.1' };
     updateCurrentNeoBlock((neoblock) => {
       const nextBlocks = [...neoblock.blocks];
@@ -468,6 +548,22 @@ export default function App() {
       return { ...neoblock, blocks: nextBlocks };
     }, duplicate.id);
     setStatus(`duplicated ${sourceBlock.title} to bottom of ${labelDisplayType(sourceBlock.role)}`);
+    setBuilderFeedback(`Duplicated ${sourceBlock.title} inside current NeoBlock.`, duplicate.id, 'Duplicated');
+  };
+
+  const saveBuilderBlockToLocalLibrary = (blockId: string) => {
+    if (!currentNeoBlock) return setStatus('select a NeoBlock first');
+    const sourceBlock = currentNeoBlock.blocks.find((entry: UMGBlock) => entry.id === blockId);
+    if (!sourceBlock) return setStatus('select a MOLT block first');
+    const savedBlock = structuredClone(sourceBlock);
+    savedBlock.id = createLocalId('local_molt');
+    savedBlock.sourceLayer = 'local';
+    savedBlock.source = { origin: 'workspace', sourceId: sourceBlock.id, version: '0.1' };
+    setSessionMoltBlocks((current) => [...current, savedBlock]);
+    setActiveShelf('molt_blocks');
+    setRoleFilter(sourceBlock.role);
+    setStatus(`saved ${sourceBlock.title} to local MOLT library`);
+    setBuilderFeedback(`Saved ${sourceBlock.title} to session shelf. Source library unchanged.`, blockId, 'Saved to shelf');
   };
 
   const removeBuilderBlock = (blockId: string) => {
@@ -475,16 +571,26 @@ export default function App() {
     const block = currentNeoBlock.blocks.find((entry: UMGBlock) => entry.id === blockId);
     if (!block) return;
     updateCurrentNeoBlock((neoblock) => ({ ...neoblock, blocks: neoblock.blocks.filter((entry: UMGBlock) => entry.id !== blockId) }), currentNeoBlock.id);
+    if (editingMoltId === blockId) {
+      setEditingMoltId(undefined);
+      setEditingMoltDraft(undefined);
+    }
     setStatus(`removed ${block.title} from ${currentNeoBlock.title}`);
+    setBuilderFeedback(`Removed ${block.title} from current NeoBlock.`);
   };
 
   const focusBuilderBlock = (blockId: string) => {
+    const block = currentNeoBlock?.blocks.find((entry: UMGBlock) => entry.id === blockId);
     const node = graph?.nodes.find((candidate) => candidate.sourceId === blockId || candidate.id === blockId);
     if (node) {
       setSelected(node);
-      setInspectorTab('Card');
+    }
+    if (block) {
+      setInspected(block);
+    } else if (!node) {
       setInspected(undefined);
     }
+    setInspectorTab('Card');
   };
 
   const compose = () => {
@@ -1005,13 +1111,18 @@ export default function App() {
         {graphViewMode === 'molt_builder'
           ? <MoltBuilderPanel
             neoblock={currentNeoBlock}
+            editingMoltId={editingMoltId}
+            editingDraft={editingMoltDraft}
+            builderNotice={moltBuilderNotice}
+            lastAffectedMoltId={lastAffectedMoltId}
+            lastAffectedMoltLabel={lastAffectedMoltLabel}
+            onEditingDraftChange={setEditingMoltDraft}
             onAddBlock={() => { setActiveShelf('molt_blocks'); setWorkspaceMode('canvas'); setStatus(currentNeoBlock ? `choose a library card and add it to ${currentNeoBlock.title}` : 'select a NeoBlock or compose a workspace first'); }}
-            onEdit={(blockId) => { focusBuilderBlock(blockId); setStatus('opened block in inspector'); }}
+            onEdit={openBuilderEdit}
+            onSaveEdit={saveBuilderEdit}
+            onCancelEdit={cancelBuilderEdit}
             onDuplicate={duplicateBuilderBlock}
-            onSaveAsNew={(blockId) => {
-              const block = currentNeoBlock?.blocks.find((entry: UMGBlock) => entry.id === blockId);
-              setStatus(block ? `save as new is UI-only for now: ${block.title}` : 'save as new is UI-only for now');
-            }}
+            onSaveAsNew={saveBuilderBlockToLocalLibrary}
             onRemove={removeBuilderBlock}
             onMoveUp={(blockId) => moveBlockWithinRole(blockId, 'up')}
             onMoveDown={(blockId) => moveBlockWithinRole(blockId, 'down')}
@@ -1029,7 +1140,7 @@ export default function App() {
                     onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
                     onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
                   />
-                  : <NeoStackViewSummary neostack={currentNeoStack} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} />}
+                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} />}
               <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={graphSelectedId} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
             </>
             : <div className="empty">Describe what you want to build, then click Compose Blocks.</div>}
@@ -1173,9 +1284,44 @@ function summarizeControllerText(value: string, maxLength = 96) {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function NeoStackViewSummary({ neostack, usingFallback, onNewNeoBlock, onSaveToLibrary }: { neostack?: NeoStack; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void }) {
+function NeoStackViewSummary({ neostack, displayNeoStack, usingFallback, onNewNeoBlock, onSaveToLibrary }: { neostack?: NeoStack; displayNeoStack?: NeoStack; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void }) {
   if (!neostack) return <div className="empty">No NeoStack available yet. Compose Blocks or create a NeoStack first.</div>;
-  return <div className="report hierarchySummary"><b>NeoStack view</b><span>Purpose: What NeoBlocks are in this NeoStack?</span><span>Active NeoStack: {neostack.title}{usingFallback ? ' (default first NeoStack)' : ''}</span><span>NeoBlocks shown: {neostack.neoblocks.length}</span><span>MOLT blocks stay in MOLT Builder only.</span><div className="row"><button onClick={onNewNeoBlock}>+ New NeoBlock</button><button onClick={onSaveToLibrary}>Save NeoStack to Library</button></div></div>;
+
+  const controller = displayNeoStack?.rootController;
+  const directiveLabel = controller ? controllerDirectiveLabel(controller) : undefined;
+  const directiveCount = controller?.directiveBundle?.directives.length ?? countControllerRole(controller, 'directive');
+  const subjectSummary = controller ? summarizeControllerRole(controller, 'subject') : undefined;
+  const primarySummary = controller ? summarizeControllerRole(controller, 'primary') : undefined;
+  const blueprintSummary = controller ? summarizeControllerRole(controller, 'blueprint') : undefined;
+  const controllerRoleCount = controller ? new Set(controller.molts.map((block) => block.role)).size : 0;
+  const isVirtualController = controller?.metadata?.createdBy === 'virtual';
+
+  return <div className="report hierarchySummary sleeveRootSummary">
+    <div className="sleeveRootSummaryCard">
+      <div className="sleeveRootSummaryBadgeRow">
+        <span className="badge sleeveRootBadge">NeoStack Root Controller</span>
+        {isVirtualController && <span className="badge sleeveRootVirtualBadge">Virtual fallback</span>}
+      </div>
+      <b>{controller?.title ?? `${neostack.title} Controller`}</b>
+      <span>Root authority for NeoStack scope. Not counted as a NeoBlock child.</span>
+      <span>Role blocks available: {controller?.molts.length ?? 0} across {controllerRoleCount} role{controllerRoleCount === 1 ? '' : 's'}.</span>
+      {subjectSummary && <span>Subject: {subjectSummary}</span>}
+      {primarySummary && <span>Primary: {primarySummary}</span>}
+      <span>Directive bundle: {directiveLabel ?? 'No directive label available'} · {directiveCount} directive{directiveCount === 1 ? '' : 's'}</span>
+      <span>Blueprint: {blueprintSummary ?? `${countControllerRole(controller, 'blueprint')} blueprint block${countControllerRole(controller, 'blueprint') === 1 ? '' : 's'}`}</span>
+      {isVirtualController && <small>Display-only compatibility controller derived via normalizeNeoStack(). It is not persisted back into workspace state.</small>}
+      {!isVirtualController && <small>Controller editing planned. Read-only projection only in this phase.</small>}
+    </div>
+    <div className="sleeveRootSummaryConnector" aria-hidden="true" />
+    <div className="sleeveRootChildArea">
+      <b>NeoStack view</b>
+      <span>Child graph below remains NeoBlocks only.</span>
+      <span>Active NeoStack: {neostack.title}{usingFallback ? ' (default first NeoStack)' : ''}</span>
+      <span>NeoBlocks shown: {neostack.neoblocks.length}</span>
+      <span>MOLT blocks stay in MOLT Builder only.</span>
+      <div className="row"><button onClick={onNewNeoBlock}>+ New NeoBlock</button><button onClick={onSaveToLibrary}>Save NeoStack to Library</button></div>
+    </div>
+  </div>;
 }
 
 function NeoBlockViewSummary({ neoblock, parentStack, siblingCount, usingFallback, onOpenMoltBuilder, onSaveToLibrary }: { neoblock?: NeoBlock; parentStack?: NeoStack; siblingCount: number; usingFallback: boolean; onOpenMoltBuilder: () => void; onSaveToLibrary: () => void }) {
@@ -1231,8 +1377,16 @@ function builderSectionForBlock(block: UMGBlock) {
 
 function MoltBuilderPanel({
   neoblock,
+  editingMoltId,
+  editingDraft,
+  builderNotice,
+  lastAffectedMoltId,
+  lastAffectedMoltLabel,
+  onEditingDraftChange,
   onAddBlock,
   onEdit,
+  onSaveEdit,
+  onCancelEdit,
   onDuplicate,
   onSaveAsNew,
   onRemove,
@@ -1240,8 +1394,16 @@ function MoltBuilderPanel({
   onMoveDown
 }: {
   neoblock?: NeoBlock;
+  editingMoltId?: string;
+  editingDraft?: { title: string; category: string; tagsText: string; content: string };
+  builderNotice: string;
+  lastAffectedMoltId?: string;
+  lastAffectedMoltLabel?: string;
+  onEditingDraftChange: (updater: { title: string; category: string; tagsText: string; content: string } | ((current: { title: string; category: string; tagsText: string; content: string } | undefined) => { title: string; category: string; tagsText: string; content: string } | undefined) | undefined) => void;
   onAddBlock: () => void;
   onEdit: (blockId: string) => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
   onDuplicate: (blockId: string) => void;
   onSaveAsNew: (blockId: string) => void;
   onRemove: (blockId: string) => void;
@@ -1260,6 +1422,8 @@ function MoltBuilderPanel({
       <div>
         <h3>MOLT Builder</h3>
         <p>NeoBlock: {neoblock.title}</p>
+        <small className="moltBuilderNotice">{builderNotice}</small>
+        <small className="moltBuilderHelper">Session shelf saves reusable local MOLT copies; it does not change the source library.</small>
       </div>
       <div className="row">
         <button onClick={onAddBlock}>Add Block</button>
@@ -1275,22 +1439,89 @@ function MoltBuilderPanel({
           ? <div className="moltSectionEmpty">No {section.label} blocks in this NeoBlock.</div>
           : <div className="moltBuilderCards">{section.blocks.map((block: UMGBlock, index: number) => {
             const roleStyle = builderSectionForBlock(block).className;
-            return <article key={block.id} className={`moltBuilderCard ${roleStyle}`}>
+            const isEditing = editingMoltId === block.id;
+            const isAffected = lastAffectedMoltId === block.id;
+            return <article key={block.id} className={`moltBuilderCard ${roleStyle}${isEditing ? ' isEditing' : ''}${isAffected ? ' isAffected' : ''}`}>
               <div className="cardtop">
                 <b>{block.title}</b>
                 <span className="badge">{builderSectionForBlock(block).label}</span>
               </div>
-              <p>{block.description || block.content.slice(0, 180)}</p>
-              <small>Role: {builderSectionForBlock(block).label}</small>
-              <small>Position in section: {index + 1}</small>
-              <div className="row moltBuilderActions">
-                <button onClick={() => onEdit(block.id)}>Edit</button>
-                <button onClick={() => onDuplicate(block.id)}>Duplicate</button>
-                <button onClick={() => onSaveAsNew(block.id)}>Save as New</button>
-                <button onClick={() => onRemove(block.id)}>Remove from NeoBlock</button>
-                <button onClick={() => onMoveUp(block.id)}>Move Up</button>
-                <button onClick={() => onMoveDown(block.id)}>Move Down</button>
-              </div>
+              {isAffected && <span className="moltBuilderStateBadge">{lastAffectedMoltLabel ?? 'Updated'}</span>}
+              {isEditing
+                ? <div className="moltInlineEditor">
+                    <label>
+                      Title
+                      <input
+                        value={editingDraft?.title ?? ''}
+                        onChange={(event) => onEditingDraftChange((current) => ({
+                          title: event.target.value,
+                          category: current?.category ?? block.category ?? '',
+                          tagsText: current?.tagsText ?? block.tags.join(', '),
+                          content: current?.content ?? block.content
+                        }))}
+                      />
+                    </label>
+                    <label>
+                      Role / MOLT Type
+                      <input value={builderSectionForBlock(block).label} readOnly />
+                    </label>
+                    <label>
+                      Category
+                      <input
+                        value={editingDraft?.category ?? ''}
+                        onChange={(event) => onEditingDraftChange((current) => ({
+                          title: current?.title ?? block.title,
+                          category: event.target.value,
+                          tagsText: current?.tagsText ?? block.tags.join(', '),
+                          content: current?.content ?? block.content
+                        }))}
+                      />
+                    </label>
+                    <label>
+                      Tags
+                      <input
+                        value={editingDraft?.tagsText ?? ''}
+                        onChange={(event) => onEditingDraftChange((current) => ({
+                          title: current?.title ?? block.title,
+                          category: current?.category ?? block.category ?? '',
+                          tagsText: event.target.value,
+                          content: current?.content ?? block.content
+                        }))}
+                      />
+                    </label>
+                    <label>
+                      Content
+                      <textarea
+                        value={editingDraft?.content ?? ''}
+                        onChange={(event) => onEditingDraftChange((current) => ({
+                          title: current?.title ?? block.title,
+                          category: current?.category ?? block.category ?? '',
+                          tagsText: current?.tagsText ?? block.tags.join(', '),
+                          content: event.target.value
+                        }))}
+                      />
+                    </label>
+                    <small>Tags use comma-separated values. Description remains untouched in this pass.</small>
+                    <div className="row moltBuilderActions">
+                      <button type="button" className="primary" onClick={onSaveEdit}>Save</button>
+                      <button type="button" onClick={onCancelEdit}>Cancel</button>
+                    </div>
+                  </div>
+                : <>
+                    <p>{block.description || block.content.slice(0, 180)}</p>
+                    <small>Role: {builderSectionForBlock(block).label}</small>
+                    <small>Category: {block.category || '—'}</small>
+                    <small>Tags: {block.tags.length ? block.tags.join(', ') : '—'}</small>
+                    <small>Position in section: {index + 1}</small>
+                    <div className="row moltBuilderActions">
+                      <button type="button" onClick={() => onEdit(block.id)}>Edit</button>
+                      <button type="button" onClick={() => onDuplicate(block.id)}>Duplicate</button>
+                      <button type="button" onClick={() => onSaveAsNew(block.id)}>Save to Shelf</button>
+                      <button type="button" onClick={() => onRemove(block.id)}>Remove from NeoBlock</button>
+                      <button type="button" onClick={() => onMoveUp(block.id)}>Move Up</button>
+                      <button type="button" onClick={() => onMoveDown(block.id)}>Move Down</button>
+                    </div>
+                  </>}
             </article>;
           })}</div>}
       </section>)}

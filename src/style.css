@@ -46,12 +46,13 @@ main.focusGraph .graph{margin-top:0}
 .sleeveRootSummary{display:grid;gap:10px}.sleeveRootSummaryCard,.sleeveRootChildArea{display:grid;gap:6px;padding:14px;border-radius:14px}.sleeveRootSummaryCard{border:1px solid #7c3aed55;background:linear-gradient(180deg,#120f24,#0b1020 62%,#0d1324);box-shadow:inset 0 0 0 1px #c084fc14}.sleeveRootSummaryCard b{font-size:18px;color:#f5f3ff}.sleeveRootSummaryCard span,.sleeveRootSummaryCard small,.sleeveRootChildArea span{color:#cbd5f5}.sleeveRootSummaryBadgeRow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.sleeveRootBadge{border-color:#a78bfa;color:#f5d0fe;background:#3b0764}.sleeveRootVirtualBadge{border-color:#38bdf8;color:#bae6fd;background:#082f49}.sleeveRootSummaryConnector{width:2px;height:28px;margin:0 auto;background:linear-gradient(180deg,#c084fc,#38bdf8);border-radius:999px;opacity:.75}.sleeveRootChildArea{border:1px dashed #334155;background:#0f172a}
 
 .moltBuilderPanel{height:100%;display:grid;grid-template-rows:auto 1fr;gap:12px}
-.moltBuilderHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 2px 4px}.moltBuilderHeader h3{margin:0 0 4px;color:#c4b5fd}.moltBuilderHeader p{margin:0;color:#a5b4fc}
+.moltBuilderHeader{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 2px 4px}.moltBuilderHeader h3{margin:0 0 4px;color:#c4b5fd}.moltBuilderHeader p{margin:0;color:#a5b4fc}.moltBuilderNotice{display:inline-block;margin-top:6px;color:#cbd5f5;background:#111827;border:1px solid #334155;border-radius:999px;padding:4px 10px}.moltBuilderHelper{display:block;margin-top:6px;color:#94a3b8;max-width:640px;line-height:1.4}
 .moltBuilderSections{display:grid;gap:12px;overflow:auto;padding-right:4px}
 .moltBuilderSection{border:1px solid #273249;border-radius:14px;background:#0b1020;padding:12px}
 .moltSectionHeader{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;color:#cbd5f5}
 .moltSectionEmpty{border:1px dashed #334155;border-radius:12px;padding:12px;color:#8aa0c2;background:#0f172a}
 .moltBuilderCards{display:grid;gap:10px}
-.moltBuilderCard{border:1px solid #334155;border-radius:12px;padding:12px;background:#111827;box-shadow:inset 0 0 0 1px #ffffff08}
-.moltBuilderCard p{margin:6px 0 8px;color:#dbe7ff}.moltBuilderCard small{display:block;color:#aab8d4;margin:4px 0}
-.moltBuilderActions{margin-top:10px}
+.moltBuilderCard{border:1px solid #334155;border-radius:12px;padding:12px;background:#111827;box-shadow:inset 0 0 0 1px #ffffff08;position:relative}
+.moltBuilderCard p{margin:6px 0 8px;color:#dbe7ff}.moltBuilderCard small{display:block;color:#aab8d4;margin:4px 0}.moltBuilderCard.isAffected{border-color:#67e8f9;box-shadow:inset 0 0 0 1px #67e8f944,0 0 0 1px #67e8f922}.moltBuilderCard.isEditing{border-color:#a78bfa;box-shadow:inset 0 0 0 1px #a78bfa44,0 0 0 1px #a78bfa22}
+.moltBuilderActions{margin-top:10px}.moltBuilderStateBadge{display:inline-block;margin:4px 0 8px;padding:2px 8px;border-radius:999px;border:1px solid #38bdf8;color:#bae6fd;background:#082f49;font-size:11px;font-weight:700}.moltInlineEditor{display:grid;gap:8px;margin-top:8px}.moltInlineEditor label{display:grid;gap:4px;color:#cbd5f5;font-size:12px;font-weight:700}.moltInlineEditor textarea{min-height:124px;resize:vertical}
+
