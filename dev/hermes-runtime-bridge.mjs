@@ -8,6 +8,8 @@ export const RUNTIME_PATH = '/api/hermes/runtime';
 export const BODY_LIMIT_BYTES = 1024 * 1024;
 
 export const ALLOWED_ORIGINS = new Set([
+  'http://127.0.0.1:5173',
+  'http://localhost:5173',
   'http://127.0.0.1:5177',
   'http://localhost:5177',
   'http://127.0.0.1:5179',
