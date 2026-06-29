@@ -172,7 +172,24 @@ Required reset actions:
 
 Reset actions should be explicit, scoped, and non-destructive. They should never mutate `/home/neomagnetar/umg-block-library`, never drop source library JSON, and never fake runtime history.
 
-## Non-Goals for Phase 12A
+## Phase 12B Projection Builder
+
+Phase 12B introduces a non-visual projection layer that converts existing UMG structure into a `UMGGeometryManifest` for future Structure View and Runtime View surfaces.
+
+The geometry manifest is a projection, not a source of truth. Source-of-truth records remain the template Sleeve, assembly plan, compile candidate, compiled runtime manifest, and real Hermes trace/state objects.
+
+Projection rules:
+
+- Structure View and Runtime View should share the same geometry manifest shape.
+- Structure View renders the assembled Sleeve geometry with nodes idle by default.
+- Runtime View applies a real Hermes trace/state overlay to the same geometry.
+- The projection may derive hierarchy, gate-control, execution-order, inheritance, and reuse-binding edges from existing UMG records.
+- Projection must not mutate source templates, assembly plans, compile candidates, compiled manifests, or source library JSON.
+- Runtime activation still comes only from real Hermes trace IDs or real `UMGRuntimeVisualState` IDs.
+- Unknown runtime IDs remain unmapped and must not create fallback glow on parent nodes.
+- Compiler trace remains separate from Hermes runtime trace.
+
+## Non-Goals for Phase 12A/12B
 
 - no runtime graph UI implementation
 - no animation engine
