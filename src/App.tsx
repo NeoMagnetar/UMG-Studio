@@ -28,6 +28,10 @@ import { selectTemplateSleeve } from './lib/umg/templateSelection';
 import { BusinessInput, BusinessMap, TemplateSelectionResult } from './lib/umg/businessIntakeTypes';
 import { BUSINESS_AUTOMATION_CORE_SLEEVE_ID, instantiateBusinessAutomationCoreSleeve } from './lib/umg/businessAutomationCoreSleeve';
 import { InstantiatedTemplateSleeve } from './lib/umg/templateSleeveStructures';
+import { matchBusinessMapToBusinessAutomationCore } from './lib/umg/businessBlockMatcher';
+import { detectMissingCapabilities, generateDraftsForMissingCapabilities } from './lib/umg/missingCapabilityDrafts';
+import { createCompileCandidateFromAssemblyPlan, createSleeveAssemblyPlan } from './lib/umg/sleeveAssemblyPlanner';
+import { BlockMatchPlan, CompileCandidate, GeneratedBlockDraft, SleeveAssemblyPlan } from './lib/umg/blockMatchingTypes';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -214,6 +218,10 @@ export default function App() {
   const [publicBusinessMap, setPublicBusinessMap] = useState<BusinessMap | undefined>();
   const [publicTemplateSelection, setPublicTemplateSelection] = useState<TemplateSelectionResult | undefined>();
   const [businessAutomationCoreBuild, setBusinessAutomationCoreBuild] = useState<InstantiatedTemplateSleeve | undefined>();
+  const [blockMatchPlan, setBlockMatchPlan] = useState<BlockMatchPlan | undefined>();
+  const [draftReviewState, setDraftReviewState] = useState<GeneratedBlockDraft[]>([]);
+  const [sleeveAssemblyPlan, setSleeveAssemblyPlan] = useState<SleeveAssemblyPlan | undefined>();
+  const [compileCandidate, setCompileCandidate] = useState<CompileCandidate | undefined>();
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1624,6 +1632,10 @@ export default function App() {
     setPublicBusinessMap(businessMap);
     setPublicTemplateSelection(templateSelection);
     setBusinessAutomationCoreBuild(undefined);
+    setBlockMatchPlan(undefined);
+    setDraftReviewState([]);
+    setSleeveAssemblyPlan(undefined);
+    setCompileCandidate(undefined);
     setPublicIntakeSubmitted(true);
     setStatus('Intake analyzed. Template Sleeve selected; Business Automation Core can now be instantiated when selected.');
   };
@@ -1636,6 +1648,10 @@ export default function App() {
       createdAt: new Date().toISOString()
     });
     setBusinessAutomationCoreBuild(instantiated);
+    setBlockMatchPlan(undefined);
+    setDraftReviewState([]);
+    setSleeveAssemblyPlan(undefined);
+    setCompileCandidate(undefined);
     setSessionSleeves((current) => [instantiated.sleeve, ...current.filter((sleeve) => sleeve.id !== instantiated.sleeve.id)]);
     setWorkspace({
       id: `ws_${BUSINESS_AUTOMATION_CORE_SLEEVE_ID}`,
@@ -1652,6 +1668,38 @@ export default function App() {
     setStatus('Business Automation Consultant Core Sleeve instantiated locally. Blocks remain off and gates remain closed; Hermes was not called.');
   };
 
+  const runBusinessAutomationBlockMatching = () => {
+    if (!businessAutomationCoreBuild || !publicBusinessMap) {
+      setStatus('Instantiate Business Automation Core and analyze intake before matching blocks.');
+      return;
+    }
+    const matchPlanWithoutDrafts = matchBusinessMapToBusinessAutomationCore({ businessInput: publicBusinessInput, businessMap: publicBusinessMap, templateSleeve: businessAutomationCoreBuild.templateSleeve });
+    const missingCapabilities = detectMissingCapabilities({ businessInput: publicBusinessInput, businessMap: publicBusinessMap, matchPlanWithoutDrafts, templateSleeve: businessAutomationCoreBuild.templateSleeve });
+    const generatedDrafts = generateDraftsForMissingCapabilities({ missingCapabilities, businessMap: publicBusinessMap, templateSleeve: businessAutomationCoreBuild.templateSleeve });
+    const nextPlan: BlockMatchPlan = { ...matchPlanWithoutDrafts, missingCapabilities, generatedDrafts };
+    const assemblyPlan = createSleeveAssemblyPlan({ templateSleeve: businessAutomationCoreBuild.templateSleeve, blockMatchPlan: nextPlan, acceptedDrafts: [], businessMap: publicBusinessMap, businessInput: publicBusinessInput });
+    const candidate = createCompileCandidateFromAssemblyPlan({ templateSleeve: businessAutomationCoreBuild.templateSleeve, assemblyPlan, blockMatchPlan: nextPlan });
+    setBlockMatchPlan(nextPlan);
+    setDraftReviewState(generatedDrafts);
+    setSleeveAssemblyPlan(assemblyPlan);
+    setCompileCandidate(candidate);
+    setStatus('Block matching, missing capability detection, draft proposals, and assembly plan created locally. Compile remains pending.');
+  };
+
+  const updateGeneratedDraftReview = (draftId: string, decision: 'accepted' | 'discarded') => {
+    if (!blockMatchPlan || !businessAutomationCoreBuild || !publicBusinessMap) return;
+    const updatedDrafts = draftReviewState.map((draft) => draft.id === draftId ? { ...draft, accepted: decision === 'accepted', saveState: decision === 'accepted' ? 'sleeveLocal' as const : 'discarded' as const } : draft);
+    const nextPlan: BlockMatchPlan = { ...blockMatchPlan, generatedDrafts: updatedDrafts, missingCapabilities: blockMatchPlan.missingCapabilities.map((capability) => updatedDrafts.some((draft) => draft.sourceMissingCapabilityId === capability.id && draft.accepted) ? { ...capability, status: 'accepted' as const } : updatedDrafts.some((draft) => draft.sourceMissingCapabilityId === capability.id && draft.saveState === 'discarded') ? { ...capability, status: 'discarded' as const } : capability) };
+    const acceptedDrafts = updatedDrafts.filter((draft) => draft.accepted);
+    const assemblyPlan = createSleeveAssemblyPlan({ templateSleeve: businessAutomationCoreBuild.templateSleeve, blockMatchPlan: nextPlan, acceptedDrafts, businessMap: publicBusinessMap, businessInput: publicBusinessInput });
+    const candidate = createCompileCandidateFromAssemblyPlan({ templateSleeve: businessAutomationCoreBuild.templateSleeve, assemblyPlan, blockMatchPlan: nextPlan });
+    setDraftReviewState(updatedDrafts);
+    setBlockMatchPlan(nextPlan);
+    setSleeveAssemblyPlan(assemblyPlan);
+    setCompileCandidate(candidate);
+    setStatus(decision === 'accepted' ? 'Draft accepted into sleeve-local assembly plan only; source library was not modified.' : 'Draft discarded in assembly plan; source library was not modified.');
+  };
+
   if (appSurfaceMode === 'public') {
     return <PublicLandingShell
       goal={publicGoal}
@@ -1663,6 +1711,10 @@ export default function App() {
       businessMap={publicBusinessMap}
       templateSelection={publicTemplateSelection}
       businessAutomationCoreBuild={businessAutomationCoreBuild}
+      blockMatchPlan={blockMatchPlan}
+      draftReviewState={draftReviewState}
+      sleeveAssemblyPlan={sleeveAssemblyPlan}
+      compileCandidate={compileCandidate}
       hermesEndpointConfigured={Boolean(config.endpoint)}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
@@ -1670,6 +1722,8 @@ export default function App() {
       onFileSelect={setPublicSelectedFileName}
       onSubmit={submitPublicIntake}
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
+      onRunBlockMatching={runBusinessAutomationBlockMatching}
+      onReviewDraft={updateGeneratedDraftReview}
       onOpenStudio={() => openStudioShell('canvas')}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
@@ -1877,6 +1931,10 @@ function PublicLandingShell({
   businessMap,
   templateSelection,
   businessAutomationCoreBuild,
+  blockMatchPlan,
+  draftReviewState,
+  sleeveAssemblyPlan,
+  compileCandidate,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
@@ -1884,6 +1942,8 @@ function PublicLandingShell({
   onFileSelect,
   onSubmit,
   onCreateBusinessAutomationCore,
+  onRunBlockMatching,
+  onReviewDraft,
   onOpenStudio,
   onOpenRuntime,
   onOpenDebug
@@ -1897,6 +1957,10 @@ function PublicLandingShell({
   businessMap?: BusinessMap;
   templateSelection?: TemplateSelectionResult;
   businessAutomationCoreBuild?: InstantiatedTemplateSleeve;
+  blockMatchPlan?: BlockMatchPlan;
+  draftReviewState: GeneratedBlockDraft[];
+  sleeveAssemblyPlan?: SleeveAssemblyPlan;
+  compileCandidate?: CompileCandidate;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -1904,6 +1968,8 @@ function PublicLandingShell({
   onFileSelect: (value: string) => void;
   onSubmit: () => void;
   onCreateBusinessAutomationCore: () => void;
+  onRunBlockMatching: () => void;
+  onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void;
   onOpenStudio: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
@@ -1965,9 +2031,9 @@ function PublicLandingShell({
           <button type="button" className="publicPrimaryCta publicSubmit" onClick={onSubmit}>Start Cognition Upload</button>
           {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake analyzed. Template Sleeve selected; Business Automation Core can be instantiated locally without Hermes execution.</div>}
         </div>
-        <PipelinePreview intakeSubmitted={intakeSubmitted} businessMapReady={Boolean(businessMap)} templateSelected={Boolean(templateSelection)} sleeveInstantiated={Boolean(businessAutomationCoreBuild)} />
+        <PipelinePreview intakeSubmitted={intakeSubmitted} businessMapReady={Boolean(businessMap)} templateSelected={Boolean(templateSelection)} sleeveInstantiated={Boolean(businessAutomationCoreBuild)} blockMatched={Boolean(blockMatchPlan)} missingGenerated={Boolean(blockMatchPlan)} assemblyReady={Boolean(sleeveAssemblyPlan)} />
       </section>
-      {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onOpenStudio={onOpenStudio} />}
+      {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onOpenStudio={onOpenStudio} />}
     </main>
   </div>;
 }
@@ -1976,12 +2042,16 @@ function StatusLine({ label, value, tone }: { label: string; value: string; tone
   return <div className={`publicStatusLine ${tone}`}><span>{label}</span><b>{value}</b></div>;
 }
 
-function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, sleeveInstantiated }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean; sleeveInstantiated: boolean }) {
+function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, sleeveInstantiated, blockMatched, missingGenerated, assemblyReady }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean; sleeveInstantiated: boolean; blockMatched: boolean; missingGenerated: boolean; assemblyReady: boolean }) {
   const stageState = (stage: string, index: number) => {
     if (index === 0 && intakeSubmitted) return { className: 'active', label: 'ready / captured' };
     if (stage === 'Analyze' && businessMapReady) return { className: 'active', label: 'ready / mapped' };
+    if (stage === 'Match Blocks' && blockMatched) return { className: 'active', label: 'ready / matched' };
     if (stage === 'Match Blocks' && templateSelected) return { className: 'pending', label: 'template chosen; matching next' };
-    if (stage === 'Assemble Sleeve' && sleeveInstantiated) return { className: 'active', label: 'Template Sleeve instantiated' };
+    if (stage === 'Generate Missing Blocks' && missingGenerated) return { className: 'active', label: 'draft proposals ready' };
+    if (stage === 'Assemble Sleeve' && assemblyReady) return { className: 'active', label: 'assembly plan ready' };
+    if (stage === 'Assemble Sleeve' && sleeveInstantiated) return { className: 'pending', label: 'Template Sleeve instantiated' };
+    if (stage === 'Compile' || stage === 'Run Hermes' || stage === 'Trace Runtime') return { className: 'pending', label: 'pending / not complete' };
     return { className: 'pending', label: 'pending / not connected' };
   };
   return <aside className="publicPipelineCard">
@@ -1999,7 +2069,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, onCreateBusinessAutomationCore, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; onCreateBusinessAutomationCore: () => void; onOpenStudio: () => void }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
@@ -2049,6 +2119,12 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
     </div>
     {businessAutomationCoreBuild && <BusinessAutomationCoreBuiltPanel build={businessAutomationCoreBuild} />}
+    {businessAutomationCoreBuild && <div className="analysisPanel phase5ActionPanel"><div className="publicSectionTitle"><span>07</span><div><b>Block Matching + Gap Detection</b><small>Reuse existing blocks first, then propose draft-only gaps.</small></div></div><button type="button" className="publicPrimaryCta" onClick={onRunBlockMatching}>Match Blocks & Detect Gaps</button><p>No Hermes call, no compiler call, no source library write.</p></div>}
+    {blockMatchPlan && <BlockMatchResultsPanel plan={blockMatchPlan} />}
+    {blockMatchPlan && <MissingCapabilitiesPanel plan={blockMatchPlan} />}
+    {blockMatchPlan && <GeneratedDraftsPanel drafts={draftReviewState} onReviewDraft={onReviewDraft} />}
+    {sleeveAssemblyPlan && <AssemblyPlanPanel plan={sleeveAssemblyPlan} />}
+    {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} />}
     <div className="analysisPanel nextStagePanel">
       <div className="publicSectionTitle"><span>07</span><div><b>Next Stage</b><small>Status: compile/runtime not connected.</small></div></div>
       <p><b>Next:</b> Block matching / Missing block generation / Compile-to-Hermes manifest</p>
@@ -2079,6 +2155,51 @@ function BusinessAutomationCoreBuiltPanel({ build }: { build: InstantiatedTempla
       })}
     </div>
     <p className="analysisSummary">Next: block matching, missing block generation, compile-to-Hermes manifest, then real Hermes runtime trace visualization. Run Hermes and Trace Runtime remain pending.</p>
+  </div>;
+}
+
+function BlockMatchResultsPanel({ plan }: { plan: BlockMatchPlan }) {
+  return <div className="analysisPanel phase5Panel matchedBlocksPanel">
+    <div className="publicSectionTitle"><span>08</span><div><b>Matched Existing Template Blocks</b><small>Existing blocks reused before generated drafts.</small></div></div>
+    <div className="matchCountGrid"><div><b>{plan.matchedNeoStacks.length}</b><span>NeoStacks</span></div><div><b>{plan.matchedNeoBlocks.length}</b><span>NeoBlocks</span></div><div><b>{plan.matchedMoltBlocks.length}</b><span>MOLT blocks</span></div><div><b>{plan.matchedGates.length}</b><span>Gates</span></div></div>
+    <p><b>confidence {Math.round(plan.confidence * 100)}%</b> · {plan.reasonForMatch}</p>
+    <h4>Top matched NeoStacks</h4><div className="phase5CardGrid">{plan.matchedNeoStacks.slice(0, 6).map((match) => <div key={match.id} className="matchCard"><b>{match.title}</b><small>{Math.round(match.confidence * 100)}% · {match.reason}</small><span className="useExistingBadge">Use existing block</span></div>)}</div>
+    <h4>Top matched NeoBlocks</h4><div className="phase5CardGrid">{plan.matchedNeoBlocks.slice(0, 8).map((match) => <div key={match.id} className="matchCard"><b>{match.title}</b><small>{Math.round(match.confidence * 100)}% · {match.reason}</small><SignalChips values={match.matchedSignals.slice(0, 5)} /></div>)}</div>
+  </div>;
+}
+
+function MissingCapabilitiesPanel({ plan }: { plan: BlockMatchPlan }) {
+  return <div className="analysisPanel phase5Panel missingCapabilityPanel">
+    <div className="publicSectionTitle"><span>09</span><div><b>Missing Capabilities</b><small>Specific gaps detected honestly; no silent tool assumptions.</small></div></div>
+    <p>{plan.missingCapabilities.length} missing capabilities detected.</p>
+    <div className="phase5CardGrid">{plan.missingCapabilities.length ? plan.missingCapabilities.map((capability) => <div key={capability.id} className="missingCapabilityCard"><b>{capability.title}</b><span className="needsDraftBadge">Needs new draft</span><small>type {capability.capabilityType} · suggested {capability.suggestedBlockType} · confidence {Math.round(capability.confidence * 100)}%</small><p>{capability.whyMissing}</p><SignalChips values={capability.sourceSignals} />{capability.requestedToolCapability && <span className="toolChip">tool: {capability.requestedToolCapability}</span>}</div>) : <small>No missing capability gaps detected from current intake.</small>}</div>
+  </div>;
+}
+
+function GeneratedDraftsPanel({ drafts, onReviewDraft }: { drafts: GeneratedBlockDraft[]; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void }) {
+  return <div className="analysisPanel phase5Panel generatedDraftPanel">
+    <div className="publicSectionTitle"><span>10</span><div><b>Generated Draft Blocks</b><small>Draft-only local proposals; not saved to source library.</small></div></div>
+    <p>{drafts.length} draft proposals. Every draft needs user review and defaults off.</p>
+    <div className="phase5CardGrid">{drafts.length ? drafts.map((draft) => <div key={draft.id} className={`generatedDraftCard draft-${draft.saveState}`}><b>{draft.title}</b><small>{draft.blockType}{draft.role ? ` · ${draft.role}` : ''} · confidence {Math.round(draft.confidence * 100)}%</small><p>{draft.summary}</p><span>Parent: {draft.proposedParent}</span><span>Save state: {draft.saveState}</span><span>Needs review: {String(draft.needsUserReview)}</span><p>{draft.sourceReason}</p><div className="draftReviewControls"><button type="button" onClick={() => onReviewDraft(draft.id, 'accepted')}>Accept Draft</button><button type="button" onClick={() => onReviewDraft(draft.id, 'discarded')}>Discard Draft</button><button type="button" disabled title="Later phase only">Save to Library later</button></div></div>) : <small>No draft blocks proposed because no missing capabilities required draft generation.</small>}</div>
+  </div>;
+}
+
+function AssemblyPlanPanel({ plan }: { plan: SleeveAssemblyPlan }) {
+  return <div className="analysisPanel phase5Panel assemblyPlanPanel">
+    <div className="publicSectionTitle"><span>11</span><div><b>Sleeve Assembly Plan</b><small>Compile-ready candidate structure, not compiled.</small></div></div>
+    <SummaryRows rows={[["selected NeoStacks", String(plan.selectedNeoStackIds.length)], ["selected NeoBlocks", String(plan.selectedNeoBlockIds.length)], ["selected MOLT blocks", String(plan.selectedMoltBlockIds.length)], ["selected Gates", String(plan.selectedGateIds.length)], ["accepted drafts", plan.acceptedDraftIds.join(', ') || 'none'], ["compileStatus", plan.compileStatus]]} />
+    <div className="requiredToolChips"><b>Required tools</b>{plan.requiredTools.length ? plan.requiredTools.map((tool) => <span key={tool}>{tool}</span>) : <span>none declared</span>}</div>
+    <div className="approvalPointChips"><b>Approval points</b>{plan.approvalPoints.length ? plan.approvalPoints.map((point) => <span key={point}>{point}</span>) : <span>none detected</span>}</div>
+    <div className="executionOrderRail">{plan.executionOrder.map((id, index) => <span key={id}>{index + 1}. {id}</span>)}</div>
+    <p className="analysisSummary">Not compiled yet. Next step: Compile with real compiler.</p>
+  </div>;
+}
+
+function CompileCandidatePanel({ candidate }: { candidate: CompileCandidate }) {
+  return <div className="analysisPanel phase5Panel compileCandidatePanel">
+    <div className="publicSectionTitle"><span>12</span><div><b>Compile Candidate</b><small>Ready for compiler, not a runtime manifest.</small></div></div>
+    <SummaryRows rows={[["compileStatus", candidate.compileStatus], ["source block count", String(candidate.sourceBlocks.length)], ["required tools", candidate.toolPolicySummary.length ? candidate.toolPolicySummary.join(' | ') : 'none declared'], ["trace metadata", JSON.stringify(candidate.traceMetadata)]]} />
+    <div className="analysisWarnings"><b>Warning</b>{candidate.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>
   </div>;
 }
 
