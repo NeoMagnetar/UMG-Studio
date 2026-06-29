@@ -2,137 +2,204 @@
 
 ## Current checkpoint
 
-- Commit: `6cd4054 feat: add hierarchical runtime visualizer`
+- Initial proof checkpoint: `6cd4054 feat: add hierarchical runtime visualizer`
+- Phase 9A proof-doc checkpoint: `56f5a35 docs: capture initial hackathon proof`
 - Proof mode: validation/readiness pass, not feature expansion
 - Rule: no fake compile, no fake Hermes runtime, no fake trace/replay
 
-## Build result
+## Phase 9A — Initial proof doc checkpoint
 
-- Command: `npm run build`
-- Result: pass
+The initial Phase 9 proof document captured the first readiness pass from the clean Phase 8 checkpoint.
+
+Covered by Phase 9A:
+
+- build result
+- bridge syntax check
+- compiler bridge readiness
+- browser proof path
+- browser compile not-configured result
+- Hermes not-configured / not-run result
+- visualizer proof
+- commands needed for demo
+- no fake compile/runtime/trace rule
+
+## Phase 9B — Browser compiler proof
+
+Phase 9B ran the final browser compile proof with a real compiler bridge and Vite launched with the compiler endpoint configured.
+
+### Static validation
+
+- Build command: `npm run build`
+- Build result: pass
 - Note: Vite reported the existing large chunk warning; production build completed successfully.
+- Bridge syntax command: `node --check scripts/umgCompilerBridge.mjs`
+- Bridge syntax result: pass
 
-## Compiler bridge readiness
+### Compiler bridge process
 
-- Syntax check: `node --check scripts/umgCompilerBridge.mjs` passed.
-- Script: `npm run umg:compiler-bridge`
-- Default endpoint: `http://127.0.0.1:8787/compile`
-- Default compiler module: `/home/neomagnetar/umg-compiler/compiler-v0/dist/index.js`
-- Bridge behavior: loads the actual compiler module and calls exported `compileSleeve`.
-- Mock behavior: none. The bridge returns raw compiler output or explicit errors.
+Started as a controlled process:
 
-## Controlled compiler bridge proof
+```bash
+npm run umg:compiler-bridge
+```
 
-A temporary bridge process was started and stopped cleanly. A minimal valid request was sent to `POST /compile`.
+Confirmed:
 
-Observed result:
+- bridge endpoint: `http://127.0.0.1:8787/compile`
+- bridge process listened on `127.0.0.1:8787`
+- bridge loads actual compiler module: `/home/neomagnetar/umg-compiler/compiler-v0/dist/index.js`
+- bridge calls actual `compileSleeve`
+- bridge does not return mock output
+- bridge does not call Hermes
+- bridge does not mutate `/home/neomagnetar/umg-compiler`
 
-- HTTP status: 200
-- `ok`: true
-- compiler module: `/home/neomagnetar/umg-compiler/compiler-v0/dist/index.js`
-- raw compiler result present: yes
-- raw compiler `hasErrors`: false
-- runtime present: yes
-- trace present: yes
-- compiler input blocks: 2
-- compiler input stacks: 1
-- warning: `COMPILER_GATE_SCHEMA_PARTIAL_SUPPORT`
+### Vite command with compiler endpoint
 
-This proves the bridge can call the actual compiler. It does not prove a full browser compile unless Studio is launched with `VITE_UMG_COMPILER_ENDPOINT` configured.
+The stale dev server on port 5173 did not have `VITE_UMG_COMPILER_ENDPOINT`, so it was stopped and replaced with a controlled endpoint-configured dev server:
 
-## Browser proof path
+```bash
+VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile npm run dev -- --host 0.0.0.0 --port 5173
+```
 
-Canonical URL: `http://localhost:5173/`
+Canonical browser URL:
+
+```text
+http://localhost:5173/
+```
+
+### Browser proof path
+
+Demo prompt:
+
+```text
+I run a local service business and need appointment scheduling, invoice reminders, customer follow-up, and weekly ROI reports.
+```
 
 Before submit:
 
-- Landing page visible.
-- UMG logo visible.
-- Title visible.
-- Four quick chips visible.
-- File input visible.
-- Hierarchical Runtime Visualizer absent.
-- Horizontal overflow: false.
+- UMG logo visible: yes
+- Open Studio Editor only: yes
+- title visible: yes
+- first screen viewport-fit: yes
+- no horizontal overflow: yes
+- quick chips: 4
+- Hierarchical Runtime Visualizer absent: yes
 
-Flow used:
+Flow confirmed:
 
-1. Prompt: `I run a local service business and need appointment scheduling, invoice reminders, customer follow-up, and weekly ROI reports.`
+1. Entered demo prompt.
 2. Selected `Business Automation`.
 3. Clicked `Start Cognition Upload`.
-4. Confirmed Business / Workflow Map appeared.
-5. Confirmed Business Automation Consultant template selected.
+4. BusinessMap appeared.
+5. Business Automation Consultant template selected.
 6. Clicked `Create Sleeve From Template`.
-7. Confirmed Business Automation Core Sleeve built.
-8. Clicked `Match Blocks & Detect Gaps`.
-9. Confirmed block matching, generated draft review, assembly plan, and compile candidate appeared.
+7. Business Automation Core Sleeve built.
+8. Counts confirmed:
+   - NeoStacks: 8
+   - NeoBlocks: 48
+   - MOLT: 144
+   - Gates: 48
+9. Clicked `Match Blocks & Detect Gaps`.
+10. BlockMatchPlan appeared.
+11. GeneratedBlockDraft review appeared.
+12. SleeveAssemblyPlan appeared.
+13. CompileCandidate appeared.
+14. Clicked `Compile with UMG Compiler`.
 
-## Visualizer proof result
+### Browser compile proof result
 
-After local Sleeve creation and block matching:
+Fetch instrumentation confirmed one browser request was sent to the actual compiler bridge:
 
-- Cognitive Runtime Visualizer present: yes
+```text
+POST http://127.0.0.1:8787/compile
+```
+
+Observed compiler panel state:
+
+- connection: `Local UMG compiler bridge configured.`
+- endpoint: `http://127.0.0.1:8787/compile`
+- status: `ok`
+- request prepared: yes
+- manifest created: `yes — real compiler success`
+- `RuntimeSpec / Trace Summary` visible: yes
+- compiler trace preserved as `traceMetadata.compilerTrace` metadata: yes
+- compiler trace not shown as Hermes runtime trace: yes
+
+Observed compiler output warnings:
+
+- `COMPILER_GATE_SCHEMA_PARTIAL_SUPPORT`
+- `COMPILER_STACKS_EMPTY`
+- `COMPILER_BLOCKS_EMPTY`
+- `COMPILER_GATE_SCHEMA_PARTIAL_SUPPORT` from bridge preservation of gates as metadata/control records
+
+These warnings did not create fake runtime state.
+
+### UMGCompiledRuntimeManifest creation result
+
+- `UMGCompiledRuntimeManifest` created: yes
+- creation condition: only after real compiler bridge success
+- `compiledAt`: present in RuntimeSpec / Trace Summary
+- executionPlan count shown: 6
+- sourceBlocks count shown: 188
+- compiler stacks shown: 0
+- compiler neoBlocks shown: 0
+- compiler trace: preserved as compiler metadata only
+
+### Hermes readiness result
+
+Hermes endpoint was not configured in the browser session.
+
+Observed Hermes panel state:
+
+- configured: no
+- endpoint: not configured
+- message: `Hermes runtime endpoint is not configured.`
+- run status: not run
+- setup guidance: set `VITE_HERMES_RUNTIME_ENDPOINT` to a real Hermes runtime endpoint
+- Hermes Request Preview visible after real compiled manifest: yes
+- request status: prepared, not sent
+- no Hermes network call made: yes
+- no fake Hermes response: yes
+- no fake trace: yes
+
+### Visualizer proof result
+
+After real compiler success and before any real Hermes trace:
+
+- Cognitive Runtime Visualizer visible: yes
 - NeoStacks: 8
 - NeoBlocks: 48
 - MOLT: 144
 - Gates: 48
-- Trace status: `No Hermes run yet`
-- Active runtime nodes before real trace: 0
-- Horizontal overflow: false
+- trace status: `No Hermes run yet`
+- active runtime nodes: 0
+- Real Trace Ingestion trace events: 0
+- active ids: none
+- processing ids: none
+- complete ids: none
+- blocked ids: none
+- error ids: none
+- Trace Timeline says compiler trace is not shown there
+- no runtime trace timeline is available
 
-The hierarchy renders structure before runtime. No active runtime state was fabricated.
+The hierarchy remained idle/off because no real Hermes `UMGRuntimeVisualState` trace existed.
 
-## Browser compile proof result
+## 1–3 minute demo script
 
-Current browser/dev server was not launched with `VITE_UMG_COMPILER_ENDPOINT` configured.
-
-Observed compile panel state after clicking `Compile with UMG Compiler`:
-
-- connection: endpoint not configured
-- status: `not_configured`
-- request prepared: yes
-- manifest created: no
-- setup guidance shown:
-  - `npm run umg:compiler-bridge`
-  - `VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile`
-- error shown: `UMG_COMPILER_ENDPOINT_NOT_CONFIGURED`
-
-No fake `UMGCompiledRuntimeManifest` was created while endpoint was missing.
-
-## Hermes readiness result
-
-No real compiled manifest was created in the current browser session because the compiler endpoint was not configured. Therefore Hermes was not runnable from the UI in this proof session.
-
-Readiness rule confirmed:
-
-- Run Hermes remains pending until a real compiled manifest exists.
-- Missing Hermes endpoint must remain explicit/not-configured.
-- No Hermes runtime call was made.
-- No `UMGTraceEvent[]` was fabricated.
-- Compiler trace was not treated as Hermes runtime trace.
-- The visualizer remained idle/off because no real `UMGRuntimeVisualState` trace existed.
-
-## Demo script outline
-
-1. Start the compiler bridge:
-   - `npm run umg:compiler-bridge`
-2. Start Studio with the compiler endpoint:
-   - `VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile npm run dev`
-3. Open:
-   - `http://localhost:5173/`
-4. Enter demo prompt:
-   - `I run a local service business and need appointment scheduling, invoice reminders, customer follow-up, and weekly ROI reports.`
-5. Select `Business Automation`.
-6. Click `Start Cognition Upload`.
-7. Confirm BusinessMap and Business Automation Consultant template.
-8. Click `Create Sleeve From Template`.
-9. Confirm 8 NeoStacks, 48 NeoBlocks, 144 MOLT blocks, 48 Gates.
-10. Click `Match Blocks & Detect Gaps`.
-11. Confirm generated drafts are draft-only and compile candidate is not a manifest.
-12. Click `Compile with UMG Compiler`.
-13. Confirm real compiler response and `UMGCompiledRuntimeManifest` only after success.
-14. If Hermes endpoint is configured, run Hermes only after real compiled manifest exists.
-15. If Hermes endpoint is missing, show not-configured honestly.
-16. Confirm visualizer remains idle until real Hermes trace events populate `UMGRuntimeVisualState`.
+1. “This is the UMG public hackathon flow from a polished landing page. No compiler, Hermes, or trace is called on the first screen.”
+2. Enter the local service business prompt.
+3. Select Business Automation and start cognition upload.
+4. Show deterministic BusinessMap and selected Business Automation Consultant template.
+5. Create the Business Automation Core Sleeve.
+6. Point to the structure counts: 8 NeoStacks, 48 NeoBlocks, 144 MOLT blocks, and 48 Gates.
+7. Match blocks and detect gaps.
+8. Show draft-only generated blocks, SleeveAssemblyPlan, and CompileCandidate.
+9. Start the real compiler bridge if not already running.
+10. Click Compile with UMG Compiler.
+11. Show that the browser POSTs to `http://127.0.0.1:8787/compile` and creates a manifest only after real compiler success.
+12. Show RuntimeSpec / Trace Summary and explain compiler trace remains compiler metadata.
+13. Show Hermes Request Preview is prepared but not sent because no real Hermes endpoint is configured.
+14. Show the hierarchical visualizer remains idle/off with 0 active runtime nodes until real Hermes trace events arrive.
 
 ## Commands needed for live demo
 
@@ -147,7 +214,7 @@ Terminal 2:
 
 ```bash
 cd /home/neomagnetar/umg-studio
-VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile npm run dev
+VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
 Optional Hermes, only if a real endpoint exists:
@@ -158,10 +225,9 @@ VITE_HERMES_RUNTIME_ENDPOINT=<real Hermes runtime endpoint>
 
 ## Known remaining issues
 
-- The current browser session was not launched with `VITE_UMG_COMPILER_ENDPOINT`, so full browser compile was not executed in that session.
-- Hermes endpoint was not proven configured; Hermes run remains optional and must be real-only.
-- Browser proof found no MissingCapability[] label for this prompt; generated draft review/assembly/compile candidate still appeared.
-- Production build still emits the existing large chunk warning.
+- Hermes endpoint was not configured/proven; Hermes run remains optional and must be real-only.
+- Compiler bridge returned compiler-v0 schema warnings: stacks/blocks empty in the compiler RuntimeSpec even though the Studio-side manifest was created after real compiler success. This is a compiler/schema adapter readiness issue, not fake output.
+- Production build still emits the existing Vite large chunk warning.
 
 ## Preservation confirmations
 
