@@ -88,9 +88,85 @@ function makeExecutionPlan(request: UMGCompilerRequest, rawPlan: unknown): UMGEx
   }));
 }
 
+function getNormalizedStructureRecord(request: UMGCompilerRequest): Record<string, unknown> {
+  return isRecord(request.input.normalizedStructure) ? request.input.normalizedStructure : {};
+}
+
+function collectSourceBlockMetadata(request: UMGCompilerRequest): Map<string, UMGSourceBlockRef> {
+  const normalized = getNormalizedStructureRecord(request);
+  const refs = new Map<string, UMGSourceBlockRef>();
+  const addRef = (ref: UMGSourceBlockRef) => refs.set(ref.id, ref);
+
+  if (typeof normalized.id === 'string') {
+    addRef({ id: normalized.id, title: typeof normalized.title === 'string' ? normalized.title : undefined, scopeKind: 'sleeve', metadata: { source: 'normalizedStructure.id' } });
+  }
+
+  for (const stack of toArray(normalized.neoStacks)) {
+    if (!isRecord(stack) || typeof stack.id !== 'string') continue;
+    addRef({
+      id: stack.id,
+      title: typeof stack.title === 'string' ? stack.title : undefined,
+      scopeKind: 'neostack',
+      metadata: { source: 'normalizedStructure.neoStacks', tags: Array.isArray(stack.tags) ? stack.tags : undefined }
+    });
+  }
+
+  for (const block of toArray(normalized.neoBlocks)) {
+    if (!isRecord(block) || typeof block.id !== 'string') continue;
+    addRef({
+      id: block.id,
+      title: typeof block.title === 'string' ? block.title : undefined,
+      scopeKind: 'neoblock',
+      metadata: {
+        source: 'normalizedStructure.neoBlocks',
+        parentNeoStackId: typeof block.neoStackId === 'string' ? block.neoStackId : undefined,
+        tags: Array.isArray(block.tags) ? block.tags : undefined
+      }
+    });
+  }
+
+  for (const block of toArray(normalized.moltBlocks)) {
+    if (!isRecord(block) || typeof block.id !== 'string') continue;
+    addRef({
+      id: block.id,
+      title: typeof block.title === 'string' ? block.title : undefined,
+      scopeKind: 'molt',
+      role: typeof block.role === 'string' ? block.role : undefined,
+      sourcePath: typeof block.sourceId === 'string' ? block.sourceId : undefined,
+      metadata: {
+        source: 'normalizedStructure.moltBlocks',
+        sourceId: typeof block.sourceId === 'string' ? block.sourceId : undefined,
+        parentNeoBlockId: typeof block.parentNeoBlockId === 'string' ? block.parentNeoBlockId : undefined,
+        parentNeoStackId: typeof block.parentNeoStackId === 'string' ? block.parentNeoStackId : undefined,
+        tags: Array.isArray(block.tags) ? block.tags : undefined
+      }
+    });
+  }
+
+  for (const gate of toArray(normalized.gates)) {
+    if (!isRecord(gate) || typeof gate.id !== 'string') continue;
+    const attachesTo = isRecord(gate.attachesTo) ? gate.attachesTo : undefined;
+    addRef({
+      id: gate.id,
+      title: typeof gate.title === 'string' ? gate.title : undefined,
+      scopeKind: 'gate',
+      sourcePath: typeof gate.sourceId === 'string' ? gate.sourceId : undefined,
+      metadata: {
+        source: 'normalizedStructure.gates',
+        sourceId: typeof gate.sourceId === 'string' ? gate.sourceId : undefined,
+        attachesToId: typeof attachesTo?.id === 'string' ? attachesTo.id : undefined,
+        promptContent: false
+      }
+    });
+  }
+
+  return refs;
+}
+
 function makeSourceBlocks(request: UMGCompilerRequest, rawSourceBlocks: unknown): UMGSourceBlockRef[] {
   if (Array.isArray(rawSourceBlocks) && rawSourceBlocks.every(isRecord)) return rawSourceBlocks as UMGSourceBlockRef[];
-  return request.input.sourceBlocks.map((id) => ({ id, scopeKind: 'molt' }));
+  const refs = collectSourceBlockMetadata(request);
+  return request.input.sourceBlocks.map((id) => refs.get(id) ?? { id, scopeKind: 'molt', metadata: { source: 'compiler-request-sourceBlocks' } });
 }
 
 function collectCompilerOutput(raw: unknown): Record<string, unknown> | undefined {

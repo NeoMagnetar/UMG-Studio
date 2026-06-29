@@ -2373,13 +2373,15 @@ function CompilerPhase6Panel({ requestPreview, result, manifest }: { requestPrev
   const summary = getCompilerConnectionSummary(config);
   const status = result?.status ?? (summary.configured ? 'ready' : 'not_configured');
   const runtimeSpec = manifest?.compiledStructure as any;
+  const sourceBlocks = manifest?.sourceBlocks ?? [];
+  const countScope = (scopeKind: string) => sourceBlocks.filter((block) => block.scopeKind === scopeKind).length;
   return <div className="analysisPanel phase6CompilerPanel">
     <div className="publicSectionTitle"><span>13</span><div><b>Actual UMG Compiler Bridge</b><small>Compiler is source of truth; manifest only after real success.</small></div></div>
     <SummaryRows rows={[["connection", summary.message], ["endpoint", summary.endpoint ?? 'not configured'], ["status", status], ["request prepared", requestPreview ? 'yes' : 'no'], ["manifest created", manifest ? 'yes — real compiler success' : 'no']]} />
     {!summary.configured && <div className="analysisWarnings"><b>Setup</b><span>npm run umg:compiler-bridge</span><span>VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile</span><span>No UMGCompiledRuntimeManifest is created while endpoint is missing.</span></div>}
     {requestPreview && <details className="compilerJsonPreview"><summary>Compiler Input Preview</summary><pre>{JSON.stringify(requestPreview.input, null, 2)}</pre></details>}
     {result && <div className="analysisWarnings"><b>Compiler Result</b>{result.errors.map((error) => <span key={`${error.code}:${error.message}`}>{error.code}: {error.message}</span>)}{result.warnings.map((warning) => <span key={`${warning.code}:${warning.message}`}>{warning.code}: {warning.message}</span>)}</div>}
-    {manifest && <div className="compilerRuntimeSummary"><b>RuntimeSpec / Trace Summary</b><span>sleeveId: {manifest.sleeveId}</span><span>compiledAt: {manifest.compiledAt ?? 'compiler did not provide'}</span><span>executionPlan: {manifest.executionPlan.length}</span><span>sourceBlocks: {manifest.sourceBlocks.length}</span><span>compiler stacks: {Array.isArray(runtimeSpec?.stacks) ? runtimeSpec.stacks.length : 'unknown'}</span><span>compiler neoBlocks: {Array.isArray(runtimeSpec?.neoBlocks) ? runtimeSpec.neoBlocks.length : 'unknown'}</span><span>trace: preserved in traceMetadata.compilerTrace if compiler returned one; no execution trace fabricated.</span></div>}
+    {manifest && <div className="compilerRuntimeSummary"><b>RuntimeSpec / Trace Summary</b><span>sleeveId: {manifest.sleeveId}</span><span>compiledAt: {manifest.compiledAt ?? 'compiler did not provide'}</span><span>executionPlan: {manifest.executionPlan.length}</span><span>sourceBlocks: {manifest.sourceBlocks.length}</span><span>selected stacks: {countScope('neostack')}</span><span>selected NeoBlocks: {countScope('neoblock')}</span><span>selected MOLT: {countScope('molt')}</span><span>gates: {manifest.gates.length}</span><span>required tools: {manifest.executionPlan.flatMap((step) => step.requiredToolIds).length}</span><span>approval points: {manifest.executionPlan.filter((step) => step.requiredGateIds.length || step.requiredToolIds.length).length}</span><span>compiler stacks: {Array.isArray(runtimeSpec?.stacks) ? runtimeSpec.stacks.length : 'unknown'}</span><span>compiler neoBlocks: {Array.isArray(runtimeSpec?.neoBlocks) ? runtimeSpec.neoBlocks.length : 'unknown'}</span><span>trace: preserved in traceMetadata.compilerTrace if compiler returned one; no execution trace fabricated.</span></div>}
   </div>;
 }
 
@@ -2387,8 +2389,9 @@ function HermesRuntimePhase7Panel({ request, result, visualState, warnings, erro
   const config = getHermesRuntimeAdapterConfigFromEnv();
   const summary = getHermesRuntimeConnectionSummary(config);
   const timeline = visualState?.timeline ?? [];
+  const unmappedRows = result?.unmappedEvents ?? [];
   const latest = visualState?.latestEvent;
-  const traceRows = timeline.slice(-12);
+  const traceRows = [...timeline, ...unmappedRows].slice(-12);
   return <div className="phase7RuntimeGrid">
     <div className="analysisPanel phase7HermesConnectionPanel">
       <div className="publicSectionTitle"><span>14</span><div><b>Hermes Runtime Connection</b><small>Structured request boundary only.</small></div></div>
@@ -2411,13 +2414,13 @@ function HermesRuntimePhase7Panel({ request, result, visualState, warnings, erro
     </div>}
     <div className="analysisPanel phase7TraceIngestionPanel">
       <div className="publicSectionTitle"><span>17</span><div><b>Real Trace Ingestion</b><small>Only real Hermes UMGTraceEvent records.</small></div></div>
-      <SummaryRows rows={[["trace events", String(timeline.length)], ["latest event", latest ? `${latest.label} / ${latest.state}` : 'none'], ["active ids", visualState?.activeIds.join(', ') || 'none'], ["processing ids", visualState?.processingIds.join(', ') || 'none'], ["complete ids", visualState?.completeIds.join(', ') || 'none'], ["blocked ids", visualState?.blockedIds.join(', ') || 'none'], ["error ids", visualState?.errorIds.join(', ') || 'none']]} />
+      <SummaryRows rows={[["trace events", String(timeline.length)], ["unmapped events", String(unmappedRows.length)], ["latest event", latest ? `${latest.label} / ${latest.state}` : 'none'], ["active ids", visualState?.activeIds.join(', ') || 'none'], ["processing ids", visualState?.processingIds.join(', ') || 'none'], ["complete ids", visualState?.completeIds.join(', ') || 'none'], ["blocked ids", visualState?.blockedIds.join(', ') || 'none'], ["error ids", visualState?.errorIds.join(', ') || 'none']]} />
       {result && timeline.length === 0 && <p className="analysisSummary noTraceNotice">Hermes returned no runtime trace events.</p>}
       {(warnings.length > 0 || errors.length > 0) && <div className="analysisWarnings"><b>Runtime notices</b>{warnings.map((warning) => <span key={warning}>{warning}</span>)}{errors.map((error) => <span key={error}>{error}</span>)}</div>}
     </div>
     <div className="analysisPanel phase7TraceTimelinePanel">
       <div className="publicSectionTitle"><span>18</span><div><b>Trace Timeline</b><small>Compiler trace is not shown here.</small></div></div>
-      {traceRows.length ? <div className="phase7Timeline">{traceRows.map((event, index) => <div key={`${event.traceId}:${event.timestamp}:${index}`} className={`phase7TimelineEvent runtime-${event.state}`}><b>{new Date(event.timestamp).toLocaleTimeString()} · {event.scopeKind} · {getRuntimeTargetId(event) ?? 'no target'}</b><span>{event.eventType} → {event.state}</span><small>{event.label}{event.details ? ` — ${event.details}` : ''}</small></div>)}</div> : <p className="analysisSummary">No runtime trace timeline is available.</p>}
+      {traceRows.length ? <div className="phase7Timeline">{traceRows.map((event, index) => <div key={`${event.traceId}:${event.timestamp}:${index}`} className={`phase7TimelineEvent runtime-${event.state}`}><b>{new Date(event.timestamp).toLocaleTimeString()} · {event.scopeKind} · {getRuntimeTargetId(event) ?? 'unmapped/no target'}</b><span>{event.eventType} → {event.state}{unmappedRows.includes(event) ? ' · unmapped' : ''}</span><small>{event.label}{event.details ? ` — ${event.details}` : ''}</small></div>)}</div> : <p className="analysisSummary">No runtime trace timeline is available.</p>}
     </div>
   </div>;
 }

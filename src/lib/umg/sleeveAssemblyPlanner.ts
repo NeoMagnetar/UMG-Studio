@@ -83,6 +83,11 @@ export function createSleeveAssemblyPlan(args: { templateSleeve: NormalizedTempl
 }
 
 export function createCompileCandidateFromAssemblyPlan(args: { templateSleeve: NormalizedTemplateSleeve; assemblyPlan: SleeveAssemblyPlan; blockMatchPlan: BlockMatchPlan }): CompileCandidate {
+  const selectedNeoStackIds = new Set(args.assemblyPlan.selectedNeoStackIds);
+  const selectedNeoBlockIds = new Set(args.assemblyPlan.selectedNeoBlockIds);
+  const selectedMoltBlockIds = new Set(args.assemblyPlan.selectedMoltBlockIds);
+  const selectedGateIds = new Set(args.assemblyPlan.selectedGateIds);
+
   return {
     id: `compile_candidate_${Date.now()}`,
     assemblyPlanId: args.assemblyPlan.id,
@@ -90,14 +95,46 @@ export function createCompileCandidateFromAssemblyPlan(args: { templateSleeve: N
     sleeveTitle: args.assemblyPlan.sleeveTitle,
     compileStatus: args.assemblyPlan.compileStatus === 'compile_ready' ? 'ready_for_compiler' : 'not_compiled',
     normalizedStructure: {
+      id: args.templateSleeve.id,
       sleeveId: args.templateSleeve.id,
+      title: args.templateSleeve.title,
+      version: args.templateSleeve.version,
+      description: args.templateSleeve.description,
+      isTemplate: args.templateSleeve.isTemplate,
+      templateKind: args.templateSleeve.templateKind,
+      source: args.templateSleeve.source,
+      tags: [...args.templateSleeve.tags],
+      neoStacks: args.templateSleeve.neoStacks
+        .filter((stack) => selectedNeoStackIds.has(stack.id))
+        .map((stack) => ({ ...stack, neoBlockIds: stack.neoBlockIds.filter((neoBlockId) => selectedNeoBlockIds.has(neoBlockId)) })),
+      neoBlocks: args.templateSleeve.neoBlocks
+        .filter((block) => selectedNeoBlockIds.has(block.id))
+        .map((block) => ({
+          ...block,
+          moltBlockIds: block.moltBlockIds.filter((moltBlockId) => selectedMoltBlockIds.has(moltBlockId)),
+          gateIds: block.gateIds.filter((gateId) => selectedGateIds.has(gateId))
+        })),
+      moltBlocks: args.templateSleeve.moltBlocks.filter((block) => selectedMoltBlockIds.has(block.id)),
+      gates: args.templateSleeve.gates.filter((gate) => selectedGateIds.has(gate.id)),
+      governanceBlockIds: args.templateSleeve.governanceBlockIds.filter((id) => selectedMoltBlockIds.has(id)),
+      defaultExecutionMode: args.templateSleeve.defaultExecutionMode,
       selectedNeoStackIds: args.assemblyPlan.selectedNeoStackIds,
       selectedNeoBlockIds: args.assemblyPlan.selectedNeoBlockIds,
       selectedMoltBlockIds: args.assemblyPlan.selectedMoltBlockIds,
-      gates: args.assemblyPlan.selectedGateIds,
+      selectedGateIds: args.assemblyPlan.selectedGateIds,
       acceptedDraftIds: args.assemblyPlan.acceptedDraftIds,
       requiredTools: args.assemblyPlan.requiredTools,
-      approvalPoints: args.assemblyPlan.approvalPoints
+      approvalPoints: args.assemblyPlan.approvalPoints,
+      metadata: {
+        ...args.templateSleeve.metadata,
+        selectedCounts: {
+          neoStacks: args.assemblyPlan.selectedNeoStackIds.length,
+          neoBlocks: args.assemblyPlan.selectedNeoBlockIds.length,
+          moltBlocks: args.assemblyPlan.selectedMoltBlockIds.length,
+          gates: args.assemblyPlan.selectedGateIds.length
+        },
+        source: 'umg-studio-phase10b-selected-template-structure'
+      }
     },
     runtimeInstructions: ['Use selected template blocks before generated drafts.', 'Route live tool use through Hermes/user authorization.', 'Keep gates closed until runtime opens them.'],
     executionPlan: args.assemblyPlan.executionOrder.map((id, index) => ({ id: `candidate_step_${index + 1}`, targetId: id, orderIndex: index, status: 'proposed_not_executed' })),

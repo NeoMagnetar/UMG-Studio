@@ -65,16 +65,24 @@ function buildCompilerSleeve(input) {
       id: block.id,
       title: block.title,
       moltType,
-      role: block.defaultState === 'off' || input.disabledStates?.[block.id] ? 'off' : undefined,
+      // Do not pass default UI off-state as compiler BlockRole "off"; compiler-v0
+      // treats role=off as excluded from authority/primary selection.
+      role: input.disabledStates?.[block.id] ? 'off' : undefined,
       content: block.content || '',
       tags: Array.isArray(block.tags) ? block.tags : []
     });
   }
   const validBlockIds = new Set(blocks.map((block) => block.id));
+  const governancePrimaryBlockIds = moltBlocks
+    .filter((block) => block.role === 'primary' && !block.parentNeoBlockId && validBlockIds.has(block.id))
+    .map((block) => block.id);
   const stacks = neoStacks.map((stack) => {
-    const blockIds = (Array.isArray(stack.neoBlockIds) ? stack.neoBlockIds : [])
+    const blockIds = [
+      ...governancePrimaryBlockIds,
+      ...(Array.isArray(stack.neoBlockIds) ? stack.neoBlockIds : [])
       .flatMap((neoBlockId) => blockIdsByNeoBlock.get(neoBlockId) || [])
-      .filter((blockId) => validBlockIds.has(blockId));
+      .filter((blockId) => validBlockIds.has(blockId))
+    ];
     return { id: stack.id, name: stack.title, domainKey: Array.isArray(stack.tags) ? stack.tags[0] : undefined, blockIds };
   }).filter((stack) => stack.blockIds.length > 0);
 

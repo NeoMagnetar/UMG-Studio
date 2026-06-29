@@ -13,6 +13,8 @@ export function createCompilerInputFromCompileCandidate(args: {
   if (compileCandidate.compileStatus !== 'ready_for_compiler') {
     throw new Error('CompileCandidate must be ready_for_compiler before compiler input can be created.');
   }
+  const normalizedStructure = structuredClone(compileCandidate.normalizedStructure) as Record<string, unknown>;
+  const normalizedGates = Array.isArray(normalizedStructure.gates) ? normalizedStructure.gates : [];
 
   return {
     id: `compiler_input_${compileCandidate.id}`,
@@ -20,8 +22,8 @@ export function createCompilerInputFromCompileCandidate(args: {
     assemblyPlanId: assemblyPlan.id,
     sleeveId: compileCandidate.sleeveId,
     sleeveTitle: compileCandidate.sleeveTitle,
-    normalizedStructure: structuredClone(compileCandidate.normalizedStructure),
-    gates: [...assemblyPlan.gates],
+    normalizedStructure,
+    gates: normalizedGates.length ? normalizedGates : [...assemblyPlan.gates],
     activeStates: { ...assemblyPlan.activeStates },
     disabledStates: { ...assemblyPlan.disabledStates },
     executionOrder: [...assemblyPlan.executionOrder],

@@ -52,17 +52,22 @@ export function buildCompilerSleeveInput(input: UMGCompilerInput): { sleeve: unk
       id: block.id,
       title: block.title,
       moltType,
-      role: block.defaultState === 'off' || input.disabledStates[block.id] ? 'off' : undefined,
+      // Do not pass default UI off-state as compiler BlockRole "off"; compiler-v0
+      // treats role=off as excluded from authority/primary selection.
+      role: input.disabledStates[block.id] ? 'off' : undefined,
       content: block.content ?? '',
       tags: block.tags ?? []
     }];
   });
   const validBlockIds = new Set(compilerBlocks.map((block) => block.id));
+  const governancePrimaryBlockIds = moltBlocks
+    .filter((block) => block.role === 'primary' && !block.parentNeoBlockId && validBlockIds.has(block.id))
+    .map((block) => block.id);
 
   for (const stack of neoStacks) {
-    const orderedBlockIds = (stack.neoBlockIds ?? [])
+    const orderedBlockIds = [...governancePrimaryBlockIds, ...(stack.neoBlockIds ?? [])
       .flatMap((neoBlockId) => blockIdsByNeoBlock.get(neoBlockId) ?? [])
-      .filter((blockId) => validBlockIds.has(blockId));
+      .filter((blockId) => validBlockIds.has(blockId))];
     stackBlocks.set(stack.id, orderedBlockIds);
   }
 

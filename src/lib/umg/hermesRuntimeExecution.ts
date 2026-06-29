@@ -47,6 +47,10 @@ function makeTraceId(manifest: UMGCompiledRuntimeManifest) {
   return `hermes_trace_${manifest.sleeveId}_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+function countSourceBlocks(manifest: UMGCompiledRuntimeManifest, scopeKind: string) {
+  return manifest.sourceBlocks.filter((block) => block.scopeKind === scopeKind).length;
+}
+
 export function createHermesRuntimeRequestFromManifest(args: {
   compiledRuntimeManifest: UMGCompiledRuntimeManifest;
   userGoal: string;
@@ -86,8 +90,9 @@ export function createHermesRuntimeRequestFromManifest(args: {
     expectedTraceContract: {
       traceId,
       status: 'ok | blocked | needsApproval | error',
-      events: ['run_started', 'sleeve_loaded', 'gate_evaluated', 'neostack_started', 'neoblock_started', 'molt_role_used', 'run_completed', 'run_error'],
-      mappingRule: 'Events must carry local IDs, source IDs, gate IDs, metadata aliases, or compiler/runtime manifest IDs. Unmapped events stay in the timeline only.'
+      minimumMappedEvents: ['run_started', 'neostack_started', 'neoblock_started', 'gate_evaluated', 'molt_role_used', 'neoblock_completed', 'run_completed'],
+      eventFields: ['eventId', 'timestamp', 'eventType', 'message', 'scopeKind', 'sleeveId', 'neoStackId', 'neoBlockId', 'moltBlockId', 'gateId', 'sourceId', 'metadataAliases', 'status'],
+      mappingRule: 'Events must carry local IDs, source IDs, gate IDs, metadata aliases, or compiler/runtime manifest IDs. Unmapped events stay in the timeline only and must not activate visual nodes.'
     },
     metadata: {
       source: 'umg_studio_phase10_real_hermes_runtime_contract',
@@ -95,6 +100,15 @@ export function createHermesRuntimeRequestFromManifest(args: {
       requestedAgentType: businessInput?.requestedAgentType,
       createdFromCompiledManifest: true,
       traceContractVersion: 'phase10.v1',
+      hierarchyProofCounts: {
+        sourceBlocks: compiledRuntimeManifest.sourceBlocks.length,
+        selectedStacks: countSourceBlocks(compiledRuntimeManifest, 'neostack'),
+        selectedNeoBlocks: countSourceBlocks(compiledRuntimeManifest, 'neoblock'),
+        selectedMolt: countSourceBlocks(compiledRuntimeManifest, 'molt'),
+        gates: compiledRuntimeManifest.gates.length,
+        requiredTools: compiledRuntimeManifest.executionPlan.flatMap((step) => step.requiredToolIds).length,
+        approvalPoints: compiledRuntimeManifest.executionPlan.filter((step) => step.requiredGateIds.length || step.requiredToolIds.length).length
+      },
       noFakeRuntime: true,
       compilerTraceIsNotHermesRuntimeTrace: true
     }

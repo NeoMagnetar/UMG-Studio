@@ -66,6 +66,14 @@ function uniqueStrings(values) {
   return Array.from(new Set(values.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim())));
 }
 
+function countByScope(sourceBlocks, scopeKind) {
+  return sourceBlocks.filter((block) => block?.scopeKind === scopeKind).length;
+}
+
+function firstSourceBlock(sourceBlocks, scopeKind) {
+  return sourceBlocks.find((block) => block?.scopeKind === scopeKind);
+}
+
 export function validateRuntimeRequest(request, env = process.env) {
   if (!isRecord(request)) return { ok: false, status: 400, error: 'Hermes runtime bridge received invalid JSON.' };
   if (!isRecord(request.compiledSleeveManifest)) return { ok: false, status: 400, error: 'compiledSleeveManifest is required.' };
@@ -81,21 +89,43 @@ export function validateRuntimeRequest(request, env = process.env) {
 function summarizeStructure(manifest) {
   const sourceBlocks = Array.isArray(manifest.sourceBlocks) ? manifest.sourceBlocks : [];
   const gates = Array.isArray(manifest.gates) ? manifest.gates : [];
+  const firstNeoStack = firstSourceBlock(sourceBlocks, 'neostack');
+  const firstNeoBlock = firstSourceBlock(sourceBlocks, 'neoblock');
+  const firstMolt = firstSourceBlock(sourceBlocks, 'molt');
+  const firstGate = firstSourceBlock(sourceBlocks, 'gate') || gates[0];
   return {
     sleeveId: manifest.sleeveId,
     sleeveTitle: manifest.sleeveTitle,
     executionSteps: Array.isArray(manifest.executionPlan) ? manifest.executionPlan.length : 0,
     sourceBlockCount: sourceBlocks.length,
+    selectedStackCount: countByScope(sourceBlocks, 'neostack'),
+    selectedNeoBlockCount: countByScope(sourceBlocks, 'neoblock'),
+    selectedMoltCount: countByScope(sourceBlocks, 'molt'),
     gateCount: gates.length,
-    sourceBlocks: sourceBlocks.slice(0, 160).map((block) => ({
+    firstMappableIds: {
+      sleeveId: manifest.sleeveId,
+      neoStackId: firstNeoStack?.id,
+      neoBlockId: firstNeoBlock?.id,
+      moltBlockId: firstMolt?.id,
+      gateId: firstGate?.id,
+      moltRole: firstMolt?.role,
+      aliases: uniqueStrings([firstNeoStack?.sourcePath, firstNeoBlock?.sourcePath, firstMolt?.sourcePath, firstGate?.sourcePath || firstGate?.sourceId])
+    },
+    sourceBlocks: sourceBlocks.slice(0, 48).map((block) => ({
       id: block.id,
       title: block.title,
       role: block.role,
       scopeKind: block.scopeKind,
       sourcePath: block.sourcePath,
-      metadata: block.metadata
+      metadata: {
+        sourceId: block.metadata?.sourceId,
+        parentNeoBlockId: block.metadata?.parentNeoBlockId,
+        parentNeoStackId: block.metadata?.parentNeoStackId,
+        attachesToId: block.metadata?.attachesToId,
+        promptContent: block.metadata?.promptContent
+      }
     })),
-    gates: gates.slice(0, 96).map((gate) => ({
+    gates: gates.slice(0, 24).map((gate) => ({
       id: gate.id,
       sourceId: gate.sourceId,
       title: gate.title,
@@ -119,9 +149,15 @@ export function buildHermesRuntimePrompt(request) {
     blockedTools: request.blockedTools || manifest.toolPolicy?.blockedTools || [],
     requiredTools: request.requiredTools || [],
     approvalPoints: request.approvalPoints || [],
-    runtimeInstructions: (request.runtimeInstructions || manifest.runtimeInstructions || []).slice(0, 40),
+    runtimeInstructions: (request.runtimeInstructions || manifest.runtimeInstructions || []).slice(0, 12),
     structure: summarizeStructure(manifest),
-    sourceBlocks: (request.sourceBlocks || manifest.sourceBlocks || []).slice(0, 160),
+    sourceBlocks: (request.sourceBlocks || manifest.sourceBlocks || []).slice(0, 48).map((block) => ({
+      id: block.id,
+      title: block.title,
+      role: block.role,
+      scopeKind: block.scopeKind,
+      sourcePath: block.sourcePath
+    })),
     expectedTraceContract: request.expectedTraceContract || {
       eventFields: ['eventId', 'timestamp', 'eventType', 'message', 'sleeveId', 'neoStackId', 'neoBlockId', 'moltBlockId', 'gateId', 'sourceId', 'metadataAliases', 'status', 'rawHermesPayload'],
       rule: 'Only emit IDs that are present in the supplied manifest/source structure. If unsure, omit IDs and explain in unmappedEvents.'
@@ -131,9 +167,9 @@ export function buildHermesRuntimePrompt(request) {
   return [
     'You are the real local Hermes cognition runtime for a UMG Studio dry-run proof.',
     'Reason through the supplied compiled UMG runtime manifest. Do not execute tools. Do not request shell, browser, network, or filesystem tools.',
-    'Return ONLY compact JSON with this shape. The events array MUST include at least run_started, sleeve_loaded using the supplied sleeveId, and run_completed or tool_call_requires_approval for this actual dry-run reasoning pass:',
-    '{"traceId":"...","status":"ok|blocked|needsApproval|error","finalOutput":"...","events":[{"eventId":"evt_run_started","timestamp":0,"eventType":"run_started","message":"Hermes dry-run started","sleeveId":"<supplied sleeveId>","status":"active"},{"eventId":"evt_sleeve_loaded","timestamp":1,"eventType":"sleeve_loaded","message":"Compiled sleeve manifest loaded","sleeveId":"<supplied sleeveId>","status":"active"},{"eventId":"evt_run_completed","timestamp":2,"eventType":"run_completed","message":"Hermes dry-run completed","sleeveId":"<supplied sleeveId>","status":"complete"}],"toolCalls":[],"blockedCalls":[],"approvalRequests":[],"errors":[],"artifacts":[],"unmappedEvents":[]}',
-    'Events may use only real IDs from the request. Emit lifecycle events for this actual Hermes reasoning run when true: run_started for trace start, sleeve_loaded with the supplied sleeveId after reading the manifest, tool_call_requires_approval for non-executed approval requirements, run_completed for dry-run completion, or run_error for failures. Do not invent active NeoStack/NeoBlock/MOLT events. If you cannot map an event to a real supplied ID, put it in unmappedEvents with no fabricated ID.',
+    'Return ONLY compact JSON with this shape. The events array should prove a real dry-run reasoning walk over supplied IDs when present:',
+    '{"traceId":"...","status":"ok|blocked|needsApproval|error","finalOutput":"...","events":[{"eventId":"evt_run_started","timestamp":0,"eventType":"run_started","message":"Hermes dry-run started","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"active"},{"eventId":"evt_neostack_started","timestamp":1,"eventType":"neostack_started","message":"NeoStack considered","scopeKind":"neostack","neoStackId":"<real supplied NeoStack id>","status":"active"},{"eventId":"evt_neoblock_started","timestamp":2,"eventType":"neoblock_started","message":"NeoBlock considered","scopeKind":"neoblock","neoBlockId":"<real supplied NeoBlock id>","status":"active"},{"eventId":"evt_gate_evaluated","timestamp":3,"eventType":"gate_evaluated","message":"Gate evaluated as dry-run/control metadata only","scopeKind":"gate","gateId":"<real supplied Gate id>","status":"complete"},{"eventId":"evt_molt_role_used","timestamp":4,"eventType":"molt_role_used","message":"MOLT role used for reasoning","scopeKind":"molt","moltBlockId":"<real supplied MOLT id>","status":"processing"},{"eventId":"evt_neoblock_completed","timestamp":5,"eventType":"neoblock_completed","message":"NeoBlock dry-run reasoning completed","scopeKind":"neoblock","neoBlockId":"<same real NeoBlock id>","status":"complete"},{"eventId":"evt_run_completed","timestamp":6,"eventType":"run_completed","message":"Hermes dry-run completed","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"complete"}],"toolCalls":[],"blockedCalls":[],"approvalRequests":[],"errors":[],"artifacts":[],"unmappedEvents":[]}',
+    'Events may use only real IDs from the request. Prefer structure.firstMappableIds and sourceBlocks entries. Emit neostack_started, neoblock_started, gate_evaluated, molt_role_used, and neoblock_completed only when a real supplied ID exists. If a target cannot be mapped to a supplied ID, put that attempted event in unmappedEvents with no fabricated ID instead of lighting a node.',
     'For dryRun, toolCalls must be empty. If a tool would be needed, put it in blockedCalls or approvalRequests without execution.',
     'Compiler trace is not Hermes runtime trace; use only this Hermes reasoning run for events.',
     '',
