@@ -22,6 +22,10 @@ import { loadWorkbenchLayout, saveWorkbenchLayout, WorkbenchLayoutState } from '
 import { normalizeNeoStack, normalizeSleeve } from './lib/umg/scopeModel';
 import { buildDefaultSegmentForScope, cloneSegmentLayout, findSlotByOccupantId, getEditableRows, getSlotsByRow, moveChildToRow, normalizeAuthorityRelationsToController, normalizePeerRelations } from './lib/umg/segmentLayout';
 import { CompileResult, GraphNode, HermesConfig, NeoBlock, NeoStack, RuntimeGate, Sleeve, TriggerGateSourceCard, UMGBlock, UMGControllerBlock, UMGSegmentLayout, UMGWorkspace } from './lib/umg/types';
+import { createBusinessInputFromPublicIntake, analyzeBusinessInput } from './lib/umg/businessAnalyzer';
+import { getTemplateById, getTemplateSleeveCatalog } from './lib/umg/templateSleeveCatalog';
+import { selectTemplateSleeve } from './lib/umg/templateSelection';
+import { BusinessInput, BusinessMap, TemplateSelectionResult } from './lib/umg/businessIntakeTypes';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -204,6 +208,9 @@ export default function App() {
   const [publicSelectedChip, setPublicSelectedChip] = useState<string | undefined>();
   const [publicSelectedFileName, setPublicSelectedFileName] = useState('');
   const [publicIntakeSubmitted, setPublicIntakeSubmitted] = useState(false);
+  const [publicBusinessInput, setPublicBusinessInput] = useState<BusinessInput | undefined>();
+  const [publicBusinessMap, setPublicBusinessMap] = useState<BusinessMap | undefined>();
+  const [publicTemplateSelection, setPublicTemplateSelection] = useState<TemplateSelectionResult | undefined>();
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1602,8 +1609,19 @@ export default function App() {
   };
 
   const submitPublicIntake = () => {
+    const businessInput = createBusinessInputFromPublicIntake({
+      goal: publicGoal,
+      context: publicContext,
+      selectedChip: publicSelectedChip,
+      selectedFileName: publicSelectedFileName
+    });
+    const businessMap = analyzeBusinessInput(businessInput);
+    const templateSelection = selectTemplateSleeve(businessInput, businessMap, getTemplateSleeveCatalog());
+    setPublicBusinessInput(businessInput);
+    setPublicBusinessMap(businessMap);
+    setPublicTemplateSelection(templateSelection);
     setPublicIntakeSubmitted(true);
-    setStatus('Intake captured. Business analyzer and Sleeve assembly will be connected in the next phase.');
+    setStatus('Intake analyzed. Template Sleeve selected; block matching and Sleeve assembly are not connected in this phase.');
   };
 
   if (appSurfaceMode === 'public') {
@@ -1613,6 +1631,9 @@ export default function App() {
       selectedChip={publicSelectedChip}
       selectedFileName={publicSelectedFileName}
       intakeSubmitted={publicIntakeSubmitted}
+      businessInput={publicBusinessInput}
+      businessMap={publicBusinessMap}
+      templateSelection={publicTemplateSelection}
       hermesEndpointConfigured={Boolean(config.endpoint)}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
@@ -1822,6 +1843,9 @@ function PublicLandingShell({
   selectedChip,
   selectedFileName,
   intakeSubmitted,
+  businessInput,
+  businessMap,
+  templateSelection,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
@@ -1837,6 +1861,9 @@ function PublicLandingShell({
   selectedChip?: string;
   selectedFileName: string;
   intakeSubmitted: boolean;
+  businessInput?: BusinessInput;
+  businessMap?: BusinessMap;
+  templateSelection?: TemplateSelectionResult;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -1902,10 +1929,11 @@ function PublicLandingShell({
             </label>
           </div>
           <button type="button" className="publicPrimaryCta publicSubmit" onClick={onSubmit}>Start Cognition Upload</button>
-          {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake captured. Business analyzer and Sleeve assembly will be connected in the next phase.</div>}
+          {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake analyzed. Template Sleeve selected; block matching and Sleeve assembly remain next-phase work.</div>}
         </div>
-        <PipelinePreview intakeSubmitted={intakeSubmitted} />
+        <PipelinePreview intakeSubmitted={intakeSubmitted} businessMapReady={Boolean(businessMap)} templateSelected={Boolean(templateSelection)} />
       </section>
+      {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} />}
     </main>
   </div>;
 }
@@ -1914,20 +1942,90 @@ function StatusLine({ label, value, tone }: { label: string; value: string; tone
   return <div className={`publicStatusLine ${tone}`}><span>{label}</span><b>{value}</b></div>;
 }
 
-function PipelinePreview({ intakeSubmitted }: { intakeSubmitted: boolean }) {
+function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean }) {
+  const stageState = (stage: string, index: number) => {
+    if (index === 0 && intakeSubmitted) return { className: 'active', label: 'ready / captured' };
+    if (stage === 'Analyze' && businessMapReady) return { className: 'active', label: 'ready / mapped' };
+    if (stage === 'Match Blocks' && templateSelected) return { className: 'pending', label: 'template selected; block matching next' };
+    return { className: 'pending', label: 'pending / not connected' };
+  };
   return <aside className="publicPipelineCard">
     <div className="publicSectionTitle"><span>02</span><div><b>Runtime Pipeline Preview</b><small>Status rail only — no fake execution.</small></div></div>
     <div className="publicPipelineRail">
       {publicPipelineStages.map((stage, index) => {
-        const active = intakeSubmitted && index === 0;
-        return <div key={stage} className={`publicPipelineStage ${active ? 'active' : 'pending'}`}>
+        const current = stageState(stage, index);
+        return <div key={stage} className={`publicPipelineStage ${current.className}`}>
           <span>{String(index + 1).padStart(2, '0')}</span>
           <b>{stage}</b>
-          <small>{active ? 'ready / captured' : 'pending / not connected'}</small>
+          <small>{current.label}</small>
         </div>;
       })}
     </div>
   </aside>;
+}
+
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult }) {
+  const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
+  const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
+  return <section className="analysisReviewGrid" aria-label="Phase 3 analysis review">
+    <div className="analysisPanel">
+      <div className="publicSectionTitle"><span>03</span><div><b>Intake Captured</b><small>Typed BusinessInput created locally.</small></div></div>
+      <SummaryRows rows={[
+        ['Requested type', businessInput.requestedAgentType ?? businessInput.rawQuickChip ?? 'not specified'],
+        ['Prompt length', `${businessInput.text.length} chars`],
+        ['Context length', `${businessInput.documents.reduce((sum, doc) => sum + doc.text.length, 0)} chars`],
+        ['Selected file', businessInput.documents.find((doc) => doc.filename)?.filename ?? 'none'],
+        ['Tool declarations', businessInput.toolsAvailable.length ? businessInput.toolsAvailable.map((tool) => tool.name).join(', ') : 'none captured']
+      ]} />
+    </div>
+    <div className="analysisPanel businessMapPanel">
+      <div className="publicSectionTitle"><span>04</span><div><b>Business / Workflow Map</b><small>Deterministic heuristic extraction; no Hermes call.</small></div></div>
+      <p className="analysisSummary">{businessMap.businessSummary}</p>
+      <div className="confidencePill">confidence {Math.round(businessMap.confidence * 100)}%</div>
+      <SummaryRows rows={[
+        ['Inferred industry', businessMap.inferredIndustry ?? 'unknown'],
+        ['Core operations', formatList(businessMap.coreOperations)],
+        ['Recurring workflows', businessMap.recurringWorkflows.map((workflow) => workflow.title).join(', ') || 'none detected'],
+        ['Automation candidates', formatList(businessMap.automationCandidates)],
+        ['Data sources', formatList(businessMap.dataSources)],
+        ['External tools', formatList(businessMap.externalTools)],
+        ['Communication channels', formatList(businessMap.communicationChannels)],
+        ['Approval points', formatList(businessMap.approvalPoints)],
+        ['Outputs needed', formatList(businessMap.outputsNeeded)],
+        ['Notes', formatList(businessMap.notes)]
+      ]} />
+    </div>
+    <div className="analysisPanel templatePanel">
+      <div className="publicSectionTitle"><span>05</span><div><b>Recommended Template Sleeve</b><small>Template metadata only; no Sleeve generated.</small></div></div>
+      <h3>{templateSelection.selectedTemplateTitle}</h3>
+      <div className="row"><span className="confidencePill">confidence {Math.round(templateSelection.confidence * 100)}%</span><span className={`templateStatusBadge status-${selectedTemplate?.status ?? 'planned'}`}>{selectedTemplate?.status ?? 'planned'}</span></div>
+      <p>{templateSelection.reason}</p>
+      <SignalChips values={templateSelection.matchedSignals} />
+      <div className="neoStackSummaryList">
+        {(selectedTemplate?.neoStackSummaries ?? []).map((stack) => <div key={stack.id} className="neoStackSummaryItem"><b>{stack.id} · {stack.title}</b><small>{stack.description}</small></div>)}
+        {!selectedTemplate?.neoStackSummaries.length && <small>No NeoStack summaries are available for this planned template yet.</small>}
+      </div>
+      {templateSelection.warnings.length > 0 && <div className="analysisWarnings"><b>Warnings</b>{templateSelection.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
+      <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
+    </div>
+    <div className="analysisPanel nextStagePanel">
+      <div className="publicSectionTitle"><span>06</span><div><b>Next Stage</b><small>Status: not connected in this phase.</small></div></div>
+      <p><b>Next:</b> Match Blocks and Assemble Sleeve</p>
+      <p>No fake Sleeve generated. No Hermes runtime called. Block matching, missing block generation, Sleeve assembly, compile, Hermes run, and trace visualization remain pending.</p>
+    </div>
+  </section>;
+}
+
+function SummaryRows({ rows }: { rows: Array<[string, string]> }) {
+  return <div className="analysisRows">{rows.map(([label, value]) => <div key={label}><b>{label}</b><span>{value}</span></div>)}</div>;
+}
+
+function SignalChips({ values }: { values: string[] }) {
+  return <div className="matchedSignalChips">{values.length ? values.map((value) => <span key={value}>{value}</span>) : <span>no strong matched signals</span>}</div>;
+}
+
+function formatList(values: string[]) {
+  return values.length ? values.join(', ') : 'none detected';
 }
 
 function LibraryAudit({ report }: { report: any }) {
