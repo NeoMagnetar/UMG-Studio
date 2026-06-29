@@ -33,6 +33,11 @@ import { matchBusinessMapToBusinessAutomationCore } from './lib/umg/businessBloc
 import { detectMissingCapabilities, generateDraftsForMissingCapabilities } from './lib/umg/missingCapabilityDrafts';
 import { createCompileCandidateFromAssemblyPlan, createSleeveAssemblyPlan } from './lib/umg/sleeveAssemblyPlanner';
 import { BlockMatchPlan, CompileCandidate, GeneratedBlockDraft, SleeveAssemblyPlan } from './lib/umg/blockMatchingTypes';
+import { createCompilerInputFromCompileCandidate, createCompilerRequest, validateCompilerInput } from './lib/umg/compileCandidateAdapter';
+import { buildCompilerSleeveInput } from './lib/umg/compilerSleeveInputBuilder';
+import { getCompilerAdapterConfigFromEnv, getCompilerConnectionSummary, compileWithRealCompiler, createHermesRequestPreview } from './lib/umg/umgCompilerAdapter';
+import { UMGCompilerRequest, UMGCompilerResult } from './lib/umg/compilerIntegrationTypes';
+import { HermesCognitiveRuntimeRequest, UMGCompiledRuntimeManifest } from './lib/umg/cognitiveRuntimeTypes';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -223,6 +228,10 @@ export default function App() {
   const [draftReviewState, setDraftReviewState] = useState<GeneratedBlockDraft[]>([]);
   const [sleeveAssemblyPlan, setSleeveAssemblyPlan] = useState<SleeveAssemblyPlan | undefined>();
   const [compileCandidate, setCompileCandidate] = useState<CompileCandidate | undefined>();
+  const [compilerRequestPreview, setCompilerRequestPreview] = useState<UMGCompilerRequest | undefined>();
+  const [compilerResult, setCompilerResult] = useState<UMGCompilerResult | undefined>();
+  const [compiledRuntimeManifest, setCompiledRuntimeManifest] = useState<UMGCompiledRuntimeManifest | undefined>();
+  const [hermesRequestPreview, setHermesRequestPreview] = useState<HermesCognitiveRuntimeRequest | undefined>();
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1620,6 +1629,13 @@ export default function App() {
     setAppSurfaceMode('studio');
   };
 
+  const clearCompilerRuntimeState = () => {
+    setCompilerRequestPreview(undefined);
+    setCompilerResult(undefined);
+    setCompiledRuntimeManifest(undefined);
+    setHermesRequestPreview(undefined);
+  };
+
   const submitPublicIntake = () => {
     const businessInput = createBusinessInputFromPublicIntake({
       goal: publicGoal,
@@ -1637,6 +1653,7 @@ export default function App() {
     setDraftReviewState([]);
     setSleeveAssemblyPlan(undefined);
     setCompileCandidate(undefined);
+    clearCompilerRuntimeState();
     setPublicIntakeSubmitted(true);
     setStatus('Intake analyzed. Template Sleeve selected; Business Automation Core can now be instantiated when selected.');
   };
@@ -1653,6 +1670,7 @@ export default function App() {
     setDraftReviewState([]);
     setSleeveAssemblyPlan(undefined);
     setCompileCandidate(undefined);
+    clearCompilerRuntimeState();
     setSessionSleeves((current) => [instantiated.sleeve, ...current.filter((sleeve) => sleeve.id !== instantiated.sleeve.id)]);
     setWorkspace({
       id: `ws_${BUSINESS_AUTOMATION_CORE_SLEEVE_ID}`,
@@ -1684,6 +1702,7 @@ export default function App() {
     setDraftReviewState(generatedDrafts);
     setSleeveAssemblyPlan(assemblyPlan);
     setCompileCandidate(candidate);
+    clearCompilerRuntimeState();
     setStatus('Block matching, missing capability detection, draft proposals, and assembly plan created locally. Compile remains pending.');
   };
 
@@ -1698,7 +1717,50 @@ export default function App() {
     setBlockMatchPlan(nextPlan);
     setSleeveAssemblyPlan(assemblyPlan);
     setCompileCandidate(candidate);
+    clearCompilerRuntimeState();
     setStatus(decision === 'accepted' ? 'Draft accepted into sleeve-local assembly plan only; source library was not modified.' : 'Draft discarded in assembly plan; source library was not modified.');
+  };
+
+  const runActualUMGCompiler = async () => {
+    if (!compileCandidate || !sleeveAssemblyPlan || !blockMatchPlan || !publicBusinessMap) {
+      setStatus('Create a ready CompileCandidate before compiling with the UMG compiler.');
+      return;
+    }
+    try {
+      const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate, assemblyPlan: sleeveAssemblyPlan, blockMatchPlan, businessMap: publicBusinessMap, businessInput: publicBusinessInput });
+      const validationErrors = validateCompilerInput(compilerInput);
+      const sleeveInputPreview = buildCompilerSleeveInput(compilerInput);
+      const request = createCompilerRequest(compilerInput);
+      setCompilerRequestPreview(request);
+      setCompilerResult(undefined);
+      setCompiledRuntimeManifest(undefined);
+      setHermesRequestPreview(undefined);
+      if (validationErrors.length) {
+        setCompilerResult({ status: 'error', errors: validationErrors.map((message) => ({ code: 'UMG_COMPILER_INPUT_INVALID', message })), warnings: sleeveInputPreview.warnings, raw: { compilerSleeveInputPreview: sleeveInputPreview } });
+        setStatus('Compiler input validation failed. No compiler request was sent.');
+        return;
+      }
+      const config = getCompilerAdapterConfigFromEnv();
+      if (!config.enabled || !config.endpoint) {
+        setCompilerResult({ status: 'not_configured', errors: [{ code: 'UMG_COMPILER_ENDPOINT_NOT_CONFIGURED', message: 'UMG compiler endpoint is not configured.' }], warnings: sleeveInputPreview.warnings, raw: { compilerSleeveInputPreview: sleeveInputPreview } });
+        setStatus('UMG compiler endpoint not configured. Start npm run umg:compiler-bridge and set VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile.');
+        return;
+      }
+      setStatus('Compiling with actual UMG compiler endpoint…');
+      const result = await compileWithRealCompiler(request, config);
+      const mergedResult = { ...result, warnings: [...sleeveInputPreview.warnings, ...result.warnings] };
+      setCompilerResult(mergedResult);
+      if (mergedResult.status === 'ok' && mergedResult.manifest) {
+        setCompiledRuntimeManifest(mergedResult.manifest);
+        setHermesRequestPreview(createHermesRequestPreview({ manifest: mergedResult.manifest, userGoal: publicGoal || publicBusinessInput?.text || 'Run compiled UMG Sleeve', traceId: `trace_preview_${compileCandidate.id}` }));
+        setStatus('Actual UMG compiler succeeded. Hermes request preview prepared but not sent.');
+        return;
+      }
+      setStatus('Actual UMG compiler did not produce a runtime manifest. Run Hermes and Trace Runtime remain pending.');
+    } catch (error) {
+      setCompilerResult({ status: 'error', errors: [{ code: 'UMG_COMPILER_INPUT_BUILD_FAILED', message: error instanceof Error ? error.message : String(error), raw: error }], warnings: [] });
+      setStatus('Failed to build or send UMG compiler request.');
+    }
   };
 
   if (appSurfaceMode === 'public') {
@@ -1716,6 +1778,10 @@ export default function App() {
       draftReviewState={draftReviewState}
       sleeveAssemblyPlan={sleeveAssemblyPlan}
       compileCandidate={compileCandidate}
+      compilerRequestPreview={compilerRequestPreview}
+      compilerResult={compilerResult}
+      compiledRuntimeManifest={compiledRuntimeManifest}
+      hermesRequestPreview={hermesRequestPreview}
       hermesEndpointConfigured={Boolean(config.endpoint)}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
@@ -1725,6 +1791,7 @@ export default function App() {
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onRunBlockMatching={runBusinessAutomationBlockMatching}
       onReviewDraft={updateGeneratedDraftReview}
+      onCompileWithUMGCompiler={runActualUMGCompiler}
       onOpenStudio={() => openStudioShell('canvas')}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
@@ -1936,6 +2003,10 @@ function PublicLandingShell({
   draftReviewState,
   sleeveAssemblyPlan,
   compileCandidate,
+  compilerRequestPreview,
+  compilerResult,
+  compiledRuntimeManifest,
+  hermesRequestPreview,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
@@ -1945,6 +2016,7 @@ function PublicLandingShell({
   onCreateBusinessAutomationCore,
   onRunBlockMatching,
   onReviewDraft,
+  onCompileWithUMGCompiler,
   onOpenStudio,
   onOpenRuntime,
   onOpenDebug
@@ -1962,6 +2034,10 @@ function PublicLandingShell({
   draftReviewState: GeneratedBlockDraft[];
   sleeveAssemblyPlan?: SleeveAssemblyPlan;
   compileCandidate?: CompileCandidate;
+  compilerRequestPreview?: UMGCompilerRequest;
+  compilerResult?: UMGCompilerResult;
+  compiledRuntimeManifest?: UMGCompiledRuntimeManifest;
+  hermesRequestPreview?: HermesCognitiveRuntimeRequest;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -1971,6 +2047,7 @@ function PublicLandingShell({
   onCreateBusinessAutomationCore: () => void;
   onRunBlockMatching: () => void;
   onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void;
+  onCompileWithUMGCompiler: () => void;
   onOpenStudio: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
@@ -1987,6 +2064,7 @@ function PublicLandingShell({
     blockMatched={Boolean(blockMatchPlan)}
     missingGenerated={Boolean(blockMatchPlan)}
     assemblyReady={Boolean(sleeveAssemblyPlan)}
+    compilerComplete={Boolean(compiledRuntimeManifest)}
     hermesEndpointConfigured={hermesEndpointConfigured}
     quickChips={publicQuickChips}
     onGoalChange={onGoalChange}
@@ -1998,7 +2076,7 @@ function PublicLandingShell({
     onOpenRuntime={onOpenRuntime}
     onOpenDebug={onOpenDebug}
   >
-    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onOpenStudio={onOpenStudio} />}
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onOpenStudio={onOpenStudio} />}
   </HackathonLandingPage>;
 }
 
@@ -2033,7 +2111,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onOpenStudio: () => void }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onCompileWithUMGCompiler, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onCompileWithUMGCompiler: () => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
@@ -2088,7 +2166,9 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
     {blockMatchPlan && <MissingCapabilitiesPanel plan={blockMatchPlan} />}
     {blockMatchPlan && <GeneratedDraftsPanel drafts={draftReviewState} onReviewDraft={onReviewDraft} />}
     {sleeveAssemblyPlan && <AssemblyPlanPanel plan={sleeveAssemblyPlan} />}
-    {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} />}
+    {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} onCompile={onCompileWithUMGCompiler} />}
+    {(compileCandidate || compilerRequestPreview || compilerResult || compiledRuntimeManifest) && <CompilerPhase6Panel requestPreview={compilerRequestPreview} result={compilerResult} manifest={compiledRuntimeManifest} />}
+    {hermesRequestPreview && <HermesRequestPreviewPanel request={hermesRequestPreview} />}
     <div className="analysisPanel nextStagePanel">
       <div className="publicSectionTitle"><span>07</span><div><b>Next Stage</b><small>Status: compile/runtime not connected.</small></div></div>
       <p><b>Next:</b> Block matching / Missing block generation / Compile-to-Hermes manifest</p>
@@ -2159,11 +2239,34 @@ function AssemblyPlanPanel({ plan }: { plan: SleeveAssemblyPlan }) {
   </div>;
 }
 
-function CompileCandidatePanel({ candidate }: { candidate: CompileCandidate }) {
+function CompileCandidatePanel({ candidate, onCompile }: { candidate: CompileCandidate; onCompile: () => void }) {
   return <div className="analysisPanel phase5Panel compileCandidatePanel">
     <div className="publicSectionTitle"><span>12</span><div><b>Compile Candidate</b><small>Ready for compiler, not a runtime manifest.</small></div></div>
     <SummaryRows rows={[["compileStatus", candidate.compileStatus], ["source block count", String(candidate.sourceBlocks.length)], ["required tools", candidate.toolPolicySummary.length ? candidate.toolPolicySummary.join(' | ') : 'none declared'], ["trace metadata", JSON.stringify(candidate.traceMetadata)]]} />
+    <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onCompile}>Compile with UMG Compiler</button><span>Requires actual compiler bridge/endpoint; no fake compile.</span></div>
     <div className="analysisWarnings"><b>Warning</b>{candidate.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>
+  </div>;
+}
+
+function CompilerPhase6Panel({ requestPreview, result, manifest }: { requestPreview?: UMGCompilerRequest; result?: UMGCompilerResult; manifest?: UMGCompiledRuntimeManifest }) {
+  const config = getCompilerAdapterConfigFromEnv();
+  const summary = getCompilerConnectionSummary(config);
+  const status = result?.status ?? (summary.configured ? 'ready' : 'not_configured');
+  const runtimeSpec = manifest?.compiledStructure as any;
+  return <div className="analysisPanel phase6CompilerPanel">
+    <div className="publicSectionTitle"><span>13</span><div><b>Actual UMG Compiler Bridge</b><small>Compiler is source of truth; manifest only after real success.</small></div></div>
+    <SummaryRows rows={[["connection", summary.message], ["endpoint", summary.endpoint ?? 'not configured'], ["status", status], ["request prepared", requestPreview ? 'yes' : 'no'], ["manifest created", manifest ? 'yes — real compiler success' : 'no']]} />
+    {!summary.configured && <div className="analysisWarnings"><b>Setup</b><span>npm run umg:compiler-bridge</span><span>VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile</span><span>No UMGCompiledRuntimeManifest is created while endpoint is missing.</span></div>}
+    {requestPreview && <details className="compilerJsonPreview"><summary>Compiler Input Preview</summary><pre>{JSON.stringify(requestPreview.input, null, 2)}</pre></details>}
+    {result && <div className="analysisWarnings"><b>Compiler Result</b>{result.errors.map((error) => <span key={`${error.code}:${error.message}`}>{error.code}: {error.message}</span>)}{result.warnings.map((warning) => <span key={`${warning.code}:${warning.message}`}>{warning.code}: {warning.message}</span>)}</div>}
+    {manifest && <div className="compilerRuntimeSummary"><b>RuntimeSpec / Trace Summary</b><span>sleeveId: {manifest.sleeveId}</span><span>compiledAt: {manifest.compiledAt ?? 'compiler did not provide'}</span><span>executionPlan: {manifest.executionPlan.length}</span><span>sourceBlocks: {manifest.sourceBlocks.length}</span><span>compiler stacks: {Array.isArray(runtimeSpec?.stacks) ? runtimeSpec.stacks.length : 'unknown'}</span><span>compiler neoBlocks: {Array.isArray(runtimeSpec?.neoBlocks) ? runtimeSpec.neoBlocks.length : 'unknown'}</span><span>trace: preserved in traceMetadata.compilerTrace if compiler returned one; no execution trace fabricated.</span></div>}
+  </div>;
+}
+
+function HermesRequestPreviewPanel({ request }: { request: HermesCognitiveRuntimeRequest }) {
+  return <div className="analysisPanel phase6HermesPreviewPanel">
+    <div className="publicSectionTitle"><span>14</span><div><b>Hermes Request Preview — Not Sent</b><small>Prepared only after real compiler success.</small></div></div>
+    <SummaryRows rows={[["status", 'prepared, not sent'], ["traceId", request.traceId], ["executionMode", request.executionMode], ["approvalMode", request.approvalMode], ["userGoal", request.userGoal], ["allowed tools", request.compiledSleeveManifest.toolPolicy.allowedTools.join(', ') || 'none'], ["blocked tools", request.compiledSleeveManifest.toolPolicy.blockedTools.join(', ') || 'none']]} />
   </div>;
 }
 
