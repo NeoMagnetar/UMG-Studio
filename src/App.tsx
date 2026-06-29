@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './style.css';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
-import savedSleeves from '../data/library/sleeves.json';
 import migrationReport from '../data/library/migration-report.json';
 import sourceAuditData from '../data/library/source-assets.json';
 import { normalizeImportedBlocks, classifyLibraryDisplay, sectionLibraryByDisplayType } from './lib/umg/migrateLibrary';
@@ -38,6 +37,15 @@ const universalLayerLabel = (rowLabel: string) => ({
   Details: 'Units'
 }[rowLabel] ?? rowLabel);
 
+const tileBoardRows = [
+  { id: 'layer_1', index: 1, label: 'Frame' },
+  { id: 'layer_2', index: 2, label: 'Sectors' },
+  { id: 'layer_3', index: 3, label: 'Modules' },
+  { id: 'layer_4', index: 4, label: 'Units' }
+] as const;
+
+const tileBoardColumns = 6;
+
 const segmentLayerDisplayLabel = (row: { index: number; label: string }) => `Layer ${row.index} · ${universalLayerLabel(row.label)}`;
 
 const defaultEditableLayerId = (segment?: UMGSegmentLayout) => {
@@ -65,8 +73,8 @@ const ensureSegmentChildPlacement = (segment: UMGSegmentLayout, seededScopeSegme
 
 const sortMatchingTags = (tags: string[], query: string) => {
   const needle = query.trim().toLowerCase();
-  if (!needle) return [...tags].sort((a, b) => a.localeCompare(b));
-  return [...tags]
+  if (!needle) return [...new Set(tags)].sort((a, b) => a.localeCompare(b));
+  return [...new Set(tags)]
     .filter((tag) => tag.toLowerCase().includes(needle))
     .sort((a, b) => {
       const aLower = a.toLowerCase();
@@ -78,11 +86,44 @@ const sortMatchingTags = (tags: string[], query: string) => {
     });
 };
 
+const tagMatchPriority = (tags: string[], query: string) => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return 0;
+  const loweredTags = tags.map((tag) => tag.toLowerCase());
+  if (loweredTags.some((tag) => tag.startsWith(needle))) return 0;
+  if (loweredTags.some((tag) => tag.includes(needle))) return 1;
+  return 2;
+};
+
+const getBlockSearchSortTier = (item: ShelfAsset, query: string) => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return undefined;
+  const block = item.asset as UMGBlock;
+  const title = (item.title || block.title || '').toLowerCase();
+  const roles = [block.role, block.displayType, item.displayType, item.kind].filter(Boolean).map((value) => String(value).toLowerCase());
+  const categories = [block.category].filter(Boolean).map((value) => String(value).toLowerCase());
+  const tags = [...new Set([...(block.tags ?? []), ...item.tags].filter(Boolean).map((value) => String(value).toLowerCase()))];
+  const contentFields = [block.content, block.description, ...item.containedTitles].filter(Boolean).map((value) => String(value).toLowerCase());
+  const secondaryFields = [item.id, block.id, item.sourcePath].filter(Boolean).map((value) => String(value).toLowerCase());
+  const queryTokens = needle.split(/\s+/).filter(Boolean);
+  const matchesTokens = (values: string[]) => queryTokens.every((token) => values.some((value) => value.includes(token)));
+
+  if (title.startsWith(needle)) return 0;
+  if (title.includes(needle)) return 1;
+  if (matchesTokens([...roles, ...categories])) return 2;
+  if (matchesTokens(tags.filter((tag) => tag.startsWith(needle)))) return 3;
+  if (matchesTokens(contentFields)) return 4;
+  if (matchesTokens(secondaryFields)) return 5;
+  return undefined;
+};
+
+const matchesBlockSearch = (item: ShelfAsset, query: string) => getBlockSearchSortTier(item, query) !== undefined;
+
 type InspectorTab = typeof inspectorTabs[number];
 
 type ResizeTarget = 'left' | 'right' | 'bottom';
 type ShelfMode = AssetShelfId;
-type WorkspaceMode = 'compose' | 'canvas' | 'runtime';
+type WorkspaceMode = 'compose' | 'canvas' | 'runtime' | 'debug';
 type GraphViewMode = 'full_sleeve' | 'neostack' | 'neoblock' | 'molt_builder';
 type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
 type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
@@ -105,6 +146,7 @@ export default function App() {
   const [sessionMoltBlocks, setSessionMoltBlocks] = useState<UMGBlock[]>([]);
   const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
   const [sessionNeoStacks, setSessionNeoStacks] = useState<NeoStack[]>([]);
+  const [sessionSleeves, setSessionSleeves] = useState<Sleeve[]>([]);
   const [request, setRequest] = useState(demo);
   const [depth, setDepth] = useState<'lean' | 'balanced' | 'full'>('balanced');
   const [target, setTarget] = useState('chatbot');
@@ -119,13 +161,16 @@ export default function App() {
   const [graphViewMode, setGraphViewMode] = useState<GraphViewMode>('full_sleeve');
   const [showGates, setShowGates] = useState(true);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('canvas');
+  const [lastPrimaryMode, setLastPrimaryMode] = useState<Exclude<WorkspaceMode, 'debug'>>('canvas');
   const [focusGraphMode, setFocusGraphMode] = useState(false);
   const [focusGraphBackup, setFocusGraphBackup] = useState<{ layout: WorkbenchLayoutState; workspaceMode: WorkspaceMode } | undefined>();
+  const isDebugMode = workspaceMode === 'debug';
   const [activeShelf, setActiveShelf] = useState<ShelfMode>('molt_blocks');
   const [pendingTargetItem, setPendingTargetItem] = useState<ShelfAsset | undefined>();
   const [chosenTargets, setChosenTargets] = useState<PlacementTargetIds>({});
   const [search, setSearch] = useState('');
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  const [tagQuery, setTagQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState(defaultStatusFilter);
   const [config, setConfig] = useState<HermesConfig>(() => initialHermesGenerate.config);
@@ -145,6 +190,11 @@ export default function App() {
   const [selectedNeoStackRowId, setSelectedNeoStackRowId] = useState<string | undefined>();
   const selectedNeoStackOwnerRef = useRef<string | undefined>(undefined);
   const [neoStackLayoutNotice, setNeoStackLayoutNotice] = useState('Select a layer, then add a NeoBlock directly into that layer. Layout updates locally.');
+  const [isNeoBlockLibraryPickerOpen, setIsNeoBlockLibraryPickerOpen] = useState(false);
+  const [neoBlockLibrarySearch, setNeoBlockLibrarySearch] = useState('');
+  const [selectedSleeveBoardRowId, setSelectedSleeveBoardRowId] = useState<string | undefined>('layer_1');
+  const [sleeveBoardAssignments, setSleeveBoardAssignments] = useState<Record<string, string>>({});
+  const [isClearGraphModalOpen, setIsClearGraphModalOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -159,9 +209,13 @@ export default function App() {
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
   const localLibraryNeoBlocks = useMemo(() => [...sessionNeoBlocks], [sessionNeoBlocks]);
   const localLibraryNeoStacks = useMemo(() => [...sessionNeoStacks], [sessionNeoStacks]);
-  const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: localLibraryNeoBlocks, neostacks: localLibraryNeoStacks, sleeves: savedSleeves as Sleeve[], sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, localLibraryNeoBlocks, localLibraryNeoStacks, triggerGateSourceCards]);
+  const localLibrarySleeves = useMemo(() => [...sessionSleeves], [sessionSleeves]);
+  const shelves = useMemo(() => buildAssetShelves({ blocks: libraryWithStatus, neoblocks: localLibraryNeoBlocks, neostacks: localLibraryNeoStacks, sleeves: localLibrarySleeves, sourceAuditItems: sourceAuditData as SourceAuditItem[], gateSourceCards: triggerGateSourceCards }), [libraryWithStatus, localLibraryNeoBlocks, localLibraryNeoStacks, localLibrarySleeves, triggerGateSourceCards]);
+  const visibleShelves = useMemo(() => isDebugMode
+    ? shelves
+    : shelves.filter((shelf) => ['molt_blocks', 'neoblocks', 'neostacks', 'sleeves'].includes(shelf.id)), [isDebugMode, shelves]);
   const controlSourceShelf = useMemo(() => shelves.find((shelf) => shelf.id === 'control_sources'), [shelves]);
-  const currentShelf = shelves.find((shelf) => shelf.id === activeShelf) ?? shelves[0];
+  const currentShelf = visibleShelves.find((shelf) => shelf.id === activeShelf) ?? visibleShelves[0] ?? shelves[0];
   const isTriggerCategoryActive = activeShelf === 'molt_blocks' && roleFilter === 'trigger';
   const resolvedShelf = isTriggerCategoryActive ? (controlSourceShelf ?? currentShelf) : currentShelf;
   const promptTriggerCount = useMemo(() => libraryWithStatus.filter((block) => block.displayType === 'trigger').length, [libraryWithStatus]);
@@ -178,17 +232,72 @@ export default function App() {
     meta: libraryWithStatus.filter((block) => block.displayType === 'meta').length
   }), [libraryWithStatus, triggerCategoryCount]);
   const countForRoleFilter = (role: string) => roleFilterCount[role] ?? 0;
-  const visibleItems = useMemo(() => {
-    let items = searchShelfAssets(resolvedShelf.items, { query: search, tags: tagFilters });
-    if (activeShelf === 'molt_blocks' && !isTriggerCategoryActive) {
-      items = items.filter((item) => {
-        const block = item.asset as UMGBlock;
-        return (roleFilter === 'all' || block.displayType === roleFilter) && (statusFilter === 'all' || block.presentationStatus === statusFilter);
-      });
+  const activeTagQuery = tagQuery.trim();
+
+  useEffect(() => {
+    if (workspaceMode !== 'debug') setLastPrimaryMode(workspaceMode);
+  }, [workspaceMode]);
+
+  useEffect(() => {
+    if (!isDebugMode && (activeShelf === 'source_audit' || activeShelf === 'control_sources')) {
+      setActiveShelf('molt_blocks');
     }
-    return items;
-  }, [resolvedShelf, search, tagFilters, activeShelf, roleFilter, statusFilter, isTriggerCategoryActive]);
+  }, [activeShelf, isDebugMode]);
+
+  useEffect(() => {
+    if (!isDebugMode && statusFilter !== defaultStatusFilter) setStatusFilter(defaultStatusFilter);
+  }, [isDebugMode, statusFilter]);
+
+  useEffect(() => {
+    if (!isDebugMode && roleFilter === 'trigger') setRoleFilter('all');
+  }, [isDebugMode, roleFilter]);
+
+  const visibleItems = useMemo(() => {
+    if (activeShelf === 'molt_blocks' && !isTriggerCategoryActive) {
+      const normalizedSearch = search.trim();
+      return resolvedShelf.items
+        .filter((item) => {
+          const block = item.asset as UMGBlock;
+          const roleMatches = roleFilter === 'all' || block.displayType === roleFilter;
+          const statusMatches = (isDebugMode ? statusFilter : defaultStatusFilter) === 'all' || block.presentationStatus === (isDebugMode ? statusFilter : defaultStatusFilter);
+          const selectedTagsMatch = tagFilters.every((tag) => item.tags.some((itemTag) => itemTag.toLowerCase() === tag.toLowerCase()));
+          const blockSearchMatches = matchesBlockSearch(item, normalizedSearch);
+          const liveTagMatches = !activeTagQuery || tagMatchPriority(item.tags, activeTagQuery) < 2;
+          return roleMatches && statusMatches && selectedTagsMatch && blockSearchMatches && liveTagMatches;
+        })
+        .map((item, index) => ({
+          item,
+          index,
+          tagPriority: activeTagQuery ? tagMatchPriority(item.tags, activeTagQuery) : 0,
+          blockSearchTier: normalizedSearch ? getBlockSearchSortTier(item, normalizedSearch) ?? Number.MAX_SAFE_INTEGER : undefined,
+          title: item.title.toLowerCase()
+        }))
+        .sort((a, b) => {
+          if (normalizedSearch) {
+            if (a.blockSearchTier !== b.blockSearchTier) return (a.blockSearchTier ?? Number.MAX_SAFE_INTEGER) - (b.blockSearchTier ?? Number.MAX_SAFE_INTEGER);
+            return a.title.localeCompare(b.title);
+          }
+          if (activeTagQuery && a.tagPriority !== b.tagPriority) return a.tagPriority - b.tagPriority;
+          return a.index - b.index;
+        })
+        .map(({ item }) => item);
+    }
+    return searchShelfAssets(resolvedShelf.items, { query: search, tags: tagFilters });
+  }, [resolvedShelf, search, tagFilters, activeShelf, roleFilter, statusFilter, isTriggerCategoryActive, activeTagQuery, isDebugMode]);
   const visibleTags = useMemo(() => [...new Set(resolvedShelf.items.flatMap((item) => item.tags))].filter(Boolean).sort((a, b) => a.localeCompare(b)), [resolvedShelf]);
+  const filteredLibraryNeoBlocks = useMemo(() => {
+    const needle = neoBlockLibrarySearch.trim().toLowerCase();
+    if (!needle) return localLibraryNeoBlocks;
+    return localLibraryNeoBlocks.filter((neoblock) => {
+      const haystack = [
+        neoblock.title,
+        neoblock.description,
+        neoblock.category,
+        neoblock.tags.join(' ')
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [localLibraryNeoBlocks, neoBlockLibrarySearch]);
   const graph = workspace?.graph;
   const activeSleeve = useMemo(() => {
     if (!workspace?.sleeves?.length) return undefined;
@@ -479,6 +588,20 @@ export default function App() {
     '--bottomHeight': `${layout.bottomHeight}px`
   } as React.CSSProperties;
 
+  const setPrimaryWorkspaceMode = (mode: Exclude<WorkspaceMode, 'debug'>) => {
+    setLastPrimaryMode(mode);
+    setWorkspaceMode(mode);
+  };
+
+  const toggleDebugMode = () => {
+    if (workspaceMode === 'debug') {
+      setWorkspaceMode(lastPrimaryMode);
+      return;
+    }
+    setLastPrimaryMode(workspaceMode as Exclude<WorkspaceMode, 'debug'>);
+    setWorkspaceMode('debug');
+  };
+
   const enterFocusGraph = () => {
     if (focusGraphMode) return;
     setFocusGraphBackup({ layout, workspaceMode });
@@ -642,15 +765,17 @@ export default function App() {
     if (!currentNeoBlock) return setStatus('select a NeoBlock first');
     const sourceBlock = currentNeoBlock.blocks.find((entry: UMGBlock) => entry.id === blockId);
     if (!sourceBlock) return setStatus('select a MOLT block first');
-    const savedBlock = structuredClone(sourceBlock);
-    savedBlock.id = createLocalId('local_molt');
-    savedBlock.sourceLayer = 'local';
-    savedBlock.source = { origin: 'workspace', sourceId: sourceBlock.id, version: '0.1' };
-    setSessionMoltBlocks((current) => [...current, savedBlock]);
+    const result = appendVersionedSessionItem(sessionMoltBlocks, sourceBlock, (title) => cloneBlockForSession(sourceBlock, title));
+    if (!result.saved) {
+      setStatus(`${sourceBlock.title} already exists in the session MOLT shelf`);
+      setBuilderFeedback(`Skipped duplicate save for ${sourceBlock.title}.`, blockId, 'Duplicate');
+      return;
+    }
+    setSessionMoltBlocks(result.next);
     setActiveShelf('molt_blocks');
     setRoleFilter(sourceBlock.role);
-    setStatus(`saved ${sourceBlock.title} to local MOLT library`);
-    setBuilderFeedback(`Saved ${sourceBlock.title} to session shelf. Source library unchanged.`, blockId, 'Saved to shelf');
+    setStatus(`saved ${result.saved.title} to local MOLT library`);
+    setBuilderFeedback(`Saved ${result.saved.title} to session shelf. Source library unchanged.`, blockId, 'Saved to shelf');
   };
 
   const removeBuilderBlock = (blockId: string) => {
@@ -678,6 +803,20 @@ export default function App() {
       setInspected(undefined);
     }
     setInspectorTab('Card');
+  };
+
+  const focusNeoStackCard = (neostackId: string) => {
+    const node = graph?.nodes.find((candidate) => candidate.nodeType === 'neostack' && (candidate.sourceId === neostackId || candidate.id === neostackId));
+    if (node) {
+      setSelected(node);
+      setInspected(undefined);
+      return;
+    }
+    const neostack = activeSleeve?.stacks.find((stack) => stack.id === neostackId);
+    if (neostack) {
+      setChosenTargets((current) => ({ ...current, neostackId: neostack.id, neoblockId: undefined }));
+      setInspected(undefined);
+    }
   };
 
   const focusNeoBlockCard = (neoblockId: string) => {
@@ -743,6 +882,8 @@ export default function App() {
     setSelected(undefined);
     setPendingTargetItem(undefined);
     setChosenTargets({});
+    setSelectedSleeveBoardRowId('layer_1');
+    setSleeveBoardAssignments({});
     setStatus(`composed ${nextWorkspace.graph.nodes.length} nodes with ${composition.warnings.length} warnings`);
   };
 
@@ -791,6 +932,178 @@ export default function App() {
 
   const createLocalId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+  const stripVersionSuffix = (title: string) => title.replace(/\s+\(V\d+\)$/i, '').trim();
+
+  const nextVersionedTitle = (title: string, existingTitles: string[]) => {
+    const baseTitle = stripVersionSuffix(title) || 'Untitled';
+    const matchingVersions = existingTitles.reduce((versions, existingTitle) => {
+      const trimmed = existingTitle.trim();
+      if (stripVersionSuffix(trimmed).toLowerCase() !== baseTitle.toLowerCase()) return versions;
+      const match = trimmed.match(/\(V(\d+)\)$/i);
+      versions.push(match ? Number(match[1]) : 1);
+      return versions;
+    }, [] as number[]);
+    if (!matchingVersions.length) return baseTitle;
+    return `${baseTitle} (V${Math.max(2, Math.max(...matchingVersions) + 1)})`;
+  };
+
+  const normalizeComparable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalizeComparable);
+    if (!value || typeof value !== 'object') return value;
+    return Object.entries(value as Record<string, unknown>).reduce((acc, [key, entry]) => {
+      if (key === 'id' || key === 'source' || key === 'sourceLayer') return acc;
+      if (key === 'title' && typeof entry === 'string') {
+        acc[key] = stripVersionSuffix(entry);
+        return acc;
+      }
+      acc[key] = normalizeComparable(entry);
+      return acc;
+    }, {} as Record<string, unknown>);
+  };
+
+  const isComparableDuplicate = <T extends { title: string }>(source: T, existing: T) => JSON.stringify(normalizeComparable(source)) === JSON.stringify(normalizeComparable(existing));
+
+  const remapSegmentLayoutOccupants = (segment: UMGSegmentLayout | undefined, idMap: Record<string, string>, ownerScopeId: string) => {
+    if (!segment) return undefined;
+    const nextSegment = structuredClone(segment);
+    nextSegment.id = createLocalId('segment');
+    nextSegment.ownerScopeId = ownerScopeId;
+    nextSegment.rows = nextSegment.rows.map((row) => ({ ...row, id: createLocalId('segment_row') }));
+    const rowIdMap = Object.fromEntries(segment.rows.map((row, index) => [row.id, nextSegment.rows[index].id]));
+    nextSegment.slots = nextSegment.slots.map((slot) => ({
+      ...slot,
+      id: createLocalId('segment_slot'),
+      rowId: rowIdMap[slot.rowId] ?? slot.rowId,
+      occupantId: slot.occupantId ? (idMap[slot.occupantId] ?? slot.occupantId) : slot.occupantId,
+      parentSlotId: slot.parentSlotId
+    }));
+    const slotIdMap = Object.fromEntries(segment.slots.map((slot, index) => [slot.id, nextSegment.slots[index].id]));
+    nextSegment.slots = nextSegment.slots.map((slot) => ({
+      ...slot,
+      parentSlotId: slot.parentSlotId ? (slotIdMap[slot.parentSlotId] ?? slot.parentSlotId) : undefined
+    }));
+    nextSegment.relations = nextSegment.relations.map((relation) => ({
+      ...relation,
+      id: createLocalId('segment_relation'),
+      sourceSlotId: slotIdMap[relation.sourceSlotId] ?? relation.sourceSlotId,
+      targetSlotId: slotIdMap[relation.targetSlotId] ?? relation.targetSlotId
+    }));
+    nextSegment.gates = nextSegment.gates.map((gate) => ({ ...gate, id: createLocalId('segment_gate') }));
+    return nextSegment;
+  };
+
+  const cloneBlockForSession = (block: UMGBlock, title = block.title) => {
+    const nextBlock = structuredClone(block);
+    nextBlock.id = createLocalId('local_molt');
+    nextBlock.title = title;
+    nextBlock.sourceLayer = 'local';
+    nextBlock.source = { origin: 'workspace', sourceId: block.id, version: '0.1' };
+    return nextBlock;
+  };
+
+  const cloneNeoBlockForSession = (neoblock: NeoBlock, title = neoblock.title) => {
+    const nextNeoBlock = structuredClone(neoblock) as NeoBlock & { sourceLayer?: string };
+    nextNeoBlock.id = createLocalId('local_neoblock');
+    nextNeoBlock.title = title;
+    nextNeoBlock.sourceLayer = 'local';
+    nextNeoBlock.blocks = nextNeoBlock.blocks.map((block) => cloneBlockForSession(block));
+    return nextNeoBlock;
+  };
+
+  const cloneNeoStackForSession = (neostack: NeoStack, title = neostack.title) => {
+    const nextNeoStack = structuredClone(neostack) as NeoStack & { sourceLayer?: string };
+    nextNeoStack.id = createLocalId('local_neostack');
+    nextNeoStack.title = title;
+    nextNeoStack.sourceLayer = 'local';
+    const neoblockIdMap: Record<string, string> = {};
+    nextNeoStack.neoblocks = nextNeoStack.neoblocks.map((neoblock) => {
+      const cloned = cloneNeoBlockForSession(neoblock);
+      neoblockIdMap[neoblock.id] = cloned.id;
+      return cloned;
+    });
+    nextNeoStack.directBlocks = nextNeoStack.directBlocks?.map((block) => cloneBlockForSession(block));
+    nextNeoStack.segmentLayout = remapSegmentLayoutOccupants(nextNeoStack.segmentLayout, neoblockIdMap, nextNeoStack.id);
+    return nextNeoStack;
+  };
+
+  const cloneSleeveForSession = (sleeve: Sleeve, title = sleeve.title) => {
+    const nextSleeve = structuredClone(sleeve) as Sleeve & { sourceLayer?: string };
+    nextSleeve.id = createLocalId('local_sleeve');
+    nextSleeve.title = title;
+    nextSleeve.sourceLayer = 'local';
+    nextSleeve.stacks = nextSleeve.stacks.map((stack) => cloneNeoStackForSession(stack));
+    return nextSleeve;
+  };
+
+  const appendVersionedSessionItem = <T extends { title: string }>(current: T[], source: T, cloneWithTitle: (title: string) => T) => {
+    const matchingItems = current.filter((item) => stripVersionSuffix(item.title).toLowerCase() === stripVersionSuffix(source.title).toLowerCase());
+    const duplicate = matchingItems.find((item) => isComparableDuplicate(source, item));
+    if (duplicate) return { next: current, saved: undefined, duplicate: true };
+    const nextTitle = nextVersionedTitle(source.title, matchingItems.map((item) => item.title));
+    const saved = cloneWithTitle(nextTitle);
+    return { next: [...current, saved], saved, duplicate: false };
+  };
+
+  const saveCurrentGraphToSessionShelves = (sleeve: Sleeve) => {
+    let nextMoltBlocks = sessionMoltBlocks;
+    let nextNeoBlocks = sessionNeoBlocks;
+    let nextNeoStacks = sessionNeoStacks;
+    let nextSleeves = sessionSleeves;
+    let savedMoltCount = 0;
+    let savedNeoBlockCount = 0;
+    let savedNeoStackCount = 0;
+    let savedSleeveCount = 0;
+
+    for (const stack of sleeve.stacks) {
+      for (const neoblock of stack.neoblocks) {
+        for (const block of neoblock.blocks) {
+          const result = appendVersionedSessionItem(nextMoltBlocks, block, (title) => cloneBlockForSession(block, title));
+          nextMoltBlocks = result.next;
+          if (result.saved) savedMoltCount += 1;
+        }
+        const neoblockResult = appendVersionedSessionItem(nextNeoBlocks, neoblock, (title) => cloneNeoBlockForSession(neoblock, title));
+        nextNeoBlocks = neoblockResult.next;
+        if (neoblockResult.saved) savedNeoBlockCount += 1;
+      }
+      const neostackResult = appendVersionedSessionItem(nextNeoStacks, stack, (title) => cloneNeoStackForSession(stack, title));
+      nextNeoStacks = neostackResult.next;
+      if (neostackResult.saved) savedNeoStackCount += 1;
+    }
+
+    const sleeveResult = appendVersionedSessionItem(nextSleeves, sleeve, (title) => cloneSleeveForSession(sleeve, title));
+    nextSleeves = sleeveResult.next;
+    if (sleeveResult.saved) savedSleeveCount += 1;
+
+    setSessionMoltBlocks(nextMoltBlocks);
+    setSessionNeoBlocks(nextNeoBlocks);
+    setSessionNeoStacks(nextNeoStacks);
+    setSessionSleeves(nextSleeves);
+
+    return { savedMoltCount, savedNeoBlockCount, savedNeoStackCount, savedSleeveCount };
+  };
+
+  const resetCurrentGraphState = (statusMessage: string) => {
+    setWorkspace(undefined);
+    setCompiled(undefined);
+    setSelected(undefined);
+    setInspected(undefined);
+    setPendingTargetItem(undefined);
+    setChosenTargets({});
+    setSelectedNeoStackRowId(undefined);
+    setEditingMoltId(undefined);
+    setEditingMoltDraft(undefined);
+    setIsEditingNeoStackLayout(false);
+    setEditingNeoStackLayoutId(undefined);
+    setDraftNeoStackSegment(undefined);
+    setGraphViewMode('full_sleeve');
+    setSelectedSleeveBoardRowId('layer_1');
+    setSleeveBoardAssignments({});
+    setIsNeoBlockLibraryPickerOpen(false);
+    setNeoBlockLibrarySearch('');
+    setIsClearGraphModalOpen(false);
+    setStatus(statusMessage);
+  };
+
   const nextUniqueHierarchyTitle = (prefix: 'NeoStack' | 'NeoBlock', existingTitles: string[]) => {
     const usedTitles = new Set(existingTitles.map((title) => title.trim().toLowerCase()));
     let index = 1;
@@ -835,7 +1148,22 @@ export default function App() {
     setChosenTargets({});
     setInspected(undefined);
     setGraphViewMode('full_sleeve');
+    setSelectedSleeveBoardRowId('layer_1');
+    setSleeveBoardAssignments({});
     setStatus(`created blank Sleeve ${nextSleeve.title}`);
+  };
+
+  const clearCurrentGraph = (saveFirst: boolean) => {
+    if (!activeSleeve) {
+      setIsClearGraphModalOpen(false);
+      return;
+    }
+    if (saveFirst) {
+      const saved = saveCurrentGraphToSessionShelves(activeSleeve);
+      resetCurrentGraphState(`saved ${saved.savedSleeveCount} Sleeve, ${saved.savedNeoStackCount} NeoStacks, ${saved.savedNeoBlockCount} NeoBlocks, and ${saved.savedMoltCount} MOLT blocks; canvas cleared`);
+      return;
+    }
+    resetCurrentGraphState('cleared current graph without saving');
   };
 
   const createNewNeoStack = () => {
@@ -854,6 +1182,9 @@ export default function App() {
       compileStrategy: 'role_then_priority'
     };
     nextSleeve.stacks.push(nextNeoStack);
+    if (selectedSleeveBoardRowId) {
+      setSleeveBoardAssignments((current) => ({ ...current, [nextNeoStack.id]: selectedSleeveBoardRowId }));
+    }
     setChosenTargets({ neostackId: nextNeoStack.id, neoblockId: undefined });
     replaceActiveSleeve(nextSleeve, nextNeoStack.id);
     setGraphViewMode('full_sleeve');
@@ -894,24 +1225,60 @@ export default function App() {
     setNeoStackLayoutNotice(`Added ${title} to ${targetLayerLabel}. Layout updated locally.`);
   };
 
+  const openNeoBlockLibraryPicker = () => {
+    setNeoBlockLibrarySearch('');
+    setIsNeoBlockLibraryPickerOpen(true);
+  };
+
+  const closeNeoBlockLibraryPicker = () => {
+    setNeoBlockLibrarySearch('');
+    setIsNeoBlockLibraryPickerOpen(false);
+  };
+
+  const insertNeoBlockFromLibrary = (libraryNeoBlock: NeoBlock) => {
+    if (!activeSleeve || !currentNeoStack) return setStatus('select or create a NeoStack first');
+    if (!selectedNeoStackRowId || !selectedNeoStackRow) {
+      setStatus('select a layer before inserting a NeoBlock');
+      setNeoStackLayoutNotice('Select a layer before inserting a NeoBlock.');
+      return;
+    }
+    const nextSleeve = structuredClone(activeSleeve);
+    const targetNeoStack = nextSleeve.stacks.find((stack) => stack.id === currentNeoStack.id);
+    if (!targetNeoStack) return setStatus('active NeoStack is unavailable');
+
+    const nextNeoBlock = cloneWorkspaceNeoBlock(libraryNeoBlock);
+    nextNeoBlock.id = createLocalId('neoblock');
+    targetNeoStack.neoblocks.push(nextNeoBlock);
+
+    const seededScopeSegment = buildDefaultSegmentForScope(normalizeNeoStack(targetNeoStack));
+    const baseSegment = cloneSegmentLayout(targetNeoStack.segmentLayout ?? seededScopeSegment);
+    targetNeoStack.segmentLayout = ensureSegmentChildPlacement(baseSegment, seededScopeSegment, nextNeoBlock.id, selectedNeoStackRowId);
+    const targetLayerLabel = segmentLayerDisplayLabel(selectedNeoStackRow);
+
+    setChosenTargets({ neostackId: targetNeoStack.id, neoblockId: nextNeoBlock.id });
+    replaceActiveSleeve(nextSleeve, nextNeoBlock.id);
+    setGraphViewMode('neostack');
+    setStatus(`added ${nextNeoBlock.title} from library to ${targetLayerLabel}`);
+    setNeoStackLayoutNotice(`Added ${nextNeoBlock.title} from library to ${targetLayerLabel}.`);
+    closeNeoBlockLibraryPicker();
+  };
+
   const saveCurrentNeoBlockToLocalLibrary = () => {
     if (!currentNeoBlock) return setStatus('select a NeoBlock first');
-    const savedNeoBlock = structuredClone(currentNeoBlock) as NeoBlock & { sourceLayer?: string };
-    savedNeoBlock.id = createLocalId('local_neoblock');
-    savedNeoBlock.sourceLayer = 'local';
-    setSessionNeoBlocks((current) => [...current, savedNeoBlock]);
+    const result = appendVersionedSessionItem(sessionNeoBlocks, currentNeoBlock, (title) => cloneNeoBlockForSession(currentNeoBlock, title));
+    if (!result.saved) return setStatus(`${currentNeoBlock.title} already exists in the session NeoBlock shelf`);
+    setSessionNeoBlocks(result.next);
     setActiveShelf('neoblocks');
-    setStatus(`saved NeoBlock ${currentNeoBlock.title} to local library`);
+    setStatus(`saved NeoBlock ${result.saved.title} to local library`);
   };
 
   const saveCurrentNeoStackToLocalLibrary = () => {
     if (!currentNeoStack) return setStatus('select a NeoStack first');
-    const savedNeoStack = structuredClone(currentNeoStack) as NeoStack & { sourceLayer?: string };
-    savedNeoStack.id = createLocalId('local_neostack');
-    savedNeoStack.sourceLayer = 'local';
-    setSessionNeoStacks((current) => [...current, savedNeoStack]);
+    const result = appendVersionedSessionItem(sessionNeoStacks, currentNeoStack, (title) => cloneNeoStackForSession(currentNeoStack, title));
+    if (!result.saved) return setStatus(`${currentNeoStack.title} already exists in the session NeoStack shelf`);
+    setSessionNeoStacks(result.next);
     setActiveShelf('neostacks');
-    setStatus(`saved NeoStack ${currentNeoStack.title} to local library`);
+    setStatus(`saved NeoStack ${result.saved.title} to local library`);
   };
 
   const addActionLabel = (item: ShelfAsset) => {
@@ -919,9 +1286,11 @@ export default function App() {
     if (item.kind === 'sleeve') return 'Open Sleeve';
     if (item.kind === 'neostack') return workspace ? 'Add to Sleeve' : 'Add to Workspace';
     if (item.kind === 'neoblock') return activeTargetNeoStack ? 'Add to NeoStack' : 'Choose Target...';
-    if (item.kind === 'molt_block') return activeTargetNeoBlock ? 'Add to NeoBlock' : 'Choose Target...';
+    if (item.kind === 'molt_block') return activeTargetNeoBlock ? 'Add to Selected NeoBlock' : isDebugMode ? 'Choose Target...' : 'Add to Selected NeoBlock';
     return 'Add to Workspace';
   };
+  const isAddActionDisabled = (item: ShelfAsset) => !isDebugMode && item.kind === 'molt_block' && !activeTargetNeoBlock;
+  const addActionHint = (item: ShelfAsset) => item.kind === 'molt_block' && !activeTargetNeoBlock ? 'Create or select a NeoBlock first.' : undefined;
 
   const addAsset = (item: ShelfAsset, targetIds: PlacementTargetIds = {}) => {
     if (item.kind === 'source_asset') {
@@ -1215,10 +1584,11 @@ export default function App() {
   return <div className="app">
     <header>
       <div><b>UMG Studio v0.1</b><span>local graph cognition studio</span></div>
-      <nav className="modeTabs" aria-label="Workbench mode">
-        <button className={workspaceMode === 'compose' ? 'hot' : ''} onClick={() => setWorkspaceMode('compose')}>Compose</button>
-        <button className={workspaceMode === 'canvas' ? 'hot' : ''} onClick={() => setWorkspaceMode('canvas')}>Canvas</button>
-        <button className={workspaceMode === 'runtime' ? 'hot' : ''} onClick={() => setWorkspaceMode('runtime')}>Runtime</button>
+      <nav className={`modeTabs modeTabs-${workspaceMode}`} aria-label="Workbench mode">
+        <button className={workspaceMode === 'compose' ? 'hot' : ''} onClick={() => setPrimaryWorkspaceMode('compose')}>Compose</button>
+        <button className={workspaceMode === 'canvas' ? 'hot' : ''} onClick={() => setPrimaryWorkspaceMode('canvas')}>Canvas</button>
+        <button className={workspaceMode === 'runtime' ? 'hot' : ''} onClick={() => setPrimaryWorkspaceMode('runtime')}>Runtime</button>
+        <button className={workspaceMode === 'debug' ? 'hot' : ''} onClick={toggleDebugMode}>{workspaceMode === 'debug' ? 'Debug On' : 'Debug'}</button>
       </nav>
     </header>
     <main className={classes} style={layoutStyle}>
@@ -1245,39 +1615,62 @@ export default function App() {
       </section>
       <section className="library card">
         <div className="panelTitle">
-          <h2>Library & Control Sources</h2>
+          <h2>{isDebugMode ? 'Library + Debug Sources' : 'Library'}</h2>
           <button onClick={() => setLayout((current) => ({ ...current, leftCollapsed: !current.leftCollapsed }))}>{layout.leftCollapsed ? 'Expand' : 'Collapse'}</button>
         </div>
         <ShelfControls
-          shelves={shelves}
+          shelves={visibleShelves}
           activeShelf={activeShelf}
           setActiveShelf={(shelf: ShelfMode) => {
             setActiveShelf(shelf);
             setTagFilters([]);
+            setTagQuery('');
           }}
           search={search}
           setSearch={setSearch}
           tagFilters={tagFilters}
           setTagFilters={setTagFilters}
+          tagQuery={tagQuery}
+          setTagQuery={setTagQuery}
           visibleTags={visibleTags}
-          filtered={Boolean(search || tagFilters.length || roleFilter !== 'all' || statusFilter !== defaultStatusFilter)}
+          filtered={Boolean(search || tagFilters.length || activeTagQuery || roleFilter !== 'all' || (isDebugMode && statusFilter !== defaultStatusFilter))}
           shown={visibleItems.length}
           total={resolvedShelf.items.length}
           roleFilter={roleFilter}
+          statusFilter={statusFilter}
+          searchQuery={search}
+          setRoleFilter={setRoleFilter}
+          countForRoleFilter={countForRoleFilter}
+          activeShelfStats={activeShelf === 'molt_blocks' ? {
+            roleFilter,
+            statusFilter,
+            shown: visibleItems.length,
+            total: resolvedShelf.items.length,
+            triggerGateSourceCount: triggerCategoryCount,
+            promptTriggerCount,
+            statusCounts,
+            roleFilterCount
+          } : undefined}
+          debugMode={isDebugMode}
+          setStatusFilter={setStatusFilter}
           clear={() => {
             setSearch('');
             setTagFilters([]);
+            setTagQuery('');
             setRoleFilter('all');
             setStatusFilter(defaultStatusFilter);
           }}
         />
-        {activeShelf === 'molt_blocks' && <BuilderShelfHeader roleFilter={roleFilter} statusFilter={statusFilter} shown={visibleItems.length} total={resolvedShelf.items.length} triggerGateSourceCount={triggerCategoryCount} promptTriggerCount={promptTriggerCount} aiInstructionCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'instruction').length} aiSubjectCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'subject').length} aiPrimaryCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'primary').length} aiDirectiveCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'directive').length} aiPhilosophyCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'philosophy').length} aiBlueprintCount={libraryWithStatus.filter((block) => block.sourceLayer === 'AI' && block.role === 'blueprint').length} />}
-        {activeShelf === 'source_audit' && <AuditShelfBanner total={currentShelf.items.length} />}
-        {activeShelf === 'control_sources' && <ControlSourcesBanner total={currentShelf.items.length} />}
-        {activeShelf === 'molt_blocks' && <div className="filterGroup"><b>Role filter</b><div className="filterBar roleSubsections"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => setRoleFilter('all')}>All MOLT + Meta ({countForRoleFilter('all')})</button>{roles.map((role) => <button key={role} className={roleFilter === role ? 'hot roleHot' : ''} onClick={() => setRoleFilter(role)}>{labelDisplayType(role)} ({countForRoleFilter(role)})</button>)}<button className={roleFilter === 'meta' ? 'hot metaHot roleHot' : ''} onClick={() => setRoleFilter('meta')}>Meta ({countForRoleFilter('meta')})</button></div></div>}
-        {activeShelf === 'molt_blocks' && roleFilter !== 'trigger' && <div className="filterGroup"><b>Status filter</b><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? roleFilter === 'all' ? libraryWithStatus.length : countForRoleFilter(roleFilter) : statusCounts[s] ?? 0)}</button>)}</div></div>}
-        {activeShelf === 'source_audit' ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} /> : <><ActiveTargetBanner sleeve={activeSleeve} neostack={activeTargetNeoStack} neoblock={activeTargetNeoBlock} pendingItem={pendingTargetItem} onClearPending={() => setPendingTargetItem(undefined)} onTryRemoveSleeveRoot={() => setStatus('cannot remove the Sleeve root from this workspace')} />{pendingTargetItem && <TargetPickerPanel item={pendingTargetItem} choices={pendingTargetChoices} onChoose={(choice) => { setActivePlacementChoice(choice); addAsset(pendingTargetItem, { neostackId: choice.neostackId, neoblockId: choice.neoblockId }); }} onCancel={() => { setPendingTargetItem(undefined); setStatus('target selection cancelled'); }} />}<AssetCards items={visibleItems} onAdd={requestAddAsset} onInspect={inspectAsset} getAddLabel={addActionLabel} /></>}
-        {activeShelf === 'molt_blocks' && <details className="secondaryAudit"><summary>Source Assets / Audit — secondary import accountability</summary><LibraryAudit report={migrationReport as any} />{sections.map((section) => <div key={section.type}>{section.label} ({section.blocks.length})</div>)}</details>}
+        {activeShelf === 'source_audit' && isDebugMode && <AuditShelfBanner total={currentShelf.items.length} />}
+        {activeShelf === 'control_sources' && isDebugMode && <ControlSourcesBanner total={currentShelf.items.length} />}
+        {activeShelf === 'source_audit'
+          ? <SourceAuditTable items={visibleItems} onInspect={inspectAsset} />
+          : <>
+              {isDebugMode && <ActiveTargetBanner sleeve={activeSleeve} neostack={activeTargetNeoStack} neoblock={activeTargetNeoBlock} pendingItem={pendingTargetItem} onClearPending={() => setPendingTargetItem(undefined)} onTryRemoveSleeveRoot={() => setStatus('cannot remove the Sleeve root from this workspace')} />}
+              {pendingTargetItem && <TargetPickerPanel item={pendingTargetItem} choices={pendingTargetChoices} onChoose={(choice) => { setActivePlacementChoice(choice); addAsset(pendingTargetItem, { neostackId: choice.neostackId, neoblockId: choice.neoblockId }); }} onCancel={() => { setPendingTargetItem(undefined); setStatus('target selection cancelled'); }} />}
+              <AssetCards items={visibleItems} onAdd={requestAddAsset} onInspect={inspectAsset} getAddLabel={addActionLabel} isAddDisabled={isAddActionDisabled} getAddHint={addActionHint} emptyState={activeShelf === 'molt_blocks' && !isTriggerCategoryActive ? roleFilter !== 'all' ? `No ${labelDisplayType(roleFilter)} blocks match the current block search and tag filters.` : 'No blocks match the current type, block search, and tag filters.' : undefined} debugMode={isDebugMode} />
+            </>}
+        {activeShelf === 'molt_blocks' && isDebugMode && <details className="secondaryAudit"><summary>Source Assets / Audit — secondary import accountability</summary><LibraryAudit report={migrationReport as any} />{sections.map((section) => <div key={section.type}>{section.label} ({section.blocks.length})</div>)}</details>}
       </section>
       <div className="split vertical leftSplit" onPointerDown={(event) => startResize('left', event)} role="separator" aria-label="Resize library panel" />
       <section className="graph card">
@@ -1298,11 +1691,16 @@ export default function App() {
             <button className={graphViewMode === 'neostack' ? 'hot' : ''} onClick={() => setGraphViewMode('neostack')}>NeoStack</button>
             <button className={graphViewMode === 'neoblock' ? 'hot' : ''} onClick={() => setGraphViewMode('neoblock')}>NeoBlock</button>
             <button className={graphViewMode === 'molt_builder' ? 'hot' : ''} onClick={() => setGraphViewMode('molt_builder')}>MOLT Builder</button>
-            <button className={showGates ? 'hot' : ''} onClick={() => setShowGates((current) => !current)}>Show Gates</button>
+            <button className={showGates ? 'hot' : ''} onClick={() => setShowGates((current) => !current)}>{showGates ? 'Hide Gates' : 'Show Gates'}</button>
             <button className={focusGraphMode ? 'hot' : ''} onClick={() => focusGraphMode ? exitFocusGraph() : enterFocusGraph()}>{focusGraphMode ? 'Exit Focus' : 'Focus Graph'}</button>
+            <button type="button" onClick={() => setIsClearGraphModalOpen(true)} disabled={!activeSleeve}>Clear Graph</button>
             <button onClick={() => setGraphViewMode('full_sleeve')} className={graphViewMode === 'full_sleeve' ? 'hot' : ''}>Reset View</button>
           </div>
         </div>
+        <ScopeStatusBar graphViewMode={graphViewMode} activeSleeve={activeSleeve} activeNeoStack={currentNeoStack} activeNeoBlock={currentNeoBlock} selectedLayer={selectedNeoStackRow} onOpenMoltBuilder={() => setGraphViewMode('molt_builder')} />
+        <div className="graphViewport">
+        {isDebugMode && graphViewMode === 'full_sleeve' && <ControllerDebugPanel controller={displaySleeve?.rootController} scopeKind="Sleeve" scopeId={activeSleeve?.id} />}
+        {isDebugMode && graphViewMode === 'neostack' && <ControllerDebugPanel controller={displayNeoStack?.rootController} scopeKind="NeoStack" scopeId={currentNeoStack?.id} />}
         {graphViewMode === 'molt_builder'
           ? <MoltBuilderPanel
             neoblock={currentNeoBlock}
@@ -1325,7 +1723,7 @@ export default function App() {
           : displayGraph
             ? <>
               {graphViewMode === 'full_sleeve'
-                ? <FullSleeveViewSummary sleeve={activeSleeve} displaySleeve={displaySleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} />
+                ? <FullSleeveViewSummary sleeve={activeSleeve} activeNeoStack={currentNeoStack} onNewNeoStack={createNewNeoStack} onFocusNeoStack={focusNeoStackCard} selectedRowId={selectedSleeveBoardRowId} onSelectRow={setSelectedSleeveBoardRowId} assignments={sleeveBoardAssignments} />
                 : graphViewMode === 'neoblock'
                   ? <NeoBlockViewSummary
                     neoblock={currentNeoBlock}
@@ -1335,10 +1733,13 @@ export default function App() {
                     onOpenMoltBuilder={() => setGraphViewMode('molt_builder')}
                     onSaveToLibrary={saveCurrentNeoBlockToLocalLibrary}
                   />
-                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} displaySegment={activeNeoStackSegment} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} onFocusNeoBlock={focusNeoBlockCard} layoutNotice={neoStackLayoutNotice} selectedLayer={selectedNeoStackRow} onSelectLayer={setSelectedNeoStackRowId} />}
+                  : <NeoStackViewSummary neostack={currentNeoStack} displayNeoStack={displayNeoStack} displaySegment={activeNeoStackSegment} usingFallback={!selectedNeoStack && Boolean(currentNeoStack)} onNewNeoBlock={createNewNeoBlock} onOpenNeoBlockLibraryPicker={openNeoBlockLibraryPicker} onSaveToLibrary={saveCurrentNeoStackToLocalLibrary} onFocusNeoBlock={focusNeoBlockCard} layoutNotice={neoStackLayoutNotice} selectedLayer={selectedNeoStackRow} onSelectLayer={setSelectedNeoStackRowId} />}
               <Graph nodes={displayGraph.nodes} edges={displayGraph.edges} selected={graphSelectedId} showGates={showGates} viewMode={graphViewMode} onMove={updateNodePosition} onPick={(node) => { setSelected(node); setInspected(undefined); }} onDrop={applyDropContainment} canSnap={(source, target) => canSnapAsChild(source, target)} />
             </>
             : <div className="empty canvasStartEmptyState"><b>Start a UMG Sleeve</b><span>Create a blank Sleeve, start from a template, compose from prompt, or open from library.</span><div className="row"><button className="primary" onClick={createBlankSleeve}>Create Blank Sleeve</button><button disabled title="Planned next pass">Start from Template</button><button disabled title="Use the top composer for now">Compose from Prompt</button><button disabled title="Library picker planned next">Open from Library</button></div></div>}
+        </div>
+        {isNeoBlockLibraryPickerOpen && <NeoBlockLibraryPickerModal search={neoBlockLibrarySearch} onSearchChange={setNeoBlockLibrarySearch} items={filteredLibraryNeoBlocks} totalItems={localLibraryNeoBlocks.length} onClose={closeNeoBlockLibraryPicker} onChoose={insertNeoBlockFromLibrary} />}
+        {isClearGraphModalOpen && <ClearGraphModal onSaveAndClear={() => clearCurrentGraph(true)} onClearWithoutSaving={() => clearCurrentGraph(false)} onCancel={() => setIsClearGraphModalOpen(false)} />}
       </section>
       <div className="split vertical rightSplit" onPointerDown={(event) => startResize('right', event)} role="separator" aria-label="Resize inspector panel" />
       <aside className="inspect card">
@@ -1347,7 +1748,8 @@ export default function App() {
           <button onClick={() => setLayout((current) => ({ ...current, rightCollapsed: !current.rightCollapsed }))}>{layout.rightCollapsed ? 'Expand' : 'Collapse'}</button>
         </div>
         {selected && <div className="report selectionReport"><span>node {selected.label}</span><span>type {selected.nodeType === 'molt_block' ? (selected.moltRole || 'MOLT') : labelDisplayType(selected.nodeType)}</span><span>active {String(selected.state.active)}</span><span>off {String(selected.state.off)}</span><span>triggered {String(selected.state.triggered)}</span><div className="row"><button onClick={toggleSelected} disabled={selected.nodeType !== 'molt_block'}>Toggle on/off</button><SelectionActions selected={selected} onRemove={removeSelectedFromWorkspace} onDetachGate={detachGateGeometry} /></div></div>}
-        <RuntimeGateDebugPanel view={runtimeGateDebugView} />
+        {isDebugMode && <div className="report debugPanel"><b>Debug Mode</b><span>Library shelf: {shelves.find((shelf) => shelf.id === activeShelf)?.label ?? activeShelf}</span><span>Library results: {visibleItems.length}/{resolvedShelf.items.length}</span><span>Block Search: {search.trim() || 'none'}</span><span>Tag Filter Search: {activeTagQuery || 'none'}</span><span>Selected tags: {tagFilters.length ? tagFilters.join(', ') : 'none'}</span><span>MOLT type: {labelDisplayType(roleFilter)}</span><span>Status filter: {statusFilter}</span><span>Active Sleeve: {activeSleeve ? `${activeSleeve.title} · ${activeSleeve.id}` : 'none'}</span><span>Active NeoStack: {currentNeoStack ? `${currentNeoStack.title} · ${currentNeoStack.id}` : 'none'}</span><span>Active NeoBlock: {currentNeoBlock ? `${currentNeoBlock.title} · ${currentNeoBlock.id}` : 'none'}</span><span>Selected layer: {selectedNeoStackRow ? `${selectedNeoStackRow.label} · ${selectedNeoStackRow.id}` : 'none'}</span><span>Segment layout: {currentNeoStack?.segmentLayout ? 'present' : 'missing'}</span><span>Compile status: {compiled ? 'compiled' : 'not compiled'}</span><span>Generate output: {output ? 'present' : 'empty'}</span><span>Inspected asset type: {inspected ? (Array.isArray(inspected) ? 'array' : typeof inspected === 'object' ? 'object' : typeof inspected) : 'none'}</span></div>}
+        {isDebugMode && <RuntimeGateDebugPanel view={runtimeGateDebugView} />}
         <BlockInspector views={inspectorViews} fallback={inspected} activeTab={inspectorTab} setActiveTab={setInspectorTab} />
         <h3>Hermes</h3>
         <div className="report"><span>status {hermesStatus}</span><span>API key redacted: {redactKey(config.apiKey) || 'not set'}</span><span>Exports exclude API keys.</span></div>
@@ -1378,27 +1780,40 @@ function LibraryAudit({ report }: { report: any }) {
   return <div className="report auditSummary"><b>Library Audit / Source Assets</b>{rows.map(([label, value]) => <span key={String(label)}>{String(label)}: {String(value)}</span>)}<span>reconciled: {String(summary.accountedTotal)}/{String(summary.totalScanned)}</span></div>;
 }
 
-function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, visibleTags, filtered, shown, total, roleFilter = 'all', clear }: any) {
-  const [tagQuery, setTagQuery] = useState('');
+function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, tagQuery, setTagQuery, visibleTags, filtered, shown, total, roleFilter = 'all', statusFilter, searchQuery, setRoleFilter, countForRoleFilter, activeShelfStats, setStatusFilter, clear, debugMode = false }: any) {
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   const tagPickerRef = useRef<HTMLDivElement | null>(null);
+  const isMoltShelf = activeShelf === 'molt_blocks';
+  const normalizedTagQuery = tagQuery.trim();
   const toggleTag = (tag: string) => setTagFilters(tagFilters.includes(tag) ? tagFilters.filter((t: string) => t !== tag) : [...tagFilters, tag]);
-  const searchLabel = activeShelf === 'source_audit' ? 'Search audit accountability rows' : activeShelf === 'control_sources' || roleFilter === 'trigger' ? 'Search TriggerGate source cards' : 'Search active builder shelf first';
-  const tagSuggestions = useMemo(() => sortMatchingTags(visibleTags, tagQuery).filter((tag) => !tagFilters.includes(tag)).slice(0, 20), [tagFilters, tagQuery, visibleTags]);
-  const applyTag = (tag: string) => {
-    if (!tag || tagFilters.includes(tag)) {
-      setTagQuery('');
-      setTagMenuOpen(false);
-      return;
-    }
-    setTagFilters([...tagFilters, tag]);
+  const blockSearchLabel = isMoltShelf ? 'Block Search' : activeShelf === 'source_audit' ? 'Audit Search' : activeShelf === 'control_sources' ? 'TriggerGate Search' : 'Library Search';
+  const blockSearchPlaceholder = isMoltShelf ? 'Search blocks by title, content, type, tag...' : 'Search items by title, tag, or source...';
+  const tagSuggestions = useMemo(() => sortMatchingTags(visibleTags, normalizedTagQuery).filter((tag) => !tagFilters.includes(tag)).slice(0, 20), [tagFilters, normalizedTagQuery, visibleTags]);
+  const showTagSuggestions = isMoltShelf && tagMenuOpen && Boolean(normalizedTagQuery);
+  const visibleRoleFilters = [
+    { key: 'directive', label: 'Directive' },
+    { key: 'instruction', label: 'Instruction' },
+    { key: 'subject', label: 'Subject' },
+    { key: 'primary', label: 'Primary' },
+    { key: 'philosophy', label: 'Philosophy' },
+    { key: 'blueprint', label: 'Blueprint' },
+    { key: 'meta', label: 'Meta / Other' }
+  ];
+  const clearTagQuery = () => {
     setTagQuery('');
     setTagMenuOpen(false);
   };
+  const applyTag = (tag: string) => {
+    if (!tag || tagFilters.includes(tag)) {
+      clearTagQuery();
+      return;
+    }
+    setTagFilters([...tagFilters, tag]);
+    clearTagQuery();
+  };
 
   useEffect(() => {
-    setTagQuery('');
-    setTagMenuOpen(false);
+    clearTagQuery();
   }, [activeShelf]);
 
   useEffect(() => {
@@ -1409,34 +1824,47 @@ function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch
     return () => document.removeEventListener('mousedown', handlePointerDown);
   }, []);
 
+  const toggleRoleFilter = (nextRole: string) => {
+    if (nextRole === 'all') {
+      setRoleFilter('all');
+      return;
+    }
+    setRoleFilter(roleFilter === nextRole ? 'all' : nextRole);
+  };
+
   return <>
     <div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelf.items.length})</button>)}</div>
-    <label className="searchLabel">{searchLabel}<input placeholder="title, INST id, tags, sourcePath, role/status" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-    <div className="searchLabel tagPicker" ref={tagPickerRef}>
-      Type to filter tags...
-      <input
-        placeholder="Search tags..."
-        value={tagQuery}
-        onFocus={() => setTagMenuOpen(true)}
-        onChange={(event) => {
-          setTagQuery(event.target.value);
-          setTagMenuOpen(true);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            setTagMenuOpen(false);
-            return;
-          }
-          if (event.key === 'Enter' && tagSuggestions[0]) {
-            event.preventDefault();
-            applyTag(tagSuggestions[0]);
-          }
-        }}
-      />
-      {tagMenuOpen && <div className="tagAutocompleteMenu">{tagSuggestions.length ? tagSuggestions.map((tag) => <button key={tag} type="button" className="tagAutocompleteOption" onClick={() => applyTag(tag)}>{tag}</button>) : <div className="tagAutocompleteEmpty">No matching tags.</div>}</div>}
-    </div>
-    {filtered && <div className="filterNotice"><b>Filtered view active</b><span>{shown} of {total} shown</span><button onClick={clear}>Clear filters</button></div>}
-    {tagFilters.length > 0 && <div className="activeTags"><b>Active filters</b>{tagFilters.map((tag: string) => <button key={tag} className="tag active" onClick={() => toggleTag(tag)}>{tag} ×</button>)}</div>}
+    {isMoltShelf && <div className="filterGroup"><b>MOLT type</b><div className="filterBar roleSubsections compactRoleFilters"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => toggleRoleFilter('all')}>All ({countForRoleFilter('all')})</button>{visibleRoleFilters.map((role) => <button key={role.key} className={roleFilter === role.key ? 'hot roleHot' : ''} onClick={() => toggleRoleFilter(role.key)}>{role.label} ({countForRoleFilter(role.key)})</button>)}</div></div>}
+    <label className="searchLabel">{blockSearchLabel}<input placeholder={blockSearchPlaceholder} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+    {isMoltShelf && <div className="searchLabel tagPicker" ref={tagPickerRef}>
+      Tag Filter Search
+      <div className="tagInputRow">
+        <input
+          placeholder="Type a tag, e.g. universal"
+          value={tagQuery}
+          onFocus={() => setTagMenuOpen(true)}
+          onChange={(event) => {
+            setTagQuery(event.target.value);
+            setTagMenuOpen(Boolean(event.target.value.trim()));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setTagMenuOpen(false);
+              return;
+            }
+            if (event.key === 'Enter' && tagSuggestions[0]) {
+              event.preventDefault();
+              applyTag(tagSuggestions[0]);
+            }
+          }}
+        />
+        {normalizedTagQuery && <button type="button" className="tagQueryClear" onClick={clearTagQuery} title="Clear tag query">Clear</button>}
+      </div>
+      {showTagSuggestions && <div className="tagAutocompleteMenu">{tagSuggestions.length ? tagSuggestions.map((tag) => <button key={tag} type="button" className="tagAutocompleteOption" onClick={() => applyTag(tag)}>{tag}</button>) : <div className="tagAutocompleteEmpty">No matching tags.</div>}</div>}
+    </div>}
+    {tagFilters.length > 0 && <div className="activeTags"><b>Selected Tags</b>{tagFilters.map((tag: string) => <button key={tag} className="tag active" onClick={() => toggleTag(tag)}>{tag} ×</button>)}</div>}
+    {filtered && <div className="filterNotice compactFilterNotice"><span>{shown} result{shown === 1 ? '' : 's'}</span><button onClick={clear}>Clear filters</button></div>}
+    {debugMode && isMoltShelf && <details className="secondaryAudit shelfStatusToggle"><summary>Library Debug</summary><div className="report shelfStatusReport"><span>Visible: {shown} of {total}</span><span>Block Search: {searchQuery?.trim() || 'none'}</span><span>Tag Filter Search: {normalizedTagQuery || 'none'}</span><span>Selected tags: {tagFilters.length ? tagFilters.join(', ') : 'none'}</span><span>MOLT type: {labelDisplayType(roleFilter)}</span><span>Status filter: {labelDisplayType(statusFilter)}</span><span>Prompt Trigger MOLT: {activeShelfStats?.promptTriggerCount ?? 0}</span><span>TriggerGate Sources: {activeShelfStats?.triggerGateSourceCount ?? 0}</span><div className="filterBar small statusFilters">{statuses.map((s) => <button key={s} className={activeShelfStats?.statusFilter === s ? 'hot' : ''} onClick={() => setStatusFilter(s)}>{s} {String(s === 'all' ? activeShelfStats?.roleFilter === 'all' ? activeShelfStats?.roleFilterCount?.all ?? 0 : activeShelfStats?.roleFilterCount?.[activeShelfStats?.roleFilter] ?? 0 : activeShelfStats?.statusCounts?.[s] ?? 0)}</button>)}</div></div></details>}
   </>;
 }
 
@@ -1467,43 +1895,33 @@ function TargetPickerPanel({ item, choices, onChoose, onCancel }: { item: ShelfA
   return <div className="report targetPicker"><b>Choose target for {item.title}</b>{choices.length === 0 ? <span>No valid targets available yet.</span> : choices.map((choice) => <div key={choice.id} className="targetChoice"><span>{choice.label}</span><small>{choice.detail ?? ''}</small><button onClick={() => onChoose(choice)}>Use target</button></div>)}<div className="row"><button onClick={onCancel}>Cancel</button></div></div>;
 }
 
-function FullSleeveViewSummary({ sleeve, displaySleeve, activeNeoStack, onNewNeoStack }: { sleeve?: Sleeve; displaySleeve?: Sleeve; activeNeoStack?: NeoStack; onNewNeoStack: () => void }) {
+// Canvas interaction plan (next phase):
+// - Full Sleeve view: click NeoStack to select/inspect, double-click/Open to switch into NeoStack view.
+// - NeoStack view: click NeoBlock to select/inspect, double-click/Open to switch into NeoBlock view.
+// - NeoBlock view: use inspector for summary and MOLT Builder for detailed MOLT editing.
+// - Keep graph canvas focused on structure/selection, with Debug Mode reserved for internals.
+function FullSleeveViewSummary({ sleeve, activeNeoStack, onNewNeoStack, onFocusNeoStack, selectedRowId, onSelectRow, assignments }: { sleeve?: Sleeve; activeNeoStack?: NeoStack; onNewNeoStack: () => void; onFocusNeoStack: (neostackId: string) => void; selectedRowId?: string; onSelectRow: (rowId: string) => void; assignments: Record<string, string> }) {
   if (!sleeve) return <div className="empty">Start a UMG Sleeve by creating a blank Sleeve, then assemble NeoStacks on the canvas.</div>;
-
-  const controller = displaySleeve?.rootController;
-  const directiveLabel = controller ? controllerDirectiveLabel(controller) : undefined;
-  const directiveCount = controller?.directiveBundle?.directives.length ?? countControllerRole(controller, 'directive');
-  const subjectSummary = controller ? summarizeControllerRole(controller, 'subject') : undefined;
-  const primarySummary = controller ? summarizeControllerRole(controller, 'primary') : undefined;
-  const blueprintSummary = controller ? summarizeControllerRole(controller, 'blueprint') : undefined;
-  const controllerRoleCount = controller ? new Set(controller.molts.map((block) => block.role)).size : 0;
-  const isVirtualController = controller?.metadata?.createdBy === 'virtual';
-
-  return <div className="report hierarchySummary sleeveRootSummary">
-    <div className="sleeveRootSummaryCard">
-      <div className="sleeveRootSummaryBadgeRow">
-        <span className="badge sleeveRootBadge">Sleeve Root Controller</span>
-        {isVirtualController && <span className="badge sleeveRootVirtualBadge">Virtual fallback</span>}
-      </div>
-      <b>{controller?.title ?? `${sleeve.title} Controller`}</b>
-      <span>Root authority for Sleeve scope. Not counted as a NeoStack child.</span>
-      <span>Role blocks available: {controller?.molts.length ?? 0} across {controllerRoleCount} role{controllerRoleCount === 1 ? '' : 's'}.</span>
-      {subjectSummary && <span>Subject: {subjectSummary}</span>}
-      {primarySummary && <span>Primary: {primarySummary}</span>}
-      <span>Directive bundle: {directiveLabel ?? 'No directive label available'} · {directiveCount} directive{directiveCount === 1 ? '' : 's'}</span>
-      <span>Blueprint: {blueprintSummary ?? `${countControllerRole(controller, 'blueprint')} blueprint block${countControllerRole(controller, 'blueprint') === 1 ? '' : 's'}`}</span>
-      {isVirtualController && <small>Display-only compatibility controller derived via normalizeSleeve(). It is not persisted back into workspace state.</small>}
-      {!isVirtualController && <small>Controller editing planned. Read-only projection only in this phase.</small>}
+  const itemsByRow = tileBoardRows.reduce((acc, row) => ({ ...acc, [row.id]: [] as NeoStack[] }), {} as Record<string, NeoStack[]>);
+  sleeve.stacks.forEach((stack) => {
+    const rowId = assignments[stack.id] ?? tileBoardRows[0].id;
+    (itemsByRow[rowId] ?? itemsByRow[tileBoardRows[0].id]).push(stack);
+  });
+  return <div className="report hierarchySummary tileScopePanel">
+    <div className="row">
+      <button onClick={onNewNeoStack}>Add NeoStack</button>
+      <button disabled title="Library picker planned next">Choose NeoStack from Library</button>
     </div>
-    <div className="sleeveRootSummaryConnector" aria-hidden="true" />
-    <div className="sleeveRootChildArea">
-      <b>Full Sleeve view</b>
-      <span>Assemble NeoStacks on the canvas here.</span>
-      <span>Active Sleeve: {sleeve.title}</span>
-      <span>NeoStacks shown: {sleeve.stacks.length}</span>
-      <span>Active NeoStack target: {activeNeoStack?.title ?? 'none selected'}</span>
-      <div className="row"><button onClick={onNewNeoStack}>Add NeoStack</button><button disabled title="Library picker planned next">Choose NeoStack from Library</button></div>
-    </div>
+    <TileCanvasBoard
+      rows={tileBoardRows.map((row) => ({ ...row, label: segmentLayerDisplayLabel(row) }))}
+      selectedRowId={selectedRowId}
+      onSelectRow={onSelectRow}
+      itemsByRow={itemsByRow}
+      selectedItemId={activeNeoStack?.id}
+      onSelectItem={(itemId) => onFocusNeoStack(itemId)}
+      itemKindLabel="NeoStack"
+      itemMeta={(stack) => `${stack.neoblocks.length} NeoBlocks`}
+    />
   </div>;
 }
 
@@ -1535,102 +1953,161 @@ function summarizeControllerText(value: string, maxLength = 96) {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
-function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingFallback, onNewNeoBlock, onSaveToLibrary, onFocusNeoBlock, layoutNotice, selectedLayer, onSelectLayer }: { neostack?: NeoStack; displayNeoStack?: NeoStack; displaySegment?: UMGSegmentLayout; usingFallback: boolean; onNewNeoBlock: () => void; onSaveToLibrary: () => void; onFocusNeoBlock: (neoblockId: string) => void; layoutNotice: string; selectedLayer?: { id: string; index: number; label: string }; onSelectLayer: (rowId: string | undefined) => void }) {
+function ControllerDebugPanel({ controller, scopeKind, scopeId }: { controller?: UMGControllerBlock; scopeKind: 'Sleeve' | 'NeoStack'; scopeId?: string }) {
+  if (!controller) return <div className="report debugPanel"><b>{scopeKind} Controller Debug</b><span>No persisted controller block is attached. Current controller view may be a virtual compatibility projection.</span></div>;
+  const directiveLabel = controllerDirectiveLabel(controller);
+  const directiveCount = controller.directiveBundle?.directives.length ?? countControllerRole(controller, 'directive');
+  const subjectSummary = summarizeControllerRole(controller, 'subject');
+  const primarySummary = summarizeControllerRole(controller, 'primary');
+  const blueprintSummary = summarizeControllerRole(controller, 'blueprint');
+  const philosophySummary = summarizeControllerRole(controller, 'philosophy');
+  const isVirtualController = controller.metadata?.createdBy === 'virtual';
+  return <div className="report debugPanel controllerDebugPanel">
+    <b>{scopeKind} Controller Debug</b>
+    <span>Row 0 / Controller remains display-only until Controller Config is implemented.</span>
+    <span>Controller title: {controller.title}</span>
+    <span>Virtual fallback: {isVirtualController ? 'yes' : 'no'}</span>
+    <span>Persisted owner scope: {controller.ownerScopeKind} / {controller.ownerScopeId}</span>
+    <span>Current scope id: {scopeId ?? 'none'}</span>
+    <span>Role blocks available: {controller.molts.length}</span>
+    <span>Directive bundle: {directiveLabel ?? 'none'} · {directiveCount} directive{directiveCount === 1 ? '' : 's'}</span>
+    <span>Subject: {subjectSummary ?? 'none'}</span>
+    <span>Primary: {primarySummary ?? 'none'}</span>
+    <span>Blueprint: {blueprintSummary ?? 'none'}</span>
+    <span>Philosophy: {philosophySummary ?? 'none'}</span>
+    <span>Persisted or virtual: {isVirtualController ? 'virtual compatibility projection' : 'persisted controller block'}</span>
+    <small>Virtual rootController data is not persisted back into workspace state.</small>
+  </div>;
+}
+
+function NeoBlockLibraryPickerModal({ search, onSearchChange, items, totalItems, onClose, onChoose }: { search: string; onSearchChange: (value: string) => void; items: NeoBlock[]; totalItems: number; onClose: () => void; onChoose: (neoblock: NeoBlock) => void }) {
+  return <div className="neoBlockLibraryPickerOverlay" role="dialog" aria-modal="true" aria-label="Choose NeoBlock from Library" onClick={onClose}>
+    <div className="report neoBlockLibraryPickerModal" onClick={(event) => event.stopPropagation()}>
+      <div className="panelTitle">
+        <h2>Choose NeoBlock from Library</h2>
+        <button type="button" onClick={onClose}>Close</button>
+      </div>
+      <input
+        placeholder="Search saved NeoBlocks"
+        value={search}
+        onChange={(event) => onSearchChange(event.target.value)}
+      />
+      {totalItems === 0
+        ? <div className="empty"><b>No saved NeoBlocks yet.</b><span>Create a NeoBlock, then use Save NeoBlock to Library to make it available here.</span></div>
+        : items.length === 0
+          ? <div className="empty"><b>No matching NeoBlocks.</b><span>Try a different title, description, tag, or category search.</span></div>
+          : <div className="cards neoBlockLibraryPickerResults">{items.map((neoblock) => <button key={neoblock.id} type="button" className="block neoBlockLibraryPickerCard" onClick={() => onChoose(neoblock)}><div className="cardtop"><b>{neoblock.title}</b><span className="badge">{neoblock.blocks.length} MOLT</span></div>{neoblock.description && <p>{neoblock.description}</p>}<small>{neoblock.category ?? 'uncategorized'}</small><small>{neoblock.tags.length ? neoblock.tags.join(', ') : 'no tags'}</small></button>)}</div>}
+    </div>
+  </div>;
+}
+
+function TileCanvasBoard<T extends { id: string; title: string }>({ rows, itemsByRow, selectedRowId, onSelectRow, selectedItemId, onSelectItem, itemKindLabel, itemMeta }: { rows: { id: string; index: number; label: string }[]; itemsByRow: Record<string, T[]>; selectedRowId?: string; onSelectRow: (rowId: string) => void; selectedItemId?: string; onSelectItem: (itemId: string) => void; itemKindLabel: string; itemMeta: (item: T) => string }) {
+  return <div className="tileBoard">{rows.map((row) => {
+    const rowItems = itemsByRow[row.id] ?? [];
+    const visibleItems = rowItems.length > tileBoardColumns ? rowItems.slice(0, tileBoardColumns - 1) : rowItems;
+    const overflowCount = Math.max(0, rowItems.length - visibleItems.length);
+    const tiles = Array.from({ length: tileBoardColumns }, (_, index) => {
+      if (index < visibleItems.length) return { kind: 'item' as const, item: visibleItems[index] };
+      if (overflowCount > 0 && index === tileBoardColumns - 1) return { kind: 'overflow' as const, count: overflowCount };
+      return { kind: 'empty' as const };
+    });
+    return <section key={row.id} className={`tileBoardRow ${selectedRowId === row.id ? 'tileBoardRowSelected' : ''}`}>
+      <div className="tileBoardRowHeader">
+        <b>{row.label}</b>
+        <span>{rowItems.length} {itemKindLabel}{rowItems.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="tileBoardGrid">{tiles.map((tile, index) => {
+        if (tile.kind === 'item') {
+          return <button key={`${row.id}:${tile.item.id}`} type="button" className={`tileBoardTile tileBoardTileFilled ${selectedItemId === tile.item.id ? 'tileBoardTilePicked' : ''}`} onClick={() => onSelectItem(tile.item.id)}>
+            <span className="tileBoardTileEyebrow">{itemKindLabel}</span>
+            <b>{tile.item.title}</b>
+            <small>{itemMeta(tile.item)}</small>
+          </button>;
+        }
+        if (tile.kind === 'overflow') {
+          return <button key={`${row.id}:overflow`} type="button" className="tileBoardTile tileBoardTileOverflow" onClick={() => onSelectRow(row.id)}>
+            <span className="tileBoardTileEyebrow">Overflow</span>
+            <b>+{tile.count} more</b>
+            <small>Scroll or select this layer</small>
+          </button>;
+        }
+        return <button key={`${row.id}:empty:${index}`} type="button" className={`tileBoardTile tileBoardTileEmpty ${selectedRowId === row.id ? 'tileBoardTileTargeted' : ''}`} onClick={() => onSelectRow(row.id)}>
+          <span className="tileBoardPlus">＋</span>
+          <b>Empty</b>
+          <small>Select this tile / layer</small>
+        </button>;
+      })}</div>
+    </section>;
+  })}</div>;
+}
+
+function NeoStackViewSummary({ neostack, displayNeoStack, displaySegment, usingFallback, onNewNeoBlock, onOpenNeoBlockLibraryPicker, onSaveToLibrary, onFocusNeoBlock, layoutNotice, selectedLayer, onSelectLayer }: { neostack?: NeoStack; displayNeoStack?: NeoStack; displaySegment?: UMGSegmentLayout; usingFallback: boolean; onNewNeoBlock: () => void; onOpenNeoBlockLibraryPicker: () => void; onSaveToLibrary: () => void; onFocusNeoBlock: (neoblockId: string) => void; layoutNotice: string; selectedLayer?: { id: string; index: number; label: string }; onSelectLayer: (rowId: string | undefined) => void }) {
   if (!neostack) return <div className="empty">No NeoStack available yet. Create or select a NeoStack first, then assemble NeoBlocks here.</div>;
-
-  const controller = displayNeoStack?.rootController;
-  const directiveLabel = controller ? controllerDirectiveLabel(controller) : undefined;
-  const directiveCount = controller?.directiveBundle?.directives.length ?? countControllerRole(controller, 'directive');
-  const subjectSummary = controller ? summarizeControllerRole(controller, 'subject') : undefined;
-  const primarySummary = controller ? summarizeControllerRole(controller, 'primary') : undefined;
-  const blueprintSummary = controller ? summarizeControllerRole(controller, 'blueprint') : undefined;
-  const controllerRoleCount = controller ? new Set(controller.molts.map((block) => block.role)).size : 0;
-  const isVirtualController = controller?.metadata?.createdBy === 'virtual';
-  const segmentRows = displaySegment?.rows.filter((row) => row.index > 0) ?? [];
+  const segmentRows = displaySegment?.rows.filter((row) => row.index > 0) ?? tileBoardRows.map((row) => ({ id: row.id, index: row.index, label: row.label }));
   const neoblockMap = new Map(neostack.neoblocks.map((block) => [block.id, block]));
-  const emptyRowLabel = (rowLabel: string) => `No NeoBlocks assigned to ${universalLayerLabel(rowLabel)} yet.`;
-
-  return <div className="report hierarchySummary sleeveRootSummary">
-    <div className="sleeveRootSummaryCard">
-      <div className="sleeveRootSummaryBadgeRow">
-        <span className="badge sleeveRootBadge">NeoStack Root Controller</span>
-        <span className="badge segmentRowBadge">Row 0 · Controller</span>
-        {isVirtualController && <span className="badge sleeveRootVirtualBadge">Virtual fallback</span>}
-      </div>
-      <b>{controller?.title ?? `${neostack.title} Controller`}</b>
-      <span>Root authority for NeoStack scope. Not counted as a NeoBlock child.</span>
-      <span>Role blocks available: {controller?.molts.length ?? 0} across {controllerRoleCount} role{controllerRoleCount === 1 ? '' : 's'}.</span>
-      {subjectSummary && <span>Subject: {subjectSummary}</span>}
-      {primarySummary && <span>Primary: {primarySummary}</span>}
-      <span>Directive bundle: {directiveLabel ?? 'No directive label available'} · {directiveCount} directive{directiveCount === 1 ? '' : 's'}</span>
-      <span>Blueprint: {blueprintSummary ?? `${countControllerRole(controller, 'blueprint')} blueprint block${countControllerRole(controller, 'blueprint') === 1 ? '' : 's'}`}</span>
-      {isVirtualController && <small>Display-only compatibility controller derived via normalizeNeoStack(). It is not persisted back into workspace state.</small>}
-      {!isVirtualController && <small>Controller editing planned. Read-only projection only in this phase.</small>}
+  const itemsByRow = segmentRows.reduce((acc, row) => ({ ...acc, [row.id]: [] as NeoBlock[] }), {} as Record<string, NeoBlock[]>);
+  if (displaySegment) {
+    segmentRows.forEach((row) => {
+      const rowSlots = getSlotsByRow(displaySegment, row.id).filter((slot) => slot.occupantKind === 'scope_child' && slot.occupantId);
+      rowSlots.forEach((slot) => {
+        const neoblock = slot.occupantId ? neoblockMap.get(slot.occupantId) : undefined;
+        if (neoblock) itemsByRow[row.id].push(neoblock);
+      });
+    });
+  }
+  const placedIds = new Set(Object.values(itemsByRow).flat().map((item) => item.id));
+  neostack.neoblocks.filter((block) => !placedIds.has(block.id)).forEach((block) => {
+    const fallbackRow = segmentRows[0]?.id ?? tileBoardRows[0].id;
+    itemsByRow[fallbackRow] = [...(itemsByRow[fallbackRow] ?? []), block];
+  });
+  return <div className="report hierarchySummary tileScopePanel">
+    <div className="row">
+      <button type="button" onClick={onNewNeoBlock} disabled={!selectedLayer} title="Adds a blank NeoBlock to the selected layer.">Add NeoBlock to Layer</button>
+      <button type="button" onClick={onOpenNeoBlockLibraryPicker} title="Insert a saved NeoBlock into the selected layer.">Choose NeoBlock from Library</button>
+      <button onClick={onSaveToLibrary}>Save NeoStack to Library</button>
     </div>
-    <div className="sleeveRootSummaryConnector" aria-hidden="true" />
-    <div className="sleeveRootChildArea">
-      <b>NeoStack view</b>
-      <span>Assemble NeoBlocks on the canvas here.</span>
-      <span>Active NeoStack: {neostack.title}{usingFallback ? ' (default first NeoStack)' : ''}</span>
-      <span>NeoBlocks shown: {neostack.neoblocks.length}</span>
-      <span>MOLT blocks stay in MOLT Builder only.</span>
-      <div className="row"><button onClick={onSaveToLibrary}>Save NeoStack to Library</button></div>
-      <div className="segmentSlotPreview">
-        <div className="segmentLayoutToolbar">
-          <small className="segmentLayoutNotice">{layoutNotice}</small>
-          <div className="segmentTargetNotice">
-            <span className="badge segmentTargetBadge">Target Layer: {selectedLayer ? segmentLayerDisplayLabel(selectedLayer) : 'No editable layer selected'}</span>
-            <div className="row">
-              <button type="button" onClick={onNewNeoBlock} disabled={!selectedLayer} title="Adds a blank NeoBlock to the selected layer.">Add NeoBlock to Layer</button>
-            </div>
-            <small>Adds a blank NeoBlock to the selected layer. Layout updates locally. Library insert comes later.</small>
-          </div>
-        </div>
-        <div className="segmentAuthorityHint">Row 0 is the Controller. Layers below are universal UMG depth bands. Click a layer to target direct NeoBlock placement.</div>
-        {segmentRows.map((row) => {
-          const rowSlots = displaySegment ? getSlotsByRow(displaySegment, row.id) : [];
-          const occupiedSlots = rowSlots.filter((slot) => slot.occupantKind === 'scope_child' && slot.occupantId);
-          const isSelectedLayer = selectedLayer?.id === row.id;
-          return <section
-            key={row.id}
-            className={`segmentRowBand ${isSelectedLayer ? 'segmentRowBandSelected' : ''}`}
-            onClick={() => onSelectLayer(row.id)}
-          >
-            <div className="segmentRowHeader">
-              <span>{segmentLayerDisplayLabel(row)}</span>
-              <div className="segmentRowMeta">
-                {isSelectedLayer && <span className="badge segmentSelectedBadge">Selected Layer</span>}
-                <small>{occupiedSlots.length ? `${occupiedSlots.length} NeoBlock${occupiedSlots.length === 1 ? ' in this row' : 's in this row'}` : emptyRowLabel(row.label)}</small>
-              </div>
-            </div>
-            <div className="segmentSlotGrid">
-              {occupiedSlots.length
-                ? occupiedSlots.map((slot) => {
-                    const neoblock = slot.occupantId ? neoblockMap.get(slot.occupantId) : undefined;
-                    if (!neoblock) return <div key={slot.id} className="segmentEmptySlot">Unresolved NeoBlock slot</div>;
-                    return <div key={slot.id} className="segmentSlotCard">
-                      <button type="button" className="segmentSlotCardButton" onClick={(event) => {
-                        event.stopPropagation();
-                        onFocusNeoBlock(neoblock.id);
-                      }}>
-                        <span className="segmentSlotEyebrow">Under Controller</span>
-                        <b>{neoblock.title}</b>
-                        <small>{neoblock.blocks.length} MOLT block{neoblock.blocks.length === 1 ? '' : 's'}</small>
-                      </button>
-                    </div>;
-                  })
-                : <div className="segmentEmptySlot">{emptyRowLabel(row.label)}</div>}
-            </div>
-          </section>;
-        })}
-      </div>
-    </div>
+    <small className="segmentLayoutNotice">{layoutNotice}</small>
+    <TileCanvasBoard
+      rows={segmentRows.map((row) => ({ id: row.id, index: row.index, label: segmentLayerDisplayLabel(row) }))}
+      selectedRowId={selectedLayer?.id}
+      onSelectRow={(rowId) => onSelectLayer(rowId)}
+      itemsByRow={itemsByRow}
+      selectedItemId={undefined}
+      onSelectItem={onFocusNeoBlock}
+      itemKindLabel="NeoBlock"
+      itemMeta={(neoblock) => `${neoblock.blocks.length} MOLT blocks`}
+    />
+    {usingFallback && <small>Using the first available NeoStack as the current scope.</small>}
   </div>;
 }
 
 function NeoBlockViewSummary({ neoblock, parentStack, siblingCount, usingFallback, onOpenMoltBuilder, onSaveToLibrary }: { neoblock?: NeoBlock; parentStack?: NeoStack; siblingCount: number; usingFallback: boolean; onOpenMoltBuilder: () => void; onSaveToLibrary: () => void }) {
   if (!neoblock) return <div className="empty">No NeoBlock available yet. Select a NeoBlock or create one from NeoStack view.</div>;
-  return <div className="report hierarchySummary"><b>NeoBlock view</b><span>Purpose: Focus the current NeoBlock on the canvas while keeping sibling NeoBlocks visible.</span><span>Active NeoBlock: {neoblock.title}{usingFallback ? ' (default current NeoBlock)' : ''}</span><span>Parent NeoStack: {parentStack?.title ?? 'none'}</span><span>Sibling NeoBlocks visible: {siblingCount}</span><span>Total MOLT blocks: {neoblock.blocks.length} — role details stay in MOLT Builder.</span><div className="row"><button onClick={onOpenMoltBuilder}>Open MOLT Builder</button><button onClick={onSaveToLibrary}>Save NeoBlock to Library</button></div></div>;
+  return <div className="report hierarchySummary"><div className="row"><button onClick={onOpenMoltBuilder}>Open MOLT Builder</button><button onClick={onSaveToLibrary}>Save NeoBlock to Library</button></div><span>Active NeoBlock: {neoblock.title}{usingFallback ? ' (default current NeoBlock)' : ''}</span><span>Parent NeoStack: {parentStack?.title ?? 'none'}</span><span>Sibling NeoBlocks visible: {siblingCount}</span><span>Total MOLT blocks: {neoblock.blocks.length}</span></div>;
+}
+
+function ScopeStatusBar({ graphViewMode, activeSleeve, activeNeoStack, activeNeoBlock, selectedLayer, onOpenMoltBuilder }: { graphViewMode: GraphViewMode; activeSleeve?: Sleeve; activeNeoStack?: NeoStack; activeNeoBlock?: NeoBlock; selectedLayer?: { id: string; index: number; label: string }; onOpenMoltBuilder: () => void }) {
+  if (graphViewMode === 'neostack') return <div className="scopeStatusBar"><span>Scope: NeoStack</span><span>Active NeoStack: {activeNeoStack?.title ?? 'none'}</span><span>NeoBlocks: {activeNeoStack?.neoblocks.length ?? 0}</span><span>Target Layer: {selectedLayer ? segmentLayerDisplayLabel(selectedLayer) : 'none selected'}</span></div>;
+  if (graphViewMode === 'neoblock') return <div className="scopeStatusBar"><span>Scope: NeoBlock</span><span>Active NeoBlock: {activeNeoBlock?.title ?? 'none'}</span><span>MOLT blocks: {activeNeoBlock?.blocks.length ?? 0}</span><button type="button" onClick={onOpenMoltBuilder}>Open MOLT Builder</button></div>;
+  if (graphViewMode === 'molt_builder') return <div className="scopeStatusBar"><span>Scope: MOLT Builder</span><span>Active NeoBlock: {activeNeoBlock?.title ?? 'none'}</span><span>MOLT blocks: {activeNeoBlock?.blocks.length ?? 0}</span></div>;
+  return <div className="scopeStatusBar"><span>Scope: Full Sleeve</span><span>Active Sleeve: {activeSleeve?.title ?? 'none'}</span><span>NeoStacks: {activeSleeve?.stacks.length ?? 0}</span><span>Target: {activeNeoStack?.title ?? 'none selected'}</span><span>Row 0 / Controller</span></div>;
+}
+
+function ClearGraphModal({ onSaveAndClear, onClearWithoutSaving, onCancel }: { onSaveAndClear: () => void; onClearWithoutSaving: () => void; onCancel: () => void }) {
+  return <div className="neoBlockLibraryPickerOverlay" role="dialog" aria-modal="true" aria-label="Clear current graph" onClick={onCancel}>
+    <div className="report clearGraphModal" onClick={(event) => event.stopPropagation()}>
+      <div className="panelTitle">
+        <h2>Clear current graph?</h2>
+        <button type="button" onClick={onCancel}>Close</button>
+      </div>
+      <p>This clears the current Sleeve, NeoStacks, NeoBlocks, MOLT blocks, layout placement, and active graph selection from the canvas.</p>
+      <div className="row">
+        <button type="button" onClick={onSaveAndClear}>Save and Clear</button>
+        <button type="button" onClick={onClearWithoutSaving}>Clear Without Saving</button>
+        <button type="button" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  </div>;
 }
 
 function SelectionActions({ selected, onRemove, onDetachGate }: { selected: GraphNode; onRemove: () => void; onDetachGate: (gateId: string) => void }) {
@@ -1638,14 +2115,29 @@ function SelectionActions({ selected, onRemove, onDetachGate }: { selected: Grap
   return <>{selected.nodeType === 'molt_block' && <button onClick={onRemove}>Remove from NeoBlock</button>}{selected.nodeType === 'neoblock' && <button onClick={onRemove}>Remove from NeoStack</button>}{selected.nodeType === 'neostack' && <button onClick={onRemove}>Remove from Sleeve</button>}{selected.nodeType === 'sleeve' && <button onClick={onRemove}>Removal blocked</button>}{hasGateGeometry && (selected.governingGateIds ?? []).map((gateId) => <button key={gateId} onClick={() => onDetachGate(gateId)}>Detach Gate Geometry</button>)}</>;
 }
 
-function AssetCards({ items, onAdd, onInspect, getAddLabel }: { items: ShelfAsset[]; onAdd: (item: ShelfAsset) => void; onInspect: (item: ShelfAsset) => void; getAddLabel: (item: ShelfAsset) => string }) {
+function AssetCards({ items, onAdd, onInspect, getAddLabel, isAddDisabled, getAddHint, emptyState, debugMode = false }: { items: ShelfAsset[]; onAdd: (item: ShelfAsset) => void; onInspect: (item: ShelfAsset) => void; getAddLabel: (item: ShelfAsset) => string; isAddDisabled?: (item: ShelfAsset) => boolean; getAddHint?: (item: ShelfAsset) => string | undefined; emptyState?: string; debugMode?: boolean }) {
+  if (!items.length) {
+    return <div className="empty"><b>{emptyState ?? 'No library items match the current filters.'}</b></div>;
+  }
   return <div className="cards builderCards">{items.map((item, index) => {
     const block = item.asset as UMGBlock;
     const gateCard = item.asset as TriggerGateSourceCard;
     const isGateSource = item.kind === 'trigger_gate_source';
+    const addDisabled = isAddDisabled?.(item) ?? false;
+    const addHint = getAddHint?.(item);
     const instId = item.kind === 'molt_block' ? block.legacy?.libraryEntryId : isGateSource ? gateCard.id : undefined;
     const category = item.kind === 'molt_block' ? block.category : isGateSource ? `${gateCard.category} / ${gateCard.subcategory}` : undefined;
-    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.displayType === 'meta' ? 'Meta / non-compiler' : item.kind === 'molt_block' ? 'MOLT Block Card' : item.kind}</span></div>{instId && <p className="instId">ID: {instId}</p>}<p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}{isGateSource && <p>activation: {gateCard.activation.conditionSummary}</p>}<p>status: {item.status || 'runnable'}</p><small>tags: {item.tags.slice(0, 12).join(', ') || 'no tags'}</small><small>sourcePath: {item.sourcePath ?? 'local asset'}</small><div className="row"><button onClick={() => onAdd(item)}>{getAddLabel(item)}</button><button onClick={() => onInspect(item)}>{isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source'}</button></div></div>;
+    const roleClass = item.kind === 'molt_block'
+      ? item.displayType === 'directive' ? 'moltRoleDirective'
+      : item.displayType === 'instruction' ? 'moltRoleInstruction'
+      : item.displayType === 'subject' ? 'moltRoleSubject'
+      : item.displayType === 'primary' ? 'moltRolePrimary'
+      : item.displayType === 'philosophy' ? 'moltRolePhilosophy'
+      : item.displayType === 'blueprint' ? 'moltRoleBlueprint'
+      : item.displayType === 'meta' ? 'moltRoleMeta'
+      : 'moltRoleUnknown'
+      : '';
+    return <div key={`${item.id}:${item.sourcePath ?? 'local'}:${index}`} className={`block builderBlock asset-${item.kind} ${item.displayType === 'meta' ? 'metaCard' : ''} ${isGateSource ? 'gateSourceCard' : ''} ${roleClass}`}><div className="cardtop"><b>{item.title}</b><span className="badge">{isGateSource ? 'Gt TriggerGate Source' : item.kind === 'molt_block' ? `${labelDisplayType(item.displayType === 'meta' ? 'meta' : block.role)} · MOLT` : item.kind}</span></div><p>role: {item.containedRoles.map(labelDisplayType).join(', ') || item.kind}</p>{category && <p>category: {category}</p>}<small>tags: {item.tags.slice(0, 6).join(', ') || 'no tags'}</small>{isGateSource && <small>activation: {gateCard.activation.conditionSummary}</small>}{debugMode && instId && <p className="instId">ID: {instId}</p>}{debugMode && <p>status: {item.status || 'runnable'}</p>}{debugMode && <small>sourcePath: {item.sourcePath ?? 'local asset'}</small>}<div className="row"><button onClick={() => onAdd(item)} disabled={addDisabled} title={addDisabled ? addHint : undefined}>{getAddLabel(item)}</button><button onClick={() => onInspect(item)}>{debugMode ? (isGateSource ? 'Inspect TriggerGate Source' : 'Inspect JSON / Legacy Source') : 'Inspect'}</button></div>{addDisabled && addHint && <small className="cardHint">{addHint}</small>}</div>;
   })}</div>;
 }
 
