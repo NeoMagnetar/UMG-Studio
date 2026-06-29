@@ -1,0 +1,54 @@
+.hackathonLanding,.hackathonLanding *{box-sizing:border-box}
+.hackathonLanding{height:100dvh;min-height:0;overflow:hidden;background:#05070d;color:#f6f8ff;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:16px}
+.hackathonLanding.hasResults{height:auto;min-height:100dvh;overflow-x:hidden;overflow-y:auto}
+.hackathonLanding button{font:inherit}
+.hackathonHeader,.hackathonMain{width:min(1120px,100%);margin:0 auto}
+.hackathonHeader{height:52px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:8px 12px;border:1px solid #1f3554;border-radius:16px;background:#080d16}
+.hackathonBrand{display:flex;align-items:center;gap:10px;min-width:0}
+.hackathonBrand span{display:inline-flex;align-items:center;justify-content:center;width:48px;height:30px;border:1px solid #ff2bbd;border-radius:10px;color:#39ff88;background:#0d1220;font-size:13px;font-weight:900;letter-spacing:.06em}
+.hackathonBrand b{min-width:0;color:#f6f8ff;font-size:13px;letter-spacing:.08em;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hackathonNav{display:flex;flex-wrap:wrap;gap:7px;justify-content:flex-end}
+.hackathonNav button,.hackathonPrimary,.hackathonChips button{border:1px solid #2bdcff;border-radius:999px;background:#0b1626;color:#f6f8ff;padding:7px 11px;font-size:12px;font-weight:800;cursor:pointer}
+.hackathonNav button:hover,.hackathonPrimary:hover,.hackathonChips button:hover{border-color:#39ff88}
+.hackathonMain{display:grid!important;grid-template-columns:1fr!important;grid-template-rows:auto minmax(0,1fr) auto auto!important;grid-auto-rows:auto!important;height:calc(100dvh - 84px)!important;min-height:0!important;padding:0!important;gap:10px;margin-top:12px}
+.hasResults .hackathonMain{height:auto!important;grid-template-rows:auto auto auto auto auto!important}
+.hackathonHero,.hackathonIntake,.hackathonPipeline,.hackathonStatus,.hackathonResults{position:relative;width:100%;min-width:0;border:1px solid #1f3554;border-radius:16px;background:#080d16}
+.hackathonHero{display:grid;gap:3px;padding:8px 12px}
+.hackathonEyebrow{margin:0;color:#39ff88;font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+.hackathonHero h1{margin:0;max-width:980px;color:#ffd166;font-size:clamp(1.65rem,2.9vw,2.55rem);line-height:.96;letter-spacing:-.045em;word-break:normal;overflow-wrap:normal}
+.hackathonHero h2{margin:0;color:#e9f2ff;font-size:clamp(.95rem,1.3vw,1.15rem);line-height:1.05}
+.hackathonHero p:not(.hackathonEyebrow){margin:0;max-width:980px;color:#c8d4e6;font-size:12px;line-height:1.25}
+.hackathonPrimary{justify-self:start;background:#0f251a;border-color:#39ff88;color:#dfffea}
+.hackathonHero .hackathonPrimary{padding:6px 10px;margin-top:2px}
+.hackathonIntake{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"heading heading" "goal context" "chips chips" "file submit";gap:9px;padding:12px 14px;min-height:0;align-content:start}
+.hackathonSectionHeading{grid-area:heading;display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0}
+.hackathonSectionHeading b{color:#f6f8ff;font-size:16px}
+.hackathonSectionHeading span{color:#9dadc7;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hackathonField{display:grid;gap:5px;min-width:0}
+.hackathonField:nth-of-type(1){grid-area:goal}
+.hackathonField:nth-of-type(2){grid-area:context}
+.hackathonField span,.hackathonFile span{color:#2bdcff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
+.hackathonField textarea{width:100%;height:62px;min-height:0;border:1px solid #273852;border-radius:12px;background:#050914;color:#f6f8ff;padding:8px;resize:none;font:inherit;font-size:12px;line-height:1.3}
+.hackathonField:nth-of-type(2) textarea{height:62px}
+.hackathonChips{grid-area:chips;display:flex;flex-wrap:wrap;gap:6px;align-content:start;min-width:0}
+.hackathonChips button{font-size:11px;padding:6px 9px;border-color:#263c59}
+.hackathonChips button.selected{border-color:#39ff88;background:#102217;color:#dfffea}
+.hackathonFile{grid-area:file;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:5px 9px;border:1px dashed #334b6c;border-radius:12px;background:#060b14;padding:7px;min-width:0}
+.hackathonFile input{min-width:0;width:100%;font-size:12px;color:#c8d4e6}
+.hackathonFile small{grid-column:1/-1;color:#aebbd0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hackathonIntake>.hackathonPrimary{grid-area:submit;align-self:center;white-space:nowrap}
+.hackathonNotice{grid-area:notice;border:1px solid #39ff88;border-radius:12px;background:#0c1c13;color:#dfffea;padding:8px;font-size:12px}
+.hackathonPipeline{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px;padding:8px}
+.hackathonPipeline div{min-width:0;display:flex;align-items:center;gap:6px;border:1px solid #273852;border-radius:11px;background:#060b14;padding:7px}
+.hackathonPipeline span{color:#ff2bbd;font-size:11px;font-weight:900}
+.hackathonPipeline b{color:#f6f8ff;font-size:12px;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hackathonPipeline div.active{border-color:#39ff88;background:#0c1c13}
+.hackathonPipeline div.pending{border-color:#ffd166;background:#1b1609}
+.hackathonStatus{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:8px}
+.hackathonStatus div{min-width:0;border:1px solid #273852;border-radius:11px;background:#060b14;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hackathonStatus span{color:#aebbd0;font-size:11px;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
+.hackathonStatus b{color:#39ff88;font-size:13px;white-space:nowrap}
+.hackathonResults{margin-top:10px;padding:0;border:0;background:transparent}
+.hackathonResults>.analysisReviewGrid{margin:0;width:100%;max-width:none}
+@media (max-width:900px){.hackathonLanding{height:auto;min-height:100dvh;overflow-y:auto}.hackathonMain{height:auto!important;grid-template-rows:auto!important}.hackathonHeader{height:auto;align-items:flex-start;flex-direction:column}.hackathonNav{justify-content:flex-start}.hackathonIntake{grid-template-columns:1fr;grid-template-areas:"heading" "goal" "context" "chips" "file" "submit" "notice"}.hackathonPipeline{grid-template-columns:repeat(4,minmax(0,1fr))}.hackathonStatus{grid-template-columns:repeat(2,minmax(0,1fr))}.hackathonHero h1{font-size:clamp(2rem,10vw,3.6rem)}}
+@media (max-width:640px){.hackathonLanding{padding:12px}.hackathonHero,.hackathonIntake{padding:12px}.hackathonPipeline,.hackathonStatus{grid-template-columns:1fr}.hackathonNav,.hackathonNav button,.hackathonPrimary{width:100%}.hackathonHero h1{font-size:clamp(1.9rem,13vw,3rem);line-height:1.02}.hackathonBrand b{font-size:12px}.hackathonSectionHeading{display:grid}.hackathonSectionHeading span{white-space:normal}}

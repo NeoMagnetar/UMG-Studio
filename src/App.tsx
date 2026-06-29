@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './style.css';
+import { HackathonLandingPage } from './components/HackathonLandingPage';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
 import migrationReport from '../data/library/migration-report.json';
@@ -1974,68 +1975,31 @@ function PublicLandingShell({
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
 }) {
-  return <div className="publicShell">
-    <div className="publicMatrixGrid" aria-hidden="true" />
-    <header className="publicHeader">
-      <div className="publicBrand"><span className="publicBrandMark">UMG</span><span>Universal Modular Generation</span></div>
-      <nav className="publicNav" aria-label="Studio access">
-        <button type="button" onClick={onOpenStudio}>Open Studio</button>
-        <button type="button" onClick={onOpenRuntime}>Enter Builder</button>
-        <button type="button" onClick={onOpenDebug}>Debug Studio</button>
-      </nav>
-    </header>
-    <main className="publicMain">
-      <section className="publicHero">
-        <div className="publicHeroCopy">
-          <p className="publicEyebrow">Agentic Modular Cognition</p>
-          <h1>UNIVERSAL MODULAR GENERATION</h1>
-          <h2>Agentic Modular Cognition</h2>
-          <p className="publicSupport">Upload a workflow, business process, chatbot plan, or operating document. UMG converts it into a modular cognitive Sleeve that Hermes can execute and trace.</p>
-          <div className="publicHeroActions">
-            <button type="button" className="publicPrimaryCta" onClick={() => document.getElementById('public-intake-goal')?.focus()}>Create Your Cognitive Mind</button>
-            <button type="button" className="publicSecondaryCta" onClick={onOpenStudio}>Open Studio / Debug Studio</button>
-          </div>
-        </div>
-        <div className="publicRuntimeCard" aria-label="Runtime foundation status">
-          <b>Cognitive Runtime Foundation</b>
-          <StatusLine label="Cognitive Runtime Foundation" value="Ready" tone="ready" />
-          <StatusLine label="Hermes Runtime Endpoint" value={hermesEndpointConfigured ? 'Configured' : 'Not Configured'} tone={hermesEndpointConfigured ? 'ready' : 'pending'} />
-          <StatusLine label="Trigger/Gate Model" value="Ready" tone="ready" />
-          <StatusLine label="Real Trace Visualizer" value="Next Phase" tone="pending" />
-        </div>
-      </section>
-      <section className="publicDeck">
-        <div className="publicIntakeCard">
-          <div className="publicSectionTitle">
-            <span>01</span>
-            <div><b>Cognition Intake</b><small>Local shell only. No fake Sleeve or runtime will be generated in this phase.</small></div>
-          </div>
-          <label className="publicField">
-            <span>Main prompt</span>
-            <textarea id="public-intake-goal" className="publicChatbox" value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe your workflow, business, chatbot, agent, or cognitive system..." />
-          </label>
-          <div className="publicQuickChips" aria-label="Quick workflow types">
-            {publicQuickChips.map((chip) => <button type="button" key={chip} className={selectedChip === chip ? 'selected' : ''} onClick={() => onChipSelect(chip)}>{chip}</button>)}
-          </div>
-          <div className="publicUploadGrid">
-            <label className="publicField publicPasteCard">
-              <span>Paste document/context</span>
-              <textarea value={context} onChange={(event) => onContextChange(event.target.value)} placeholder="Paste an operating doc, workflow notes, SOP, business process, or project plan. Parsing and analyzer wiring arrive next phase." />
-            </label>
-            <label className="publicUploadCard">
-              <span>Optional local file</span>
-              <input type="file" onChange={(event) => onFileSelect(event.target.files?.[0]?.name ?? '')} />
-              <small>{selectedFileName ? `Selected: ${selectedFileName}` : 'File is selected locally only. No external upload or parsing yet.'}</small>
-            </label>
-          </div>
-          <button type="button" className="publicPrimaryCta publicSubmit" onClick={onSubmit}>Start Cognition Upload</button>
-          {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake analyzed. Template Sleeve selected; Business Automation Core can be instantiated locally without Hermes execution.</div>}
-        </div>
-        <PipelinePreview intakeSubmitted={intakeSubmitted} businessMapReady={Boolean(businessMap)} templateSelected={Boolean(templateSelection)} sleeveInstantiated={Boolean(businessAutomationCoreBuild)} blockMatched={Boolean(blockMatchPlan)} missingGenerated={Boolean(blockMatchPlan)} assemblyReady={Boolean(sleeveAssemblyPlan)} />
-      </section>
-      {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onOpenStudio={onOpenStudio} />}
-    </main>
-  </div>;
+  return <HackathonLandingPage
+    goal={goal}
+    context={context}
+    selectedChip={selectedChip}
+    selectedFileName={selectedFileName}
+    intakeSubmitted={intakeSubmitted}
+    businessMapReady={Boolean(businessMap)}
+    templateSelected={Boolean(templateSelection)}
+    sleeveInstantiated={Boolean(businessAutomationCoreBuild)}
+    blockMatched={Boolean(blockMatchPlan)}
+    missingGenerated={Boolean(blockMatchPlan)}
+    assemblyReady={Boolean(sleeveAssemblyPlan)}
+    hermesEndpointConfigured={hermesEndpointConfigured}
+    quickChips={publicQuickChips}
+    onGoalChange={onGoalChange}
+    onContextChange={onContextChange}
+    onChipSelect={onChipSelect}
+    onFileSelect={onFileSelect}
+    onSubmit={onSubmit}
+    onOpenStudio={onOpenStudio}
+    onOpenRuntime={onOpenRuntime}
+    onOpenDebug={onOpenDebug}
+  >
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onOpenStudio={onOpenStudio} />}
+  </HackathonLandingPage>;
 }
 
 function StatusLine({ label, value, tone }: { label: string; value: string; tone: 'ready' | 'pending' }) {
