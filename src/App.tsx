@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './style.css';
 import { HackathonLandingPage } from './components/HackathonLandingPage';
+import { HierarchicalRuntimeVisualizer } from './components/HierarchicalRuntimeVisualizer';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
 import migrationReport from '../data/library/migration-report.json';
@@ -2277,6 +2278,15 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
     {blockMatchPlan && <GeneratedDraftsPanel drafts={draftReviewState} onReviewDraft={onReviewDraft} />}
     {sleeveAssemblyPlan && <AssemblyPlanPanel plan={sleeveAssemblyPlan} />}
     {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} onCompile={onCompileWithUMGCompiler} />}
+    {(businessAutomationCoreBuild || sleeveAssemblyPlan || compiledRuntimeManifest) && <HierarchicalRuntimeVisualizer
+      instantiatedSleeve={businessAutomationCoreBuild}
+      assemblyPlan={sleeveAssemblyPlan}
+      compiledRuntimeManifest={compiledRuntimeManifest}
+      hermesRuntimeResult={hermesRuntimeResult}
+      runtimeVisualState={hermesRuntimeVisualState}
+      hasHermesResult={Boolean(hermesRuntimeResult)}
+      hasRuntimeTrace={Boolean(hermesRuntimeVisualState?.timeline.length)}
+    />}
     {(compileCandidate || compilerRequestPreview || compilerResult || compiledRuntimeManifest) && <CompilerPhase6Panel requestPreview={compilerRequestPreview} result={compilerResult} manifest={compiledRuntimeManifest} />}
     {compiledRuntimeManifest && <HermesRuntimePhase7Panel request={hermesRequestPreview} result={hermesRuntimeResult} visualState={hermesRuntimeVisualState} warnings={hermesRuntimeWarnings} errors={hermesRuntimeErrors} isRunning={isHermesRunning} onRun={onRunHermesRuntime} />}
     <div className="analysisPanel nextStagePanel">
