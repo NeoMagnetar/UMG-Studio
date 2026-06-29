@@ -122,6 +122,7 @@ const matchesBlockSearch = (item: ShelfAsset, query: string) => getBlockSearchSo
 type InspectorTab = typeof inspectorTabs[number];
 
 type ResizeTarget = 'left' | 'right' | 'bottom';
+type AppSurfaceMode = 'public' | 'studio';
 type ShelfMode = AssetShelfId;
 type WorkspaceMode = 'compose' | 'canvas' | 'runtime' | 'debug';
 type GraphViewMode = 'full_sleeve' | 'neostack' | 'neoblock' | 'molt_builder';
@@ -129,6 +130,8 @@ type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' |
 type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
 type PlacementTargetChoice = { id: string; label: string; detail?: string; neostackId?: string; neoblockId?: string };
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
+const publicQuickChips = ['Business Automation', 'Website Builder', 'Chatbot', 'Research Agent', 'DevOps / Project Launcher', 'Custom Workflow'];
+const publicPipelineStages = ['Intake', 'Analyze', 'Match Blocks', 'Generate Missing Blocks', 'Assemble Sleeve', 'Compile', 'Run Hermes', 'Trace Runtime'];
 
 const moltBuilderSections = [
   { key: 'directive', label: 'Directive', className: 'moltRoleDirective' },
@@ -142,6 +145,7 @@ const moltBuilderSections = [
 
 export default function App() {
   const initialHermesGenerate = resolveHermesGenerateConfig(import.meta.env as Record<string, string | undefined>);
+  const [appSurfaceMode, setAppSurfaceMode] = useState<AppSurfaceMode>('public');
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
   const [sessionMoltBlocks, setSessionMoltBlocks] = useState<UMGBlock[]>([]);
   const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
@@ -195,6 +199,11 @@ export default function App() {
   const [selectedSleeveBoardRowId, setSelectedSleeveBoardRowId] = useState<string | undefined>('layer_1');
   const [sleeveBoardAssignments, setSleeveBoardAssignments] = useState<Record<string, string>>({});
   const [isClearGraphModalOpen, setIsClearGraphModalOpen] = useState(false);
+  const [publicGoal, setPublicGoal] = useState('');
+  const [publicContext, setPublicContext] = useState('');
+  const [publicSelectedChip, setPublicSelectedChip] = useState<string | undefined>();
+  const [publicSelectedFileName, setPublicSelectedFileName] = useState('');
+  const [publicIntakeSubmitted, setPublicIntakeSubmitted] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1581,10 +1590,46 @@ export default function App() {
   const exportGlyphMatrixJson = () => compiled && fullGlyphMatrix && downloadJson('glyph-matrix.json', fullGlyphMatrix);
   const exportHermesPacketJson = () => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config));
 
+  const openStudioShell = (mode: Exclude<WorkspaceMode, 'debug'> = 'canvas') => {
+    setPrimaryWorkspaceMode(mode);
+    setAppSurfaceMode('studio');
+  };
+
+  const openDebugStudioShell = () => {
+    setLastPrimaryMode(workspaceMode === 'debug' ? lastPrimaryMode : workspaceMode as Exclude<WorkspaceMode, 'debug'>);
+    setWorkspaceMode('debug');
+    setAppSurfaceMode('studio');
+  };
+
+  const submitPublicIntake = () => {
+    setPublicIntakeSubmitted(true);
+    setStatus('Intake captured. Business analyzer and Sleeve assembly will be connected in the next phase.');
+  };
+
+  if (appSurfaceMode === 'public') {
+    return <PublicLandingShell
+      goal={publicGoal}
+      context={publicContext}
+      selectedChip={publicSelectedChip}
+      selectedFileName={publicSelectedFileName}
+      intakeSubmitted={publicIntakeSubmitted}
+      hermesEndpointConfigured={Boolean(config.endpoint)}
+      onGoalChange={setPublicGoal}
+      onContextChange={setPublicContext}
+      onChipSelect={setPublicSelectedChip}
+      onFileSelect={setPublicSelectedFileName}
+      onSubmit={submitPublicIntake}
+      onOpenStudio={() => openStudioShell('canvas')}
+      onOpenRuntime={() => openStudioShell('runtime')}
+      onOpenDebug={openDebugStudioShell}
+    />;
+  }
+
   return <div className="app">
     <header>
       <div><b>UMG Studio v0.1</b><span>local graph cognition studio</span></div>
       <nav className={`modeTabs modeTabs-${workspaceMode}`} aria-label="Workbench mode">
+        <button onClick={() => setAppSurfaceMode('public')}>Public Intake</button>
         <button className={workspaceMode === 'compose' ? 'hot' : ''} onClick={() => setPrimaryWorkspaceMode('compose')}>Compose</button>
         <button className={workspaceMode === 'canvas' ? 'hot' : ''} onClick={() => setPrimaryWorkspaceMode('canvas')}>Canvas</button>
         <button className={workspaceMode === 'runtime' ? 'hot' : ''} onClick={() => setPrimaryWorkspaceMode('runtime')}>Runtime</button>
@@ -1769,6 +1814,120 @@ export default function App() {
       </section>
     </main>
   </div>;
+}
+
+function PublicLandingShell({
+  goal,
+  context,
+  selectedChip,
+  selectedFileName,
+  intakeSubmitted,
+  hermesEndpointConfigured,
+  onGoalChange,
+  onContextChange,
+  onChipSelect,
+  onFileSelect,
+  onSubmit,
+  onOpenStudio,
+  onOpenRuntime,
+  onOpenDebug
+}: {
+  goal: string;
+  context: string;
+  selectedChip?: string;
+  selectedFileName: string;
+  intakeSubmitted: boolean;
+  hermesEndpointConfigured: boolean;
+  onGoalChange: (value: string) => void;
+  onContextChange: (value: string) => void;
+  onChipSelect: (value: string) => void;
+  onFileSelect: (value: string) => void;
+  onSubmit: () => void;
+  onOpenStudio: () => void;
+  onOpenRuntime: () => void;
+  onOpenDebug: () => void;
+}) {
+  return <div className="publicShell">
+    <div className="publicMatrixGrid" aria-hidden="true" />
+    <header className="publicHeader">
+      <div className="publicBrand"><span className="publicBrandMark">UMG</span><span>Universal Modular Generation</span></div>
+      <nav className="publicNav" aria-label="Studio access">
+        <button type="button" onClick={onOpenStudio}>Open Studio</button>
+        <button type="button" onClick={onOpenRuntime}>Enter Builder</button>
+        <button type="button" onClick={onOpenDebug}>Debug Studio</button>
+      </nav>
+    </header>
+    <main className="publicMain">
+      <section className="publicHero">
+        <div className="publicHeroCopy">
+          <p className="publicEyebrow">Agentic Modular Cognition</p>
+          <h1>UNIVERSAL MODULAR GENERATION</h1>
+          <h2>Agentic Modular Cognition</h2>
+          <p className="publicSupport">Upload a workflow, business process, chatbot plan, or operating document. UMG converts it into a modular cognitive Sleeve that Hermes can execute and trace.</p>
+          <div className="publicHeroActions">
+            <button type="button" className="publicPrimaryCta" onClick={() => document.getElementById('public-intake-goal')?.focus()}>Create Your Cognitive Mind</button>
+            <button type="button" className="publicSecondaryCta" onClick={onOpenStudio}>Open Studio / Debug Studio</button>
+          </div>
+        </div>
+        <div className="publicRuntimeCard" aria-label="Runtime foundation status">
+          <b>Cognitive Runtime Foundation</b>
+          <StatusLine label="Cognitive Runtime Foundation" value="Ready" tone="ready" />
+          <StatusLine label="Hermes Runtime Endpoint" value={hermesEndpointConfigured ? 'Configured' : 'Not Configured'} tone={hermesEndpointConfigured ? 'ready' : 'pending'} />
+          <StatusLine label="Trigger/Gate Model" value="Ready" tone="ready" />
+          <StatusLine label="Real Trace Visualizer" value="Next Phase" tone="pending" />
+        </div>
+      </section>
+      <section className="publicDeck">
+        <div className="publicIntakeCard">
+          <div className="publicSectionTitle">
+            <span>01</span>
+            <div><b>Cognition Intake</b><small>Local shell only. No fake Sleeve or runtime will be generated in this phase.</small></div>
+          </div>
+          <label className="publicField">
+            <span>Main prompt</span>
+            <textarea id="public-intake-goal" className="publicChatbox" value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe your workflow, business, chatbot, agent, or cognitive system..." />
+          </label>
+          <div className="publicQuickChips" aria-label="Quick workflow types">
+            {publicQuickChips.map((chip) => <button type="button" key={chip} className={selectedChip === chip ? 'selected' : ''} onClick={() => onChipSelect(chip)}>{chip}</button>)}
+          </div>
+          <div className="publicUploadGrid">
+            <label className="publicField publicPasteCard">
+              <span>Paste document/context</span>
+              <textarea value={context} onChange={(event) => onContextChange(event.target.value)} placeholder="Paste an operating doc, workflow notes, SOP, business process, or project plan. Parsing and analyzer wiring arrive next phase." />
+            </label>
+            <label className="publicUploadCard">
+              <span>Optional local file</span>
+              <input type="file" onChange={(event) => onFileSelect(event.target.files?.[0]?.name ?? '')} />
+              <small>{selectedFileName ? `Selected: ${selectedFileName}` : 'File is selected locally only. No external upload or parsing yet.'}</small>
+            </label>
+          </div>
+          <button type="button" className="publicPrimaryCta publicSubmit" onClick={onSubmit}>Start Cognition Upload</button>
+          {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake captured. Business analyzer and Sleeve assembly will be connected in the next phase.</div>}
+        </div>
+        <PipelinePreview intakeSubmitted={intakeSubmitted} />
+      </section>
+    </main>
+  </div>;
+}
+
+function StatusLine({ label, value, tone }: { label: string; value: string; tone: 'ready' | 'pending' }) {
+  return <div className={`publicStatusLine ${tone}`}><span>{label}</span><b>{value}</b></div>;
+}
+
+function PipelinePreview({ intakeSubmitted }: { intakeSubmitted: boolean }) {
+  return <aside className="publicPipelineCard">
+    <div className="publicSectionTitle"><span>02</span><div><b>Runtime Pipeline Preview</b><small>Status rail only — no fake execution.</small></div></div>
+    <div className="publicPipelineRail">
+      {publicPipelineStages.map((stage, index) => {
+        const active = intakeSubmitted && index === 0;
+        return <div key={stage} className={`publicPipelineStage ${active ? 'active' : 'pending'}`}>
+          <span>{String(index + 1).padStart(2, '0')}</span>
+          <b>{stage}</b>
+          <small>{active ? 'ready / captured' : 'pending / not connected'}</small>
+        </div>;
+      })}
+    </div>
+  </aside>;
 }
 
 function LibraryAudit({ report }: { report: any }) {
