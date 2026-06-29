@@ -1,4 +1,7 @@
 import { TemplateSleeveSummary } from './businessIntakeTypes';
+import { BUSINESS_AUTOMATION_CORE_SLEEVE_ID, getBusinessAutomationCoreStats } from './businessAutomationCoreSleeve';
+
+const businessAutomationCoreStats = getBusinessAutomationCoreStats();
 
 const businessNeoStacks = [
   ['S.01', 'Business Assessment & Discovery', 'Analyzes business model, current processes, pain points, opportunity scoring, budget, and success metrics.', ['assessment', 'discovery', 'roi']],
@@ -28,7 +31,7 @@ const catalog: TemplateSleeveSummary[] = [
     templateKind: 'business',
     isTemplate: true,
     available: true,
-    status: 'partial',
+    status: 'available',
     source: 'built_in_seed',
     tags: ['business', 'automation', 'small-business', 'side-hustle', 'openclaw', 'roi', 'scheduling', 'social-media', 'inventory', 'invoicing', 'financial', 'training'],
     description: 'Small business and side-hustle automation consultant Sleeve for assessing workflows, designing OpenClaw/UMG automation, calculating ROI, training clients, and monitoring improvement.',
@@ -37,7 +40,8 @@ const catalog: TemplateSleeveSummary[] = [
     defaultExecutionMode: 'liveAllowed',
     neoStackSummaries: businessNeoStacks.map(([id, title, description, tags]) => ({ id, title, description, tags: [...tags] })),
     notes: [
-      'Full source version contains 8 NeoStacks / 48 NeoBlocks / 192 MOLT blocks.',
+      'Full source version contains 8 NeoStacks / 48 NeoBlocks / 192 source records.',
+      `Normalized core structure available as ${BUSINESS_AUTOMATION_CORE_SLEEVE_ID}: ${businessAutomationCoreStats.neoStacks} NeoStacks / ${businessAutomationCoreStats.neoBlocks} NeoBlocks / ${businessAutomationCoreStats.moltBlocks} normalized MOLT content blocks / ${businessAutomationCoreStats.gates} gates. Full source expansion later.`,
       'TRG.BIZ.* should become gate/control records when full import is implemented.',
       'PRIM.BIZ.* governance values should become Primary MOLT/governance blocks.',
       'CON/VER-like future records should become gate-policy or MetaMOLT candidates.',

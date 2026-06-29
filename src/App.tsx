@@ -26,6 +26,8 @@ import { createBusinessInputFromPublicIntake, analyzeBusinessInput } from './lib
 import { getTemplateById, getTemplateSleeveCatalog } from './lib/umg/templateSleeveCatalog';
 import { selectTemplateSleeve } from './lib/umg/templateSelection';
 import { BusinessInput, BusinessMap, TemplateSelectionResult } from './lib/umg/businessIntakeTypes';
+import { BUSINESS_AUTOMATION_CORE_SLEEVE_ID, instantiateBusinessAutomationCoreSleeve } from './lib/umg/businessAutomationCoreSleeve';
+import { InstantiatedTemplateSleeve } from './lib/umg/templateSleeveStructures';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -211,6 +213,7 @@ export default function App() {
   const [publicBusinessInput, setPublicBusinessInput] = useState<BusinessInput | undefined>();
   const [publicBusinessMap, setPublicBusinessMap] = useState<BusinessMap | undefined>();
   const [publicTemplateSelection, setPublicTemplateSelection] = useState<TemplateSelectionResult | undefined>();
+  const [businessAutomationCoreBuild, setBusinessAutomationCoreBuild] = useState<InstantiatedTemplateSleeve | undefined>();
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1620,8 +1623,33 @@ export default function App() {
     setPublicBusinessInput(businessInput);
     setPublicBusinessMap(businessMap);
     setPublicTemplateSelection(templateSelection);
+    setBusinessAutomationCoreBuild(undefined);
     setPublicIntakeSubmitted(true);
-    setStatus('Intake analyzed. Template Sleeve selected; block matching and Sleeve assembly are not connected in this phase.');
+    setStatus('Intake analyzed. Template Sleeve selected; Business Automation Core can now be instantiated when selected.');
+  };
+
+  const createBusinessAutomationCoreFromTemplate = () => {
+    const instantiated = instantiateBusinessAutomationCoreSleeve({
+      businessMap: publicBusinessMap,
+      selectedTemplateId: publicTemplateSelection?.selectedTemplateId,
+      sourcePrompt: publicGoal,
+      createdAt: new Date().toISOString()
+    });
+    setBusinessAutomationCoreBuild(instantiated);
+    setSessionSleeves((current) => [instantiated.sleeve, ...current.filter((sleeve) => sleeve.id !== instantiated.sleeve.id)]);
+    setWorkspace({
+      id: `ws_${BUSINESS_AUTOMATION_CORE_SLEEVE_ID}`,
+      title: instantiated.sleeve.title,
+      activeSleeveId: instantiated.sleeve.id,
+      sleeves: [instantiated.sleeve],
+      libraryRefs: [],
+      graph: buildGraphFromSleeve(instantiated.sleeve)
+    });
+    setCompiled(undefined);
+    setSelected(undefined);
+    setInspected(undefined);
+    setGraphViewMode('full_sleeve');
+    setStatus('Business Automation Consultant Core Sleeve instantiated locally. Blocks remain off and gates remain closed; Hermes was not called.');
   };
 
   if (appSurfaceMode === 'public') {
@@ -1634,12 +1662,14 @@ export default function App() {
       businessInput={publicBusinessInput}
       businessMap={publicBusinessMap}
       templateSelection={publicTemplateSelection}
+      businessAutomationCoreBuild={businessAutomationCoreBuild}
       hermesEndpointConfigured={Boolean(config.endpoint)}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
       onChipSelect={setPublicSelectedChip}
       onFileSelect={setPublicSelectedFileName}
       onSubmit={submitPublicIntake}
+      onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onOpenStudio={() => openStudioShell('canvas')}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
@@ -1846,12 +1876,14 @@ function PublicLandingShell({
   businessInput,
   businessMap,
   templateSelection,
+  businessAutomationCoreBuild,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
   onChipSelect,
   onFileSelect,
   onSubmit,
+  onCreateBusinessAutomationCore,
   onOpenStudio,
   onOpenRuntime,
   onOpenDebug
@@ -1864,12 +1896,14 @@ function PublicLandingShell({
   businessInput?: BusinessInput;
   businessMap?: BusinessMap;
   templateSelection?: TemplateSelectionResult;
+  businessAutomationCoreBuild?: InstantiatedTemplateSleeve;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
   onChipSelect: (value: string) => void;
   onFileSelect: (value: string) => void;
   onSubmit: () => void;
+  onCreateBusinessAutomationCore: () => void;
   onOpenStudio: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
@@ -1929,11 +1963,11 @@ function PublicLandingShell({
             </label>
           </div>
           <button type="button" className="publicPrimaryCta publicSubmit" onClick={onSubmit}>Start Cognition Upload</button>
-          {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake analyzed. Template Sleeve selected; block matching and Sleeve assembly remain next-phase work.</div>}
+          {intakeSubmitted && <div className="publicIntakeNotice" role="status">Intake analyzed. Template Sleeve selected; Business Automation Core can be instantiated locally without Hermes execution.</div>}
         </div>
-        <PipelinePreview intakeSubmitted={intakeSubmitted} businessMapReady={Boolean(businessMap)} templateSelected={Boolean(templateSelection)} />
+        <PipelinePreview intakeSubmitted={intakeSubmitted} businessMapReady={Boolean(businessMap)} templateSelected={Boolean(templateSelection)} sleeveInstantiated={Boolean(businessAutomationCoreBuild)} />
       </section>
-      {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} />}
+      {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onOpenStudio={onOpenStudio} />}
     </main>
   </div>;
 }
@@ -1942,11 +1976,12 @@ function StatusLine({ label, value, tone }: { label: string; value: string; tone
   return <div className={`publicStatusLine ${tone}`}><span>{label}</span><b>{value}</b></div>;
 }
 
-function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean }) {
+function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, sleeveInstantiated }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean; sleeveInstantiated: boolean }) {
   const stageState = (stage: string, index: number) => {
     if (index === 0 && intakeSubmitted) return { className: 'active', label: 'ready / captured' };
     if (stage === 'Analyze' && businessMapReady) return { className: 'active', label: 'ready / mapped' };
-    if (stage === 'Match Blocks' && templateSelected) return { className: 'pending', label: 'template selected; block matching next' };
+    if (stage === 'Match Blocks' && templateSelected) return { className: 'pending', label: 'template chosen; matching next' };
+    if (stage === 'Assemble Sleeve' && sleeveInstantiated) return { className: 'active', label: 'Template Sleeve instantiated' };
     return { className: 'pending', label: 'pending / not connected' };
   };
   return <aside className="publicPipelineCard">
@@ -1964,9 +1999,10 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected }
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, onCreateBusinessAutomationCore, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; onCreateBusinessAutomationCore: () => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
+  const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
   return <section className="analysisReviewGrid" aria-label="Phase 3 analysis review">
     <div className="analysisPanel">
       <div className="publicSectionTitle"><span>03</span><div><b>Intake Captured</b><small>Typed BusinessInput created locally.</small></div></div>
@@ -1996,7 +2032,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection }:
       ]} />
     </div>
     <div className="analysisPanel templatePanel">
-      <div className="publicSectionTitle"><span>05</span><div><b>Recommended Template Sleeve</b><small>Template metadata only; no Sleeve generated.</small></div></div>
+      <div className="publicSectionTitle"><span>05</span><div><b>Recommended Template Sleeve</b><small>Business Automation can instantiate a normalized core Sleeve.</small></div></div>
       <h3>{templateSelection.selectedTemplateTitle}</h3>
       <div className="row"><span className="confidencePill">confidence {Math.round(templateSelection.confidence * 100)}%</span><span className={`templateStatusBadge status-${selectedTemplate?.status ?? 'planned'}`}>{selectedTemplate?.status ?? 'planned'}</span></div>
       <p>{templateSelection.reason}</p>
@@ -2006,14 +2042,44 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection }:
         {!selectedTemplate?.neoStackSummaries.length && <small>No NeoStack summaries are available for this planned template yet.</small>}
       </div>
       {templateSelection.warnings.length > 0 && <div className="analysisWarnings"><b>Warnings</b>{templateSelection.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
+      {canBuildBusinessAutomationCore && <div className="templateActionRow">
+        <button type="button" className="publicPrimaryCta" onClick={onCreateBusinessAutomationCore}>{businessAutomationCoreBuild ? 'Rebuild Business Automation Sleeve' : 'Create Sleeve From Template'}</button>
+        {businessAutomationCoreBuild && <button type="button" className="publicSecondaryCta" onClick={onOpenStudio}>Open Instantiated Sleeve in Studio</button>}
+      </div>}
       <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
     </div>
+    {businessAutomationCoreBuild && <BusinessAutomationCoreBuiltPanel build={businessAutomationCoreBuild} />}
     <div className="analysisPanel nextStagePanel">
-      <div className="publicSectionTitle"><span>06</span><div><b>Next Stage</b><small>Status: not connected in this phase.</small></div></div>
-      <p><b>Next:</b> Match Blocks and Assemble Sleeve</p>
-      <p>No fake Sleeve generated. No Hermes runtime called. Block matching, missing block generation, Sleeve assembly, compile, Hermes run, and trace visualization remain pending.</p>
+      <div className="publicSectionTitle"><span>07</span><div><b>Next Stage</b><small>Status: compile/runtime not connected.</small></div></div>
+      <p><b>Next:</b> Block matching / Missing block generation / Compile-to-Hermes manifest</p>
+      <p>No fake Hermes runtime called. Block matching, missing block generation, compile, Hermes run, and trace visualization remain pending.</p>
     </div>
   </section>;
+}
+
+function BusinessAutomationCoreBuiltPanel({ build }: { build: InstantiatedTemplateSleeve }) {
+  const stackTitleById = new Map(build.templateSleeve.neoStacks.map((stack) => [stack.id, stack.title]));
+  return <div className="analysisPanel templateSleeveBuiltPanel">
+    <div className="publicSectionTitle"><span>06</span><div><b>Business Automation Core Sleeve Built</b><small>Local built-in template Sleeve; no Hermes runtime call.</small></div></div>
+    <div className="templateCountGrid">
+      <div><b>{build.stats.neoStacks}</b><span>NeoStacks</span></div>
+      <div><b>{build.stats.neoBlocks}</b><span>NeoBlocks</span></div>
+      <div><b>{build.stats.moltBlocks}</b><span>normalized MOLT blocks</span></div>
+      <div><b>{build.stats.gates}</b><span>Trigger/Gate records</span></div>
+    </div>
+    <div className="templateDefaultNotes"><span>Blocks default off/dim</span><span>Gates default closed</span><span>TRG.BIZ.* records are control records, not MOLT prompt blocks</span></div>
+    <div className="recommendedStackChips"><b>Recommended stacks</b>{build.recommendedStackIds.map((id) => <span key={id}>{id} · {stackTitleById.get(id)}</span>)}</div>
+    <div className="templateHierarchyPreview">
+      {build.templateSleeve.neoStacks.map((stack) => {
+        const blocks = build.templateSleeve.neoBlocks.filter((block) => block.neoStackId === stack.id);
+        return <details key={stack.id} className="templateStackPreview">
+          <summary><b>{stack.id} · {stack.title}</b><span>{blocks.length} NeoBlocks</span><span className="gateStatusBadge">gates closed</span></summary>
+          <ol>{blocks.map((block) => <li key={block.id}><b>{block.title}</b><small>{block.gateIds[0]} · block off · {block.moltBlockIds.length} linked MOLT content refs</small></li>)}</ol>
+        </details>;
+      })}
+    </div>
+    <p className="analysisSummary">Next: block matching, missing block generation, compile-to-Hermes manifest, then real Hermes runtime trace visualization. Run Hermes and Trace Runtime remain pending.</p>
+  </div>;
 }
 
 function SummaryRows({ rows }: { rows: Array<[string, string]> }) {
