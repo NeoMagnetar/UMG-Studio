@@ -58,24 +58,45 @@ export function createHermesRuntimeRequestFromManifest(args: {
   const { compiledRuntimeManifest, businessInput } = args;
   const executionMode = args.executionMode
     ?? compiledRuntimeManifest.toolPolicy.executionMode
-    ?? 'liveAllowed';
+    ?? 'dryRun';
   const approvalMode = args.approvalMode
     ?? compiledRuntimeManifest.toolPolicy.approvalMode
-    ?? 'none';
+    ?? 'beforeToolUse';
+  const traceId = args.traceId ?? makeTraceId(compiledRuntimeManifest);
 
   return {
     compiledSleeveManifest: compiledRuntimeManifest,
+    compiledRuntimeManifest,
     userGoal: args.userGoal || businessInput?.text || `Run ${compiledRuntimeManifest.sleeveTitle}`,
     executionMode,
     approvalMode,
     contextFiles: businessInput?.documents ?? [],
     userProvidedContext: businessInput?.documents.map((doc) => doc.text).filter(Boolean).join('\n\n') || undefined,
-    traceId: args.traceId ?? makeTraceId(compiledRuntimeManifest),
+    traceId,
+    sleeve: { id: compiledRuntimeManifest.sleeveId, name: compiledRuntimeManifest.sleeveTitle },
+    structure: compiledRuntimeManifest.compiledStructure,
+    allowedTools: compiledRuntimeManifest.toolPolicy.allowedTools,
+    blockedTools: compiledRuntimeManifest.toolPolicy.blockedTools,
+    requiredTools: compiledRuntimeManifest.executionPlan.flatMap((step) => step.requiredToolIds),
+    approvalPoints: compiledRuntimeManifest.executionPlan
+      .filter((step) => step.requiredGateIds.length || step.requiredToolIds.length)
+      .map((step) => ({ stepId: step.id, label: step.label, requiredGateIds: step.requiredGateIds, requiredToolIds: step.requiredToolIds })),
+    runtimeInstructions: compiledRuntimeManifest.runtimeInstructions,
+    sourceBlocks: compiledRuntimeManifest.sourceBlocks,
+    expectedTraceContract: {
+      traceId,
+      status: 'ok | blocked | needsApproval | error',
+      events: ['run_started', 'sleeve_loaded', 'gate_evaluated', 'neostack_started', 'neoblock_started', 'molt_role_used', 'run_completed', 'run_error'],
+      mappingRule: 'Events must carry local IDs, source IDs, gate IDs, metadata aliases, or compiler/runtime manifest IDs. Unmapped events stay in the timeline only.'
+    },
     metadata: {
-      source: 'umg-studio-phase7-hermes-runtime',
+      source: 'umg_studio_phase10_real_hermes_runtime_contract',
       businessName: businessInput?.businessName,
       requestedAgentType: businessInput?.requestedAgentType,
-      createdFromCompiledManifest: true
+      createdFromCompiledManifest: true,
+      traceContractVersion: 'phase10.v1',
+      noFakeRuntime: true,
+      compilerTraceIsNotHermesRuntimeTrace: true
     }
   };
 }

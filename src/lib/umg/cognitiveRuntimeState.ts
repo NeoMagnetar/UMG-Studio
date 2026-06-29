@@ -14,6 +14,22 @@ const stateListKeys = [
 type RuntimeStateListKey = typeof stateListKeys[number];
 
 const eventTypes: UMGTraceEventType[] = [
+  'run_started',
+  'sleeve_loaded',
+  'gate_evaluated',
+  'gate_blocked',
+  'neostack_started',
+  'neostack_completed',
+  'neoblock_started',
+  'neoblock_completed',
+  'molt_role_used',
+  'tool_call_prepared',
+  'tool_call_requires_approval',
+  'tool_call_executed',
+  'tool_call_blocked',
+  'tool_result_received',
+  'run_completed',
+  'run_error',
   'route_started',
   'gate_opened',
   'gate_closed',
@@ -34,6 +50,22 @@ const runtimeStates: UMGRuntimeState[] = ['idle', 'queued', 'active', 'processin
 const scopeKinds: UMGRuntimeScopeKind[] = ['sleeve', 'neostack', 'neoblock', 'molt', 'gate', 'tool', 'approval'];
 
 const eventStateDefaults: Record<UMGTraceEventType, UMGRuntimeState> = {
+  run_started: 'active',
+  sleeve_loaded: 'active',
+  gate_evaluated: 'attention',
+  gate_blocked: 'blocked',
+  neostack_started: 'active',
+  neostack_completed: 'complete',
+  neoblock_started: 'active',
+  neoblock_completed: 'complete',
+  molt_role_used: 'active',
+  tool_call_prepared: 'attention',
+  tool_call_requires_approval: 'attention',
+  tool_call_executed: 'complete',
+  tool_call_blocked: 'blocked',
+  tool_result_received: 'processing',
+  run_completed: 'complete',
+  run_error: 'error',
   route_started: 'active',
   gate_opened: 'active',
   gate_closed: 'complete',
@@ -73,6 +105,8 @@ export function getRuntimeTargetId(event: UMGTraceEvent): string | undefined {
     ?? event.neoStackId
     ?? event.sleeveId
     ?? event.gateId
+    ?? event.sourceId
+    ?? event.metadataAliases?.[0]
     ?? event.toolId
     ?? event.approvalId;
 }
@@ -205,6 +239,20 @@ function parseEventType(value: unknown, event: Record<string, unknown>): UMGTrac
   if (typeof value === 'string' && eventTypes.includes(value as UMGTraceEventType)) return value as UMGTraceEventType;
   const text = String(value ?? event.type ?? event.kind ?? event.code ?? '').toLowerCase();
   if (!text) return undefined;
+  if (text.includes('run') && text.includes('start')) return 'run_started';
+  if (text.includes('sleeve') && text.includes('load')) return 'sleeve_loaded';
+  if (text.includes('gate') && text.includes('evaluat')) return 'gate_evaluated';
+  if (text.includes('gate') && text.includes('block')) return 'gate_blocked';
+  if (text.includes('neostack') && text.includes('start')) return 'neostack_started';
+  if (text.includes('neostack') && (text.includes('complete') || text.includes('finish'))) return 'neostack_completed';
+  if (text.includes('neoblock') && text.includes('start')) return 'neoblock_started';
+  if (text.includes('neoblock') && (text.includes('complete') || text.includes('finish'))) return 'neoblock_completed';
+  if (text.includes('molt') && (text.includes('role') || text.includes('used'))) return 'molt_role_used';
+  if (text.includes('tool') && text.includes('prepared')) return 'tool_call_prepared';
+  if (text.includes('tool') && text.includes('approval')) return 'tool_call_requires_approval';
+  if (text.includes('tool') && text.includes('result')) return 'tool_result_received';
+  if (text.includes('run') && (text.includes('complete') || text.includes('finish'))) return 'run_completed';
+  if (text.includes('run') && (text.includes('error') || text.includes('fail'))) return 'run_error';
   if (text.includes('route') && text.includes('start')) return 'route_started';
   if (text.includes('route') && (text.includes('complete') || text.includes('finish'))) return 'route_completed';
   if (text.includes('gate') && text.includes('open')) return 'gate_opened';
@@ -231,6 +279,12 @@ function firstStringArrayValue(value: unknown): string | undefined {
   return Array.isArray(value) ? value.find((entry) => typeof entry === 'string' && entry.trim()) : undefined;
 }
 
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()));
+  return values.length ? values : undefined;
+}
+
 function normalizeTraceEntry(entry: unknown, index: number, fallbackTraceId: string): UMGTraceEvent | undefined {
   if (!isRecord(entry)) return undefined;
   const eventType = parseEventType(entry.eventType, entry);
@@ -243,6 +297,8 @@ function normalizeTraceEntry(entry: unknown, index: number, fallbackTraceId: str
   const neoStackId = asString(entry.neoStackId) ?? asString(entry.stackId);
   const sleeveId = asString(entry.sleeveId);
   const gateId = asString(entry.gateId);
+  const sourceId = asString(entry.sourceId);
+  const metadataAliases = stringArrayValue(entry.metadataAliases ?? entry.aliases);
   const toolId = asString(entry.toolId);
   const approvalId = asString(entry.approvalId);
 
@@ -255,6 +311,8 @@ function normalizeTraceEntry(entry: unknown, index: number, fallbackTraceId: str
     neoBlockId,
     moltBlockId,
     gateId,
+    sourceId,
+    metadataAliases,
     toolId,
     approvalId,
     eventType,

@@ -89,6 +89,7 @@ function normalizeRuntimeResult(raw: unknown, request: HermesCognitiveRuntimeReq
     approvalRequests: arrayField<UMGApprovalRequest>(raw.approvalRequests),
     errors: normalizeRuntimeErrors(raw.errors, request.traceId),
     artifacts: arrayField<UMGRuntimeArtifact>(raw.artifacts),
+    unmappedEvents: normalizeHermesTracePayload(arrayField(raw.unmappedEvents), request.traceId),
     nextSuggestedActions: arrayField<string>(raw.nextSuggestedActions),
     raw
   };

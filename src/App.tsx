@@ -2404,10 +2404,10 @@ function HermesRuntimePhase7Panel({ request, result, visualState, warnings, erro
       <div className="publicSectionTitle"><span>16</span><div><b>Hermes Runtime Result</b><small>Real response only.</small></div></div>
       <SummaryRows rows={[["status", result.status], ["toolCalls", String(result.toolCalls.length)], ["blockedCalls", String(result.blockedCalls.length)], ["approvals", String(result.approvalRequests.length)], ["artifacts", String(result.artifacts.length)]]} />
       <p className="analysisSummary">{result.finalOutput || 'Hermes returned no final output text.'}</p>
-      <div className="phase7ChipRow"><b>Next</b>{result.nextSuggestedActions.length ? result.nextSuggestedActions.map((action) => <span key={action}>{action}</span>) : <span>none</span>}</div>
-      <div className="phase7ChipRow"><b>Tools</b>{result.toolCalls.length ? result.toolCalls.map((call) => <span key={call.id}>{call.toolName ?? call.toolId}: {call.status}</span>) : <span>none</span>}</div>
-      <div className="phase7ChipRow"><b>Approvals</b>{result.approvalRequests.length ? result.approvalRequests.map((approval) => <span key={approval.id}>{approval.label}: {approval.status}</span>) : <span>none</span>}</div>
-      <div className="phase7ChipRow"><b>Artifacts</b>{result.artifacts.length ? result.artifacts.map((artifact) => <span key={artifact.id}>{artifact.label}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Next</b>{result.nextSuggestedActions.length ? result.nextSuggestedActions.map((action, index) => <span key={`${action}:${index}`}>{action}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Tools</b>{result.toolCalls.length ? result.toolCalls.map((call, index) => <span key={call.id || `${call.toolId}:${index}`}>{call.toolName ?? call.toolId}: {call.status}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Approvals</b>{result.approvalRequests.length ? result.approvalRequests.map((approval, index) => <span key={approval.id || approval.approvalId || `${approval.label}:${index}`}>{approval.label}: {approval.status}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Artifacts</b>{result.artifacts.length ? result.artifacts.map((artifact, index) => <span key={artifact.id || `${artifact.label}:${index}`}>{artifact.label}</span>) : <span>none</span>}</div>
     </div>}
     <div className="analysisPanel phase7TraceIngestionPanel">
       <div className="publicSectionTitle"><span>17</span><div><b>Real Trace Ingestion</b><small>Only real Hermes UMGTraceEvent records.</small></div></div>

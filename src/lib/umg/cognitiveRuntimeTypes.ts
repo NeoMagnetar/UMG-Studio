@@ -19,6 +19,22 @@ export type UMGRuntimeState =
   | 'error';
 
 export type UMGTraceEventType =
+  | 'run_started'
+  | 'sleeve_loaded'
+  | 'gate_evaluated'
+  | 'gate_blocked'
+  | 'neostack_started'
+  | 'neostack_completed'
+  | 'neoblock_started'
+  | 'neoblock_completed'
+  | 'molt_role_used'
+  | 'tool_call_prepared'
+  | 'tool_call_requires_approval'
+  | 'tool_call_executed'
+  | 'tool_call_blocked'
+  | 'tool_result_received'
+  | 'run_completed'
+  | 'run_error'
   | 'route_started'
   | 'gate_opened'
   | 'gate_closed'
@@ -43,6 +59,8 @@ export type UMGTraceEvent = {
   neoBlockId?: string;
   moltBlockId?: string;
   gateId?: string;
+  sourceId?: string;
+  metadataAliases?: string[];
   toolId?: string;
   approvalId?: string;
   eventType: UMGTraceEventType;
@@ -151,11 +169,21 @@ export type UMGCompiledRuntimeManifest = {
 
 export type HermesCognitiveRuntimeRequest = {
   compiledSleeveManifest: UMGCompiledRuntimeManifest;
+  compiledRuntimeManifest?: UMGCompiledRuntimeManifest;
   userGoal: string;
   executionMode: 'dryRun' | 'approvalRequired' | 'liveAllowed';
   approvalMode: 'none' | 'beforeToolUse' | 'beforeHighRisk' | 'manual';
   contextFiles?: unknown[];
   userProvidedContext?: string;
+  sleeve?: { id: string; name: string };
+  structure?: unknown;
+  allowedTools?: string[];
+  blockedTools?: string[];
+  requiredTools?: string[];
+  approvalPoints?: unknown[];
+  runtimeInstructions?: string[];
+  sourceBlocks?: UMGSourceBlockRef[];
+  expectedTraceContract?: unknown;
   traceId: string;
   metadata?: Record<string, unknown>;
 };
@@ -212,6 +240,7 @@ export type HermesCognitiveRuntimeResult = {
   approvalRequests: UMGApprovalRequest[];
   errors: UMGRuntimeError[];
   artifacts: UMGRuntimeArtifact[];
+  unmappedEvents?: UMGTraceEvent[];
   nextSuggestedActions: string[];
   raw?: unknown;
 };
