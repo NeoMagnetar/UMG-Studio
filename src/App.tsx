@@ -2271,13 +2271,6 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       </div>}
       <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
     </div>
-    {businessAutomationCoreBuild && <BusinessAutomationCoreBuiltPanel build={businessAutomationCoreBuild} />}
-    {businessAutomationCoreBuild && <div className="analysisPanel phase5ActionPanel"><div className="publicSectionTitle"><span>07</span><div><b>Block Matching + Gap Detection</b><small>Reuse existing blocks first, then propose draft-only gaps.</small></div></div><button type="button" className="publicPrimaryCta" onClick={onRunBlockMatching}>Match Blocks & Detect Gaps</button><p>No Hermes call, no compiler call, no source library write.</p></div>}
-    {blockMatchPlan && <BlockMatchResultsPanel plan={blockMatchPlan} />}
-    {blockMatchPlan && <MissingCapabilitiesPanel plan={blockMatchPlan} />}
-    {blockMatchPlan && <GeneratedDraftsPanel drafts={draftReviewState} onReviewDraft={onReviewDraft} />}
-    {sleeveAssemblyPlan && <AssemblyPlanPanel plan={sleeveAssemblyPlan} />}
-    {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} onCompile={onCompileWithUMGCompiler} />}
     {(businessAutomationCoreBuild || sleeveAssemblyPlan || compiledRuntimeManifest) && <HierarchicalRuntimeVisualizer
       instantiatedSleeve={businessAutomationCoreBuild}
       assemblyPlan={sleeveAssemblyPlan}
@@ -2287,6 +2280,13 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       hasHermesResult={Boolean(hermesRuntimeResult)}
       hasRuntimeTrace={Boolean(hermesRuntimeVisualState?.timeline.length)}
     />}
+    {businessAutomationCoreBuild && <BusinessAutomationCoreBuiltPanel build={businessAutomationCoreBuild} />}
+    {businessAutomationCoreBuild && <div className="analysisPanel phase5ActionPanel"><div className="publicSectionTitle"><span>07</span><div><b>Block Matching + Gap Detection</b><small>Reuse existing blocks first, then propose draft-only gaps.</small></div></div><button type="button" className="publicPrimaryCta" onClick={onRunBlockMatching}>Match Blocks & Detect Gaps</button><p>No Hermes call, no compiler call, no source library write.</p></div>}
+    {blockMatchPlan && <BlockMatchResultsPanel plan={blockMatchPlan} />}
+    {blockMatchPlan && <MissingCapabilitiesPanel plan={blockMatchPlan} />}
+    {blockMatchPlan && <GeneratedDraftsPanel drafts={draftReviewState} onReviewDraft={onReviewDraft} />}
+    {sleeveAssemblyPlan && <AssemblyPlanPanel plan={sleeveAssemblyPlan} />}
+    {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} onCompile={onCompileWithUMGCompiler} />}
     {(compileCandidate || compilerRequestPreview || compilerResult || compiledRuntimeManifest) && <CompilerPhase6Panel requestPreview={compilerRequestPreview} result={compilerResult} manifest={compiledRuntimeManifest} />}
     {compiledRuntimeManifest && <HermesRuntimePhase7Panel request={hermesRequestPreview} result={hermesRuntimeResult} visualState={hermesRuntimeVisualState} warnings={hermesRuntimeWarnings} errors={hermesRuntimeErrors} isRunning={isHermesRunning} onRun={onRunHermesRuntime} />}
     <div className="analysisPanel nextStagePanel">

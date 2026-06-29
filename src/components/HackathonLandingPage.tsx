@@ -88,7 +88,12 @@ export function HackathonLandingPage({
     input.value = '';
   };
 
-  return <div className={`hackathonLanding${children ? ' hasResults' : ''}`}>
+  const hasResults = Boolean(children);
+  const stageClass = hasResults ? sleeveInstantiated ? ' hasResults hasSleeve' : ' hasResults isProcessing' : '';
+  const promptSummary = goal.trim() || 'No prompt entered yet.';
+  const intakeStatus = sleeveInstantiated ? 'Sleeve runtime view ready' : templateSelected ? 'BusinessMap ready · template selected' : businessMapReady ? 'BusinessMap ready' : intakeSubmitted ? 'Compiling cognition · assembling sleeve' : 'Awaiting intake';
+
+  return <div className={`hackathonLanding${stageClass}`}>
     <header className="hackathonHeader">
       <div className="hackathonBrand" aria-label="UMG">
         <img src="/assets/umg-logo.svg" alt="UMG" />
@@ -107,38 +112,49 @@ export function HackathonLandingPage({
       </section>
 
       <section className="hackathonIntake" aria-label="Cognition intake">
-        <div className="hackathonSectionHeading"><b>Intake</b><span>Local analysis shell. No compiler connection, Hermes call, runtime replay, or source library mutation.</span></div>
-        <label className="hackathonField">
-          <span>Main Prompt</span>
-          <small>Describe the system, workflow, agent, or task.</small>
-          <textarea id="hackathon-intake-goal" value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe your workflow, business process, agent plan, or cognitive system..." />
-        </label>
-        <label className="hackathonField">
-          <span>Paste Context</span>
-          <small>Paste SOPs, workflows, requirements, policies, or notes.</small>
-          <textarea value={context} onChange={(event) => onContextChange(event.target.value)} placeholder="Paste context, requirements, policies, workflows, SOPs, or notes." />
-        </label>
-        <div className="hackathonChips" aria-label="Quick workflow types">
-          {quickChips.map((chip) => <button type="button" key={chip} className={selectedChip === chip ? 'selected' : ''} onClick={() => onChipSelect(chip)}>{chip}</button>)}
-          <small>More templates later.</small>
-        </div>
-        <div className="hackathonFile">
-          <div className="hackathonFileControl">
-            <span>Attach Files</span>
-            <input type="file" multiple onChange={(event) => handleFileChange(event.target.files, event.currentTarget)} />
+        {!hasResults ? <>
+          <div className="hackathonSectionHeading"><b>Intake</b><span>Local analysis shell. No compiler connection, Hermes call, runtime replay, or source library mutation.</span></div>
+          <label className="hackathonField">
+            <span>Main Prompt</span>
+            <small>Describe the system, workflow, agent, or task.</small>
+            <textarea id="hackathon-intake-goal" value={goal} onChange={(event) => onGoalChange(event.target.value)} placeholder="Describe your workflow, business process, agent plan, or cognitive system..." />
+          </label>
+          <label className="hackathonField">
+            <span>Paste Context</span>
+            <small>Paste SOPs, workflows, requirements, policies, or notes.</small>
+            <textarea value={context} onChange={(event) => onContextChange(event.target.value)} placeholder="Paste context, requirements, policies, workflows, SOPs, or notes." />
+          </label>
+          <div className="hackathonChips" aria-label="Quick workflow types">
+            {quickChips.map((chip) => <button type="button" key={chip} className={selectedChip === chip ? 'selected' : ''} onClick={() => onChipSelect(chip)}>{chip}</button>)}
+            <small>More templates later.</small>
           </div>
-          <small>Select local files for later parsing/intake context. Selected locally; not parsed yet. No upload.</small>
-          {selectedFiles.length > 0 && <div className="hackathonFileList" aria-label="Selected local files">
-            {selectedFiles.map((file) => <span className="hackathonFileChip" key={`${file.name}:${file.size}:${file.lastModified}`}>
-              <b>{file.name}</b>
-              <em>{formatFileSize(file.size)} · selected locally · not parsed yet</em>
-              <button type="button" aria-label={`Remove ${file.name}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onFileRemove(file); }}>×</button>
-            </span>)}
-            {selectedFiles.length > 1 && <button type="button" className="hackathonClearFiles" onClick={onFilesClear}>Clear All</button>}
-          </div>}
-        </div>
-        <button type="button" className="hackathonPrimary" onClick={onSubmit}>Start Cognition Upload</button>
-        {intakeSubmitted && <div className="hackathonNotice" role="status">Intake analyzed. Template Sleeve selected; Business Automation Core can be instantiated locally without Hermes execution.</div>}
+          <div className="hackathonFile">
+            <div className="hackathonFileControl">
+              <span>Attach Files</span>
+              <input type="file" multiple onChange={(event) => handleFileChange(event.target.files, event.currentTarget)} />
+            </div>
+            <small>Select local files for later parsing/intake context. Selected locally; not parsed yet. No upload.</small>
+            {selectedFiles.length > 0 && <div className="hackathonFileList" aria-label="Selected local files">
+              {selectedFiles.map((file) => <span className="hackathonFileChip" key={`${file.name}:${file.size}:${file.lastModified}`}>
+                <b>{file.name}</b>
+                <em>{formatFileSize(file.size)} · selected locally · not parsed yet</em>
+                <button type="button" aria-label={`Remove ${file.name}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onFileRemove(file); }}>×</button>
+              </span>)}
+              {selectedFiles.length > 1 && <button type="button" className="hackathonClearFiles" onClick={onFilesClear}>Clear All</button>}
+            </div>}
+          </div>
+          <button type="button" className="hackathonPrimary" onClick={onSubmit}>Start Cognition Upload</button>
+        </> : <>
+          <div className="hackathonCompactSource">
+            <span>Source Prompt</span>
+            <b>{promptSummary}</b>
+          </div>
+          <div className="hackathonCompactMeta" aria-label="Compact intake status">
+            <span>{selectedChip ?? 'Custom Workflow'}</span>
+            <span>{selectedFiles.length} local file{selectedFiles.length === 1 ? '' : 's'}</span>
+            <span>{intakeStatus}</span>
+          </div>
+        </>}
       </section>
 
       <PipelineStrip intakeSubmitted={intakeSubmitted} businessMapReady={businessMapReady} templateSelected={templateSelected} sleeveInstantiated={sleeveInstantiated} blockMatched={blockMatched} missingGenerated={missingGenerated} assemblyReady={assemblyReady} compilerComplete={compilerComplete} hermesRunComplete={hermesRunComplete} traceComplete={traceComplete} />
