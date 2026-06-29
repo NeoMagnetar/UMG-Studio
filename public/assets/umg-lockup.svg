@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60" width="280" height="60" role="img" aria-label="UMG Universal Modular Generation">
+  <defs>
+    <linearGradient id="faceTop2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00FFB2"/>
+      <stop offset="100%" stop-color="#00CC88"/>
+    </linearGradient>
+    <linearGradient id="faceLeft2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF2D9C"/>
+      <stop offset="100%" stop-color="#CC0077"/>
+    </linearGradient>
+    <linearGradient id="faceRight2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2D8FFF"/>
+      <stop offset="100%" stop-color="#0055CC"/>
+    </linearGradient>
+    <linearGradient id="wordmarkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#AAAACC"/>
+    </linearGradient>
+    <filter id="glow2">
+      <feGaussianBlur stdDeviation="1.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Mini cube icon at 50x50 scale -->
+  <!-- Top face -->
+  <polygon points="28,4 46,13 28,22 10,13" fill="url(#faceTop2)" filter="url(#glow2)" opacity="0.95"/>
+  <polygon points="28,6 44,14 28,20 12,14" fill="none" stroke="#00FFB2" stroke-width="0.5" opacity="0.4"/>
+  <!-- Left face -->
+  <polygon points="10,13 28,22 28,48 10,39" fill="url(#faceLeft2)" filter="url(#glow2)" opacity="0.95"/>
+  <!-- Right face -->
+  <polygon points="28,22 46,13 46,39 28,48" fill="url(#faceRight2)" filter="url(#glow2)" opacity="0.95"/>
+
+  <!-- Divider -->
+  <line x1="60" y1="10" x2="60" y2="50" stroke="#333355" stroke-width="1"/>
+
+  <!-- UMG wordmark -->
+  <text x="70" y="30" font-family="'Orbitron', 'Rajdhani', sans-serif" font-size="22" font-weight="700"
+        letter-spacing="3" fill="url(#wordmarkGrad)">UMG</text>
+
+  <!-- Tagline -->
+  <text x="70" y="46" font-family="'Rajdhani', 'Share Tech Mono', sans-serif" font-size="9" font-weight="400"
+        letter-spacing="2.5" fill="#7777AA">INTENT. LOGIC. AUTOMATION.</text>
+</svg>

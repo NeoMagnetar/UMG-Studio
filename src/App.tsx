@@ -148,7 +148,14 @@ type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' |
 type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
 type PlacementTargetChoice = { id: string; label: string; detail?: string; neostackId?: string; neoblockId?: string };
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
-const publicQuickChips = ['Business Automation', 'Website Builder', 'Chatbot', 'Research Agent', 'DevOps / Project Launcher', 'Custom Workflow'];
+const publicQuickChips = ['Business Automation', 'Chatbot / Support Agent', 'Website / Landing Page', 'Custom Workflow'];
+type PublicSelectedFile = { name: string; size: number; lastModified: number };
+const normalizePublicChipForAnalyzer = (chip?: string) => ({
+  'Chatbot / Support Agent': 'Chatbot',
+  'Website / Landing Page': 'Website Builder',
+  'Business Automation': 'Business Automation',
+  'Custom Workflow': 'Custom Workflow'
+} as Record<string, string>)[chip ?? ''] ?? chip;
 const publicPipelineStages = ['Intake', 'Analyze', 'Match Blocks', 'Generate Missing Blocks', 'Assemble Sleeve', 'Compile', 'Run Hermes', 'Trace Runtime'];
 
 const moltBuilderSections = [
@@ -220,7 +227,7 @@ export default function App() {
   const [publicGoal, setPublicGoal] = useState('');
   const [publicContext, setPublicContext] = useState('');
   const [publicSelectedChip, setPublicSelectedChip] = useState<string | undefined>();
-  const [publicSelectedFileName, setPublicSelectedFileName] = useState('');
+  const [publicSelectedFiles, setPublicSelectedFiles] = useState<PublicSelectedFile[]>([]);
   const [publicIntakeSubmitted, setPublicIntakeSubmitted] = useState(false);
   const [publicBusinessInput, setPublicBusinessInput] = useState<BusinessInput | undefined>();
   const [publicBusinessMap, setPublicBusinessMap] = useState<BusinessMap | undefined>();
@@ -1652,8 +1659,8 @@ export default function App() {
     const businessInput = createBusinessInputFromPublicIntake({
       goal: publicGoal,
       context: publicContext,
-      selectedChip: publicSelectedChip,
-      selectedFileName: publicSelectedFileName
+      selectedChip: normalizePublicChipForAnalyzer(publicSelectedChip),
+      selectedFileName: publicSelectedFiles.map((file) => file.name).join(', ')
     });
     const businessMap = analyzeBusinessInput(businessInput);
     const templateSelection = selectTemplateSleeve(businessInput, businessMap, getTemplateSleeveCatalog());
@@ -1837,7 +1844,7 @@ export default function App() {
       goal={publicGoal}
       context={publicContext}
       selectedChip={publicSelectedChip}
-      selectedFileName={publicSelectedFileName}
+      selectedFiles={publicSelectedFiles}
       intakeSubmitted={publicIntakeSubmitted}
       businessInput={publicBusinessInput}
       businessMap={publicBusinessMap}
@@ -1860,7 +1867,15 @@ export default function App() {
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
       onChipSelect={setPublicSelectedChip}
-      onFileSelect={setPublicSelectedFileName}
+      onFilesAdd={(files) => setPublicSelectedFiles((current) => {
+        const next = [...current];
+        files.forEach((file) => {
+          if (!next.some((existing) => existing.name === file.name && existing.size === file.size && existing.lastModified === file.lastModified)) next.push(file);
+        });
+        return next;
+      })}
+      onFileRemove={(file) => setPublicSelectedFiles((current) => current.filter((existing) => !(existing.name === file.name && existing.size === file.size && existing.lastModified === file.lastModified)))}
+      onFilesClear={() => setPublicSelectedFiles([])}
       onSubmit={submitPublicIntake}
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onRunBlockMatching={runBusinessAutomationBlockMatching}
@@ -2068,7 +2083,7 @@ function PublicLandingShell({
   goal,
   context,
   selectedChip,
-  selectedFileName,
+  selectedFiles,
   intakeSubmitted,
   businessInput,
   businessMap,
@@ -2091,7 +2106,9 @@ function PublicLandingShell({
   onGoalChange,
   onContextChange,
   onChipSelect,
-  onFileSelect,
+  onFilesAdd,
+  onFileRemove,
+  onFilesClear,
   onSubmit,
   onCreateBusinessAutomationCore,
   onRunBlockMatching,
@@ -2105,7 +2122,7 @@ function PublicLandingShell({
   goal: string;
   context: string;
   selectedChip?: string;
-  selectedFileName: string;
+  selectedFiles: PublicSelectedFile[];
   intakeSubmitted: boolean;
   businessInput?: BusinessInput;
   businessMap?: BusinessMap;
@@ -2128,7 +2145,9 @@ function PublicLandingShell({
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
   onChipSelect: (value: string) => void;
-  onFileSelect: (value: string) => void;
+  onFilesAdd: (files: PublicSelectedFile[]) => void;
+  onFileRemove: (file: PublicSelectedFile) => void;
+  onFilesClear: () => void;
   onSubmit: () => void;
   onCreateBusinessAutomationCore: () => void;
   onRunBlockMatching: () => void;
@@ -2143,7 +2162,7 @@ function PublicLandingShell({
     goal={goal}
     context={context}
     selectedChip={selectedChip}
-    selectedFileName={selectedFileName}
+    selectedFiles={selectedFiles}
     intakeSubmitted={intakeSubmitted}
     businessMapReady={Boolean(businessMap)}
     templateSelected={Boolean(templateSelection)}
@@ -2159,7 +2178,9 @@ function PublicLandingShell({
     onGoalChange={onGoalChange}
     onContextChange={onContextChange}
     onChipSelect={onChipSelect}
-    onFileSelect={onFileSelect}
+    onFilesAdd={onFilesAdd}
+    onFileRemove={onFileRemove}
+    onFilesClear={onFilesClear}
     onSubmit={onSubmit}
     onOpenStudio={onOpenStudio}
     onOpenRuntime={onOpenRuntime}

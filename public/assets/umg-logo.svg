@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="UMG Logo">
+  <defs>
+    <linearGradient id="faceTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00FFB2"/>
+      <stop offset="100%" stop-color="#00CC88"/>
+    </linearGradient>
+    <linearGradient id="faceLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF2D9C"/>
+      <stop offset="100%" stop-color="#CC0077"/>
+    </linearGradient>
+    <linearGradient id="faceRight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2D8FFF"/>
+      <stop offset="100%" stop-color="#0055CC"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Top face of cube -->
+  <polygon points="60,8 100,28 60,48 20,28" fill="url(#faceTop)" filter="url(#glow)" opacity="0.95"/>
+  <!-- Top face inner border -->
+  <polygon points="60,12 96,30 60,44 24,30" fill="none" stroke="#00FFB2" stroke-width="1" opacity="0.5"/>
+
+  <!-- Left face of cube -->
+  <polygon points="20,28 60,48 60,100 20,80" fill="url(#faceLeft)" filter="url(#glow)" opacity="0.95"/>
+  <!-- U letter on left face -->
+  <text x="32" y="80" font-family="'Orbitron', 'Rajdhani', monospace" font-size="28" font-weight="700"
+        fill="#FF2D9C" filter="url(#glow)" transform="skewY(26.5) translate(0,-20)">U</text>
+
+  <!-- Right face of cube -->
+  <polygon points="60,48 100,28 100,80 60,100" fill="url(#faceRight)" filter="url(#glow)" opacity="0.95"/>
+  <!-- G letter on right face -->
+  <text x="65" y="80" font-family="'Orbitron', 'Rajdhani', monospace" font-size="22" font-weight="700"
+        fill="#2D8FFF" filter="url(#glow)" transform="skewY(-26.5) translate(0,13)">G</text>
+
+  <!-- M on top face -->
+  <text x="48" y="36" font-family="'Orbitron', 'Rajdhani', monospace" font-size="16" font-weight="700"
+        fill="#00FFB2" filter="url(#glow)" transform="skewX(-30) translate(15,0)">M</text>
+
+  <!-- Edge highlights -->
+  <line x1="60" y1="8" x2="60" y2="48" stroke="#FFFFFF" stroke-width="0.5" opacity="0.3"/>
+  <line x1="60" y1="48" x2="20" y2="28" stroke="#FFFFFF" stroke-width="0.5" opacity="0.2"/>
+  <line x1="60" y1="48" x2="100" y2="28" stroke="#FFFFFF" stroke-width="0.5" opacity="0.2"/>
+  <line x1="60" y1="48" x2="60" y2="100" stroke="#FFFFFF" stroke-width="0.5" opacity="0.2"/>
+</svg>
