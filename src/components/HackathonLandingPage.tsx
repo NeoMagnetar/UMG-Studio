@@ -25,6 +25,8 @@ type HackathonLandingPageProps = {
   missingGenerated: boolean;
   assemblyReady: boolean;
   compilerComplete?: boolean;
+  hermesRunComplete?: boolean;
+  traceComplete?: boolean;
   hermesEndpointConfigured: boolean;
   quickChips: string[];
   onGoalChange: (value: string) => void;
@@ -51,6 +53,8 @@ export function HackathonLandingPage({
   missingGenerated,
   assemblyReady,
   compilerComplete = false,
+  hermesRunComplete = false,
+  traceComplete = false,
   hermesEndpointConfigured,
   quickChips,
   onGoalChange,
@@ -103,14 +107,14 @@ export function HackathonLandingPage({
         {intakeSubmitted && <div className="hackathonNotice" role="status">Intake analyzed. Template Sleeve selected; Business Automation Core can be instantiated locally without Hermes execution.</div>}
       </section>
 
-      <PipelineStrip intakeSubmitted={intakeSubmitted} businessMapReady={businessMapReady} templateSelected={templateSelected} sleeveInstantiated={sleeveInstantiated} blockMatched={blockMatched} missingGenerated={missingGenerated} assemblyReady={assemblyReady} compilerComplete={compilerComplete} />
-      <StatusRow hermesEndpointConfigured={hermesEndpointConfigured} compilerComplete={compilerComplete} />
+      <PipelineStrip intakeSubmitted={intakeSubmitted} businessMapReady={businessMapReady} templateSelected={templateSelected} sleeveInstantiated={sleeveInstantiated} blockMatched={blockMatched} missingGenerated={missingGenerated} assemblyReady={assemblyReady} compilerComplete={compilerComplete} hermesRunComplete={hermesRunComplete} traceComplete={traceComplete} />
+      <StatusRow hermesEndpointConfigured={hermesEndpointConfigured} compilerComplete={compilerComplete} hermesRunComplete={hermesRunComplete} traceComplete={traceComplete} />
       {children && <section className="hackathonResults" aria-label="Analysis and assembly results">{children}</section>}
     </main>
   </div>;
 }
 
-function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sleeveInstantiated, blockMatched, missingGenerated, assemblyReady, compilerComplete }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean; sleeveInstantiated: boolean; blockMatched: boolean; missingGenerated: boolean; assemblyReady: boolean; compilerComplete: boolean }) {
+function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sleeveInstantiated, blockMatched, missingGenerated, assemblyReady, compilerComplete, hermesRunComplete, traceComplete }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean; sleeveInstantiated: boolean; blockMatched: boolean; missingGenerated: boolean; assemblyReady: boolean; compilerComplete: boolean; hermesRunComplete: boolean; traceComplete: boolean }) {
   const isActive = (stage: string, index: number) => {
     if (index === 0) return intakeSubmitted;
     if (stage === 'Analyze') return businessMapReady;
@@ -118,6 +122,8 @@ function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sl
     if (stage === 'Draft') return missingGenerated;
     if (stage === 'Assemble') return assemblyReady || sleeveInstantiated;
     if (stage === 'Compile') return compilerComplete;
+    if (stage === 'Hermes') return hermesRunComplete;
+    if (stage === 'Trace') return traceComplete;
     return false;
   };
 
@@ -129,11 +135,11 @@ function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sl
   </section>;
 }
 
-function StatusRow({ hermesEndpointConfigured, compilerComplete }: { hermesEndpointConfigured: boolean; compilerComplete: boolean }) {
+function StatusRow({ hermesEndpointConfigured, compilerComplete, hermesRunComplete, traceComplete }: { hermesEndpointConfigured: boolean; compilerComplete: boolean; hermesRunComplete: boolean; traceComplete: boolean }) {
   return <section className="hackathonStatus" aria-label="Runtime and compiler status">
     <div><span>Runtime</span><b>Ready</b></div>
     <div><span>Compiler</span><b>{compilerComplete ? 'Compiled' : 'Bridge Needed'}</b></div>
-    <div><span>Hermes</span><b>{hermesEndpointConfigured ? 'Configured' : 'Not Connected'}</b></div>
-    <div><span>Trace</span><b>Pending</b></div>
+    <div><span>Hermes</span><b>{hermesRunComplete ? 'Response Received' : hermesEndpointConfigured ? 'Configured' : 'Not Connected'}</b></div>
+    <div><span>Trace</span><b>{traceComplete ? 'Ingested' : 'Pending'}</b></div>
   </section>;
 }

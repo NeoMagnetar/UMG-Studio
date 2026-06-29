@@ -35,9 +35,11 @@ import { createCompileCandidateFromAssemblyPlan, createSleeveAssemblyPlan } from
 import { BlockMatchPlan, CompileCandidate, GeneratedBlockDraft, SleeveAssemblyPlan } from './lib/umg/blockMatchingTypes';
 import { createCompilerInputFromCompileCandidate, createCompilerRequest, validateCompilerInput } from './lib/umg/compileCandidateAdapter';
 import { buildCompilerSleeveInput } from './lib/umg/compilerSleeveInputBuilder';
-import { getCompilerAdapterConfigFromEnv, getCompilerConnectionSummary, compileWithRealCompiler, createHermesRequestPreview } from './lib/umg/umgCompilerAdapter';
+import { getCompilerAdapterConfigFromEnv, getCompilerConnectionSummary, compileWithRealCompiler } from './lib/umg/umgCompilerAdapter';
 import { UMGCompilerRequest, UMGCompilerResult } from './lib/umg/compilerIntegrationTypes';
-import { HermesCognitiveRuntimeRequest, UMGCompiledRuntimeManifest } from './lib/umg/cognitiveRuntimeTypes';
+import { HermesCognitiveRuntimeRequest, HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeVisualState } from './lib/umg/cognitiveRuntimeTypes';
+import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
+import { createHermesRuntimeRequestFromManifest, getHermesRuntimeAdapterConfigFromEnv, getHermesRuntimeConnectionSummary, runCompiledManifestThroughHermes, validateHermesRuntimeRequest } from './lib/umg/hermesRuntimeExecution';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -232,6 +234,11 @@ export default function App() {
   const [compilerResult, setCompilerResult] = useState<UMGCompilerResult | undefined>();
   const [compiledRuntimeManifest, setCompiledRuntimeManifest] = useState<UMGCompiledRuntimeManifest | undefined>();
   const [hermesRequestPreview, setHermesRequestPreview] = useState<HermesCognitiveRuntimeRequest | undefined>();
+  const [hermesRuntimeResult, setHermesRuntimeResult] = useState<HermesCognitiveRuntimeResult | undefined>();
+  const [hermesRuntimeVisualState, setHermesRuntimeVisualState] = useState<UMGRuntimeVisualState | undefined>();
+  const [hermesRuntimeWarnings, setHermesRuntimeWarnings] = useState<string[]>([]);
+  const [hermesRuntimeErrors, setHermesRuntimeErrors] = useState<string[]>([]);
+  const [isHermesRunning, setIsHermesRunning] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1634,6 +1641,11 @@ export default function App() {
     setCompilerResult(undefined);
     setCompiledRuntimeManifest(undefined);
     setHermesRequestPreview(undefined);
+    setHermesRuntimeResult(undefined);
+    setHermesRuntimeVisualState(undefined);
+    setHermesRuntimeWarnings([]);
+    setHermesRuntimeErrors([]);
+    setIsHermesRunning(false);
   };
 
   const submitPublicIntake = () => {
@@ -1752,14 +1764,71 @@ export default function App() {
       setCompilerResult(mergedResult);
       if (mergedResult.status === 'ok' && mergedResult.manifest) {
         setCompiledRuntimeManifest(mergedResult.manifest);
-        setHermesRequestPreview(createHermesRequestPreview({ manifest: mergedResult.manifest, userGoal: publicGoal || publicBusinessInput?.text || 'Run compiled UMG Sleeve', traceId: `trace_preview_${compileCandidate.id}` }));
-        setStatus('Actual UMG compiler succeeded. Hermes request preview prepared but not sent.');
+        const hermesRequest = createHermesRuntimeRequestFromManifest({ compiledRuntimeManifest: mergedResult.manifest, userGoal: publicGoal || publicBusinessInput?.text || 'Run compiled UMG Sleeve', businessInput: publicBusinessInput, traceId: `hermes_trace_${compileCandidate.id}` });
+        setHermesRequestPreview(hermesRequest);
+        setHermesRuntimeResult(undefined);
+        setHermesRuntimeVisualState(undefined);
+        setHermesRuntimeWarnings([]);
+        setHermesRuntimeErrors([]);
+        setStatus('Actual UMG compiler succeeded. Hermes runtime request preview prepared but not sent.');
         return;
       }
       setStatus('Actual UMG compiler did not produce a runtime manifest. Run Hermes and Trace Runtime remain pending.');
     } catch (error) {
       setCompilerResult({ status: 'error', errors: [{ code: 'UMG_COMPILER_INPUT_BUILD_FAILED', message: error instanceof Error ? error.message : String(error), raw: error }], warnings: [] });
       setStatus('Failed to build or send UMG compiler request.');
+    }
+  };
+
+  const runHermesRuntimeFromManifest = async () => {
+    if (!compiledRuntimeManifest) {
+      setHermesRuntimeErrors(['UMGCompiledRuntimeManifest is required before Hermes runtime execution.']);
+      setStatus('Compile with the actual UMG compiler before running Hermes.');
+      return;
+    }
+    const request = hermesRequestPreview ?? createHermesRuntimeRequestFromManifest({
+      compiledRuntimeManifest,
+      userGoal: publicGoal || publicBusinessInput?.text || 'Run compiled UMG Sleeve',
+      businessInput: publicBusinessInput
+    });
+    setHermesRequestPreview(request);
+    const validation = validateHermesRuntimeRequest(request);
+    setHermesRuntimeWarnings(validation.warnings);
+    if (!validation.valid) {
+      setHermesRuntimeErrors(validation.errors);
+      setStatus('Hermes runtime request validation failed. No Hermes call was made.');
+      return;
+    }
+    const hermesConfig = getHermesRuntimeAdapterConfigFromEnv();
+    if (!hermesConfig.enabled || !hermesConfig.endpoint) {
+      setHermesRuntimeResult({
+        status: 'error',
+        finalOutput: 'Hermes runtime endpoint is not configured.',
+        trace: [],
+        toolCalls: [],
+        blockedCalls: [],
+        approvalRequests: [],
+        errors: [{ code: 'HERMES_ENDPOINT_NOT_CONFIGURED', message: 'Hermes runtime endpoint is not configured.', traceId: request.traceId }],
+        artifacts: [],
+        nextSuggestedActions: ['Set VITE_HERMES_RUNTIME_ENDPOINT to a real Hermes runtime endpoint.']
+      });
+      setHermesRuntimeVisualState(undefined);
+      setHermesRuntimeErrors(['HERMES_ENDPOINT_NOT_CONFIGURED: Hermes runtime endpoint is not configured.']);
+      setStatus('Hermes runtime endpoint is not configured. No Hermes call was made.');
+      return;
+    }
+    setIsHermesRunning(true);
+    setHermesRuntimeErrors([]);
+    setStatus('Sending compiled runtime manifest to configured Hermes runtime endpoint…');
+    try {
+      const execution = await runCompiledManifestThroughHermes({ request, config: hermesConfig });
+      setHermesRuntimeResult(execution.result);
+      setHermesRuntimeVisualState(execution.visualState);
+      setHermesRuntimeWarnings([...validation.warnings, ...execution.warnings]);
+      setHermesRuntimeErrors(execution.result.errors.map((error) => `${error.code}: ${error.message}`));
+      setStatus(execution.result.trace.length ? 'Hermes returned real runtime trace events; trace ingested into visual state.' : 'Hermes returned a real response but no runtime trace events.');
+    } finally {
+      setIsHermesRunning(false);
     }
   };
 
@@ -1782,7 +1851,12 @@ export default function App() {
       compilerResult={compilerResult}
       compiledRuntimeManifest={compiledRuntimeManifest}
       hermesRequestPreview={hermesRequestPreview}
-      hermesEndpointConfigured={Boolean(config.endpoint)}
+      hermesRuntimeResult={hermesRuntimeResult}
+      hermesRuntimeVisualState={hermesRuntimeVisualState}
+      hermesRuntimeWarnings={hermesRuntimeWarnings}
+      hermesRuntimeErrors={hermesRuntimeErrors}
+      isHermesRunning={isHermesRunning}
+      hermesEndpointConfigured={getHermesRuntimeAdapterConfigFromEnv().enabled}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
       onChipSelect={setPublicSelectedChip}
@@ -1792,6 +1866,7 @@ export default function App() {
       onRunBlockMatching={runBusinessAutomationBlockMatching}
       onReviewDraft={updateGeneratedDraftReview}
       onCompileWithUMGCompiler={runActualUMGCompiler}
+      onRunHermesRuntime={runHermesRuntimeFromManifest}
       onOpenStudio={() => openStudioShell('canvas')}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
@@ -2007,6 +2082,11 @@ function PublicLandingShell({
   compilerResult,
   compiledRuntimeManifest,
   hermesRequestPreview,
+  hermesRuntimeResult,
+  hermesRuntimeVisualState,
+  hermesRuntimeWarnings,
+  hermesRuntimeErrors,
+  isHermesRunning,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
@@ -2017,6 +2097,7 @@ function PublicLandingShell({
   onRunBlockMatching,
   onReviewDraft,
   onCompileWithUMGCompiler,
+  onRunHermesRuntime,
   onOpenStudio,
   onOpenRuntime,
   onOpenDebug
@@ -2038,6 +2119,11 @@ function PublicLandingShell({
   compilerResult?: UMGCompilerResult;
   compiledRuntimeManifest?: UMGCompiledRuntimeManifest;
   hermesRequestPreview?: HermesCognitiveRuntimeRequest;
+  hermesRuntimeResult?: HermesCognitiveRuntimeResult;
+  hermesRuntimeVisualState?: UMGRuntimeVisualState;
+  hermesRuntimeWarnings: string[];
+  hermesRuntimeErrors: string[];
+  isHermesRunning: boolean;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -2048,6 +2134,7 @@ function PublicLandingShell({
   onRunBlockMatching: () => void;
   onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void;
   onCompileWithUMGCompiler: () => void;
+  onRunHermesRuntime: () => void;
   onOpenStudio: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
@@ -2065,6 +2152,8 @@ function PublicLandingShell({
     missingGenerated={Boolean(blockMatchPlan)}
     assemblyReady={Boolean(sleeveAssemblyPlan)}
     compilerComplete={Boolean(compiledRuntimeManifest)}
+    hermesRunComplete={Boolean(hermesRuntimeResult)}
+    traceComplete={Boolean(hermesRuntimeVisualState?.timeline.length)}
     hermesEndpointConfigured={hermesEndpointConfigured}
     quickChips={publicQuickChips}
     onGoalChange={onGoalChange}
@@ -2076,7 +2165,7 @@ function PublicLandingShell({
     onOpenRuntime={onOpenRuntime}
     onOpenDebug={onOpenDebug}
   >
-    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onOpenStudio={onOpenStudio} />}
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onOpenStudio={onOpenStudio} />}
   </HackathonLandingPage>;
 }
 
@@ -2111,7 +2200,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onCompileWithUMGCompiler, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onCompileWithUMGCompiler: () => void; onOpenStudio: () => void }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onCompileWithUMGCompiler, onRunHermesRuntime, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
@@ -2168,7 +2257,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
     {sleeveAssemblyPlan && <AssemblyPlanPanel plan={sleeveAssemblyPlan} />}
     {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} onCompile={onCompileWithUMGCompiler} />}
     {(compileCandidate || compilerRequestPreview || compilerResult || compiledRuntimeManifest) && <CompilerPhase6Panel requestPreview={compilerRequestPreview} result={compilerResult} manifest={compiledRuntimeManifest} />}
-    {hermesRequestPreview && <HermesRequestPreviewPanel request={hermesRequestPreview} />}
+    {compiledRuntimeManifest && <HermesRuntimePhase7Panel request={hermesRequestPreview} result={hermesRuntimeResult} visualState={hermesRuntimeVisualState} warnings={hermesRuntimeWarnings} errors={hermesRuntimeErrors} isRunning={isHermesRunning} onRun={onRunHermesRuntime} />}
     <div className="analysisPanel nextStagePanel">
       <div className="publicSectionTitle"><span>07</span><div><b>Next Stage</b><small>Status: compile/runtime not connected.</small></div></div>
       <p><b>Next:</b> Block matching / Missing block generation / Compile-to-Hermes manifest</p>
@@ -2263,10 +2352,42 @@ function CompilerPhase6Panel({ requestPreview, result, manifest }: { requestPrev
   </div>;
 }
 
-function HermesRequestPreviewPanel({ request }: { request: HermesCognitiveRuntimeRequest }) {
-  return <div className="analysisPanel phase6HermesPreviewPanel">
-    <div className="publicSectionTitle"><span>14</span><div><b>Hermes Request Preview — Not Sent</b><small>Prepared only after real compiler success.</small></div></div>
-    <SummaryRows rows={[["status", 'prepared, not sent'], ["traceId", request.traceId], ["executionMode", request.executionMode], ["approvalMode", request.approvalMode], ["userGoal", request.userGoal], ["allowed tools", request.compiledSleeveManifest.toolPolicy.allowedTools.join(', ') || 'none'], ["blocked tools", request.compiledSleeveManifest.toolPolicy.blockedTools.join(', ') || 'none']]} />
+function HermesRuntimePhase7Panel({ request, result, visualState, warnings, errors, isRunning, onRun }: { request?: HermesCognitiveRuntimeRequest; result?: HermesCognitiveRuntimeResult; visualState?: UMGRuntimeVisualState; warnings: string[]; errors: string[]; isRunning: boolean; onRun: () => void }) {
+  const config = getHermesRuntimeAdapterConfigFromEnv();
+  const summary = getHermesRuntimeConnectionSummary(config);
+  const timeline = visualState?.timeline ?? [];
+  const latest = visualState?.latestEvent;
+  const traceRows = timeline.slice(-12);
+  return <div className="phase7RuntimeGrid">
+    <div className="analysisPanel phase7HermesConnectionPanel">
+      <div className="publicSectionTitle"><span>14</span><div><b>Hermes Runtime Connection</b><small>Structured request boundary only.</small></div></div>
+      <SummaryRows rows={[["configured", summary.configured ? 'yes' : 'no'], ["endpoint", summary.endpoint ?? 'not configured'], ["message", summary.message], ["run status", isRunning ? 'running' : result ? result.status : 'not run']]} />
+      {!summary.configured && <div className="analysisWarnings"><b>Setup</b><span>Set VITE_HERMES_RUNTIME_ENDPOINT to a real Hermes runtime endpoint.</span><span>Example placeholder: VITE_HERMES_RUNTIME_ENDPOINT=http://127.0.0.1:&lt;HERMES_PORT&gt;/&lt;HERMES_ROUTE&gt;</span><span>No exact port is invented by Studio.</span></div>}
+      <button type="button" className={isRunning ? 'publicPrimaryCta runtimeRunningButton' : 'publicPrimaryCta'} onClick={onRun} disabled={isRunning}>{isRunning ? 'Running Hermes…' : 'Run Hermes Runtime'}</button>
+    </div>
+    {request && <div className="analysisPanel phase7HermesRequestPanel">
+      <div className="publicSectionTitle"><span>15</span><div><b>Hermes Request Preview</b><small>{result ? 'sent to configured endpoint' : 'prepared, not sent'}</small></div></div>
+      <SummaryRows rows={[["traceId", request.traceId], ["sleeve title", request.compiledSleeveManifest.sleeveTitle], ["userGoal", request.userGoal], ["executionMode", request.executionMode], ["approvalMode", request.approvalMode], ["allowed tools", request.compiledSleeveManifest.toolPolicy.allowedTools.join(', ') || 'none'], ["blocked tools", request.compiledSleeveManifest.toolPolicy.blockedTools.join(', ') || 'none'], ["context files", String(request.contextFiles?.length ?? 0)], ["status", result ? 'sent / response received' : 'prepared, not sent']]} />
+    </div>}
+    {result && <div className="analysisPanel phase7HermesResultPanel">
+      <div className="publicSectionTitle"><span>16</span><div><b>Hermes Runtime Result</b><small>Real response only.</small></div></div>
+      <SummaryRows rows={[["status", result.status], ["toolCalls", String(result.toolCalls.length)], ["blockedCalls", String(result.blockedCalls.length)], ["approvals", String(result.approvalRequests.length)], ["artifacts", String(result.artifacts.length)]]} />
+      <p className="analysisSummary">{result.finalOutput || 'Hermes returned no final output text.'}</p>
+      <div className="phase7ChipRow"><b>Next</b>{result.nextSuggestedActions.length ? result.nextSuggestedActions.map((action) => <span key={action}>{action}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Tools</b>{result.toolCalls.length ? result.toolCalls.map((call) => <span key={call.id}>{call.toolName ?? call.toolId}: {call.status}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Approvals</b>{result.approvalRequests.length ? result.approvalRequests.map((approval) => <span key={approval.id}>{approval.label}: {approval.status}</span>) : <span>none</span>}</div>
+      <div className="phase7ChipRow"><b>Artifacts</b>{result.artifacts.length ? result.artifacts.map((artifact) => <span key={artifact.id}>{artifact.label}</span>) : <span>none</span>}</div>
+    </div>}
+    <div className="analysisPanel phase7TraceIngestionPanel">
+      <div className="publicSectionTitle"><span>17</span><div><b>Real Trace Ingestion</b><small>Only real Hermes UMGTraceEvent records.</small></div></div>
+      <SummaryRows rows={[["trace events", String(timeline.length)], ["latest event", latest ? `${latest.label} / ${latest.state}` : 'none'], ["active ids", visualState?.activeIds.join(', ') || 'none'], ["processing ids", visualState?.processingIds.join(', ') || 'none'], ["complete ids", visualState?.completeIds.join(', ') || 'none'], ["blocked ids", visualState?.blockedIds.join(', ') || 'none'], ["error ids", visualState?.errorIds.join(', ') || 'none']]} />
+      {result && timeline.length === 0 && <p className="analysisSummary noTraceNotice">Hermes returned no runtime trace events.</p>}
+      {(warnings.length > 0 || errors.length > 0) && <div className="analysisWarnings"><b>Runtime notices</b>{warnings.map((warning) => <span key={warning}>{warning}</span>)}{errors.map((error) => <span key={error}>{error}</span>)}</div>}
+    </div>
+    <div className="analysisPanel phase7TraceTimelinePanel">
+      <div className="publicSectionTitle"><span>18</span><div><b>Trace Timeline</b><small>Compiler trace is not shown here.</small></div></div>
+      {traceRows.length ? <div className="phase7Timeline">{traceRows.map((event, index) => <div key={`${event.traceId}:${event.timestamp}:${index}`} className={`phase7TimelineEvent runtime-${event.state}`}><b>{new Date(event.timestamp).toLocaleTimeString()} · {event.scopeKind} · {getRuntimeTargetId(event) ?? 'no target'}</b><span>{event.eventType} → {event.state}</span><small>{event.label}{event.details ? ` — ${event.details}` : ''}</small></div>)}</div> : <p className="analysisSummary">No runtime trace timeline is available.</p>}
+    </div>
   </div>;
 }
 

@@ -52,3 +52,28 @@
 .hackathonResults>.analysisReviewGrid{margin:0;width:100%;max-width:none}
 @media (max-width:900px){.hackathonLanding{height:auto;min-height:100dvh;overflow-y:auto}.hackathonMain{height:auto!important;grid-template-rows:auto!important}.hackathonHeader{height:auto;align-items:flex-start;flex-direction:column}.hackathonNav{justify-content:flex-start}.hackathonIntake{grid-template-columns:1fr;grid-template-areas:"heading" "goal" "context" "chips" "file" "submit" "notice"}.hackathonPipeline{grid-template-columns:repeat(4,minmax(0,1fr))}.hackathonStatus{grid-template-columns:repeat(2,minmax(0,1fr))}.hackathonHero h1{font-size:clamp(2rem,10vw,3.6rem)}}
 @media (max-width:640px){.hackathonLanding{padding:12px}.hackathonHero,.hackathonIntake{padding:12px}.hackathonPipeline,.hackathonStatus{grid-template-columns:1fr}.hackathonNav,.hackathonNav button,.hackathonPrimary{width:100%}.hackathonHero h1{font-size:clamp(1.9rem,13vw,3rem);line-height:1.02}.hackathonBrand b{font-size:12px}.hackathonSectionHeading{display:grid}.hackathonSectionHeading span{white-space:normal}}
+
+.phase7RuntimeGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;grid-column:1/-1}
+.phase7RuntimeGrid .analysisPanel{min-width:0}
+.phase7HermesConnectionPanel,.phase7HermesRequestPanel,.phase7HermesResultPanel,.phase7TraceIngestionPanel,.phase7TraceTimelinePanel{border-color:#2bdcff;background:linear-gradient(180deg,#08111f,#050914)}
+.phase7TraceTimelinePanel{grid-column:1/-1}
+.runtimeRunningButton{opacity:.75;cursor:wait;box-shadow:0 0 18px rgba(43,220,255,.25)}
+.phase7ChipRow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;color:#c8d4e6;font-size:12px}
+.phase7ChipRow b{color:#2bdcff;margin-right:4px}
+.phase7ChipRow span{border:1px solid #273852;border-radius:999px;background:#060b14;color:#dce8fb;padding:5px 8px}
+.noTraceNotice{border:1px solid #ffd166;border-radius:12px;background:#1b1609;color:#ffe6a3;padding:8px}
+.phase7Timeline{display:grid;gap:8px;max-height:360px;overflow:auto;padding-right:4px}
+.phase7TimelineEvent{display:grid;gap:3px;border:1px solid #273852;border-radius:12px;background:#060b14;padding:9px;box-shadow:inset 3px 0 0 #607089}
+.phase7TimelineEvent b{color:#f6f8ff;font-size:12px}
+.phase7TimelineEvent span{color:#2bdcff;font-size:12px;font-weight:800}
+.phase7TimelineEvent small{color:#aebbd0;font-size:11px;line-height:1.35}
+.runtime-idle{box-shadow:inset 3px 0 0 #607089!important;opacity:.82}
+.runtime-queued{box-shadow:inset 3px 0 0 #ffd166!important;border-color:#5c4920!important}
+.runtime-active{box-shadow:inset 3px 0 0 #2bdcff,0 0 14px rgba(43,220,255,.14)!important;border-color:#2bdcff!important}
+.runtime-processing{box-shadow:inset 3px 0 0 #8f7dff,0 0 14px rgba(143,125,255,.14)!important;border-color:#6b5de0!important}
+.runtime-attention{box-shadow:inset 3px 0 0 #ff2bbd,0 0 14px rgba(255,43,189,.12)!important;border-color:#ff2bbd!important}
+.runtime-complete{box-shadow:inset 3px 0 0 #39ff88!important;border-color:#39ff88!important;background:#07160f!important}
+.runtime-skipped{box-shadow:inset 3px 0 0 #586174!important;opacity:.58!important}
+.runtime-blocked{box-shadow:inset 3px 0 0 #ffb020!important;border-color:#ffb020!important;background:#1b1205!important}
+.runtime-error{box-shadow:inset 3px 0 0 #ff3366,0 0 14px rgba(255,51,102,.16)!important;border-color:#ff3366!important;background:#1d0711!important}
+@media (max-width:900px){.phase7RuntimeGrid{grid-template-columns:1fr}}
