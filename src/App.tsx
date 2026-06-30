@@ -43,6 +43,8 @@ import { HermesCognitiveRuntimeRequest, HermesCognitiveRuntimeResult, UMGCompile
 import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
 import { createHermesRuntimeRequestFromManifest, getHermesRuntimeAdapterConfigFromEnv, getHermesRuntimeConnectionSummary, runCompiledManifestThroughHermes, validateHermesRuntimeRequest } from './lib/umg/hermesRuntimeExecution';
 import { buildRuntimeGeometryManifest } from './lib/umg/runtimeGeometryProjection';
+import { buildSleeveArchitectPlan } from './lib/umg/sleeveArchitectPlanner';
+import { architectureModeDescriptions, architectureModeLabels, SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -235,6 +237,7 @@ export default function App() {
   const [publicBusinessInput, setPublicBusinessInput] = useState<BusinessInput | undefined>();
   const [publicBusinessMap, setPublicBusinessMap] = useState<BusinessMap | undefined>();
   const [publicTemplateSelection, setPublicTemplateSelection] = useState<TemplateSelectionResult | undefined>();
+  const [sleeveArchitectPlan, setSleeveArchitectPlan] = useState<SleeveArchitectPlan | undefined>();
   const [businessAutomationCoreBuild, setBusinessAutomationCoreBuild] = useState<InstantiatedTemplateSleeve | undefined>();
   const [blockMatchPlan, setBlockMatchPlan] = useState<BlockMatchPlan | undefined>();
   const [draftReviewState, setDraftReviewState] = useState<GeneratedBlockDraft[]>([]);
@@ -1667,9 +1670,11 @@ export default function App() {
     });
     const businessMap = analyzeBusinessInput(businessInput);
     const templateSelection = selectTemplateSleeve(businessInput, businessMap, getTemplateSleeveCatalog());
+    const architectPlan = buildSleeveArchitectPlan({ businessInput, businessMap, availableBlocks: libraryWithStatus });
     setPublicBusinessInput(businessInput);
     setPublicBusinessMap(businessMap);
     setPublicTemplateSelection(templateSelection);
+    setSleeveArchitectPlan(architectPlan);
     setBusinessAutomationCoreBuild(undefined);
     setBlockMatchPlan(undefined);
     setDraftReviewState([]);
@@ -1677,7 +1682,7 @@ export default function App() {
     setCompileCandidate(undefined);
     clearCompilerRuntimeState();
     setPublicIntakeSubmitted(true);
-    setStatus('Intake analyzed. Template Sleeve selected; Business Automation Core can now be instantiated when selected.');
+    setStatus('Intake analyzed. Architect Plan drafted; Seed Template Mode remains available for the proven Business Automation demo path.');
   };
 
   const createBusinessAutomationCoreFromTemplate = () => {
@@ -1852,6 +1857,7 @@ export default function App() {
       businessInput={publicBusinessInput}
       businessMap={publicBusinessMap}
       templateSelection={publicTemplateSelection}
+      sleeveArchitectPlan={sleeveArchitectPlan}
       businessAutomationCoreBuild={businessAutomationCoreBuild}
       blockMatchPlan={blockMatchPlan}
       draftReviewState={draftReviewState}
@@ -2091,6 +2097,7 @@ function PublicLandingShell({
   businessInput,
   businessMap,
   templateSelection,
+  sleeveArchitectPlan,
   businessAutomationCoreBuild,
   blockMatchPlan,
   draftReviewState,
@@ -2130,6 +2137,7 @@ function PublicLandingShell({
   businessInput?: BusinessInput;
   businessMap?: BusinessMap;
   templateSelection?: TemplateSelectionResult;
+  sleeveArchitectPlan?: SleeveArchitectPlan;
   businessAutomationCoreBuild?: InstantiatedTemplateSleeve;
   blockMatchPlan?: BlockMatchPlan;
   draftReviewState: GeneratedBlockDraft[];
@@ -2189,7 +2197,7 @@ function PublicLandingShell({
     onOpenRuntime={onOpenRuntime}
     onOpenDebug={onOpenDebug}
   >
-    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onOpenStudio={onOpenStudio} />}
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onOpenStudio={onOpenStudio} />}
   </HackathonLandingPage>;
 }
 
@@ -2224,7 +2232,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onCompileWithUMGCompiler, onRunHermesRuntime, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onOpenStudio: () => void }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onCompileWithUMGCompiler, onRunHermesRuntime, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
@@ -2272,7 +2280,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       ]} />
     </div>
     <div className="analysisPanel templatePanel">
-      <div className="publicSectionTitle"><span>05</span><div><b>Recommended Template Sleeve</b><small>Business Automation can instantiate a normalized core Sleeve.</small></div></div>
+      <div className="publicSectionTitle"><span>05</span><div><b>Recommended Seed Template</b><small>Seed Template Mode proves compile/runtime/trace; it is not a fully custom Sleeve.</small></div></div>
       <h3>{templateSelection.selectedTemplateTitle}</h3>
       <div className="row"><span className="confidencePill">confidence {Math.round(templateSelection.confidence * 100)}%</span><span className={`templateStatusBadge status-${selectedTemplate?.status ?? 'planned'}`}>{selectedTemplate?.status ?? 'planned'}</span></div>
       <p>{templateSelection.reason}</p>
@@ -2283,11 +2291,12 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       </div>
       {templateSelection.warnings.length > 0 && <div className="analysisWarnings"><b>Warnings</b>{templateSelection.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
       {canBuildBusinessAutomationCore && <div className="templateActionRow">
-        <button type="button" className="publicPrimaryCta" onClick={onCreateBusinessAutomationCore}>{businessAutomationCoreBuild ? 'Rebuild Business Automation Sleeve' : 'Create Sleeve From Template'}</button>
+        <button type="button" className="publicPrimaryCta" onClick={onCreateBusinessAutomationCore}>{businessAutomationCoreBuild ? 'Rebuild Seed Sleeve' : 'Load Seed Sleeve'}</button>
         {businessAutomationCoreBuild && <button type="button" className="publicSecondaryCta" onClick={onOpenStudio}>Open Instantiated Sleeve in Studio</button>}
       </div>}
       <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
     </div>
+    {sleeveArchitectPlan && <ArchitectModePanel plan={sleeveArchitectPlan} />}
     {(businessAutomationCoreBuild || sleeveAssemblyPlan || compiledRuntimeManifest) && <HierarchicalRuntimeVisualizer
       instantiatedSleeve={businessAutomationCoreBuild}
       assemblyPlan={sleeveAssemblyPlan}
@@ -2313,6 +2322,37 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       <p>No fake Hermes runtime called. Block matching, missing block generation, compile, Hermes run, and trace visualization remain pending.</p>
     </div>
   </section>;
+}
+
+function ArchitectModePanel({ plan }: { plan: SleeveArchitectPlan }) {
+  return <div className="analysisPanel architectModePanel">
+    <div className="publicSectionTitle"><span>06A</span><div><b>{architectureModeLabels[plan.mode]}</b><small>{architectureModeDescriptions[plan.mode]}</small></div></div>
+    <div className="templateDefaultNotes"><span>{plan.mode === 'demo_template_mode' ? 'Seed/demo boundary visible' : 'Unique Sleeve plan'}</span><span>Draft-only generated blocks</span><span>No source library writes</span><span>No tool execution</span></div>
+    <h3>{plan.proposedSleeveTitle}</h3>
+    <p className="analysisSummary">{plan.domainSummary} · confidence {Math.round(plan.confidence * 100)}%. Templates are seeds, not final architecture unless explicitly chosen.</p>
+    <div className="templateCountGrid">
+      <div><b>{plan.proposedNeoStacks.length}</b><span>proposed NeoStacks</span></div>
+      <div><b>{plan.proposedNeoBlocks.length}</b><span>proposed NeoBlocks</span></div>
+      <div><b>{plan.proposedMoltBlocks.length}</b><span>proposed MOLT drafts</span></div>
+      <div><b>{plan.proposedGates.length}</b><span>proposed Gates</span></div>
+    </div>
+    <h4>Architect Mode plan</h4>
+    <div className="phase5CardGrid">
+      {plan.proposedNeoStacks.slice(0, 8).map((stack) => <div key={stack.id} className="matchCard"><b>{stack.title}</b><small>{stack.reason}</small><span className="needsDraftBadge">draftOnly: {String(stack.draftOnly)}</span></div>)}
+    </div>
+    <h4>Return/custom workflow NeoBlocks</h4>
+    <div className="phase5CardGrid">
+      {plan.proposedNeoBlocks.slice(0, 8).map((block) => <div key={block.id} className="matchCard"><b>{block.title}</b><small>{block.purpose}</small><SignalChips values={block.requiredMoltRoles} /></div>)}
+    </div>
+    <h4>Semantic block matches</h4>
+    <div className="phase5CardGrid">
+      {plan.matchedExistingBlocks.slice(0, 6).map((match) => <div key={match.blockId} className="matchCard"><b>{match.title}</b><small>{match.role} · score {Math.round(match.score * 100)}% · {match.reason}</small><SignalChips values={match.matchedTags.slice(0, 5)} /></div>)}
+      {!plan.matchedExistingBlocks.length && <small>Search is currently limited to loaded/local blocks; no strong local matches found.</small>}
+    </div>
+    <h4>Tool capability declarations only</h4>
+    <div className="phase7ChipRow">{plan.toolCapabilityNeeds.length ? plan.toolCapabilityNeeds.map((tool) => <span key={tool.id}><b>{tool.capability}</b> declaration only · no execution</span>) : <span>No tool capabilities declared yet.</span>}</div>
+    <div className="analysisWarnings"><b>Architecture boundary</b>{plan.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>
+  </div>;
 }
 
 function BusinessAutomationCoreBuiltPanel({ build }: { build: InstantiatedTemplateSleeve }) {
