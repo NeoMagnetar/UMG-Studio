@@ -1,0 +1,214 @@
+import type { UMGGateRecord } from './cognitiveRuntimeTypes';
+import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock, NormalizedTemplateNeoStack, NormalizedTemplateSleeve } from './templateSleeveStructures';
+import { getHermesUmgAppLocalSkillBundle, UMG_SUPPORTED_PROMPT_MOLT_ROLES, type HermesUmgAppLocalSkillBundle, type UmgSupportedPromptMoltRole } from './hermesUmgSkillBundle';
+import { validateHermesCustomSleevePlanScaffold } from './hermesSleevePlanSchema';
+
+export type HermesCustomSleeveGenerationRequest = {
+  requestId: string;
+  userPrompt: string;
+  userContext: string;
+  selectedMode: 'custom_workflow';
+  appLocalSkillBundle: HermesUmgAppLocalSkillBundle;
+  decompositionSkillText: string;
+  hierarchyBlockCardSkillText: string;
+  compilerAlignmentRules: string;
+  supportedPromptMoltRoles: UmgSupportedPromptMoltRole[];
+  gatePolicy: string;
+  sourceLibraryPolicy: string;
+  capabilityPolicy: string;
+  outputContract: string;
+};
+
+export type HermesCustomSleevePlanCapability = {
+  capabilityId: string;
+  label: string;
+  riskLevel?: 'low' | 'medium' | 'high' | 'irreversible' | 'unknown';
+  riskHint?: 'low' | 'medium' | 'high' | 'irreversible' | 'unknown';
+  requiresConnector?: boolean;
+  connectorRequired?: boolean;
+  safeForAppLocalExecution?: boolean;
+  appLocalOnly?: boolean;
+  reason?: string;
+};
+
+export type HermesGeneratedDecision = {
+  id: string;
+  title?: string;
+  proposedId?: string;
+  targetKind?: string;
+  reason: string;
+  runtimeSessionOnly: true;
+  sourceLibraryWrite: false;
+  needsUserReview?: boolean;
+};
+
+export type HermesCustomSleevePlanV01 = {
+  schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1';
+  source: 'hermes_custom_workflow_generation';
+  mode: 'runtime_session_draft';
+  generationSource?: 'live_hermes_cli' | 'live_hermes_provider' | 'mocked_test' | string;
+  requestId: string;
+  title: string;
+  summary: string;
+  decompositionSummary: string;
+  sleeve?: NormalizedTemplateSleeve;
+  neoStacks: NormalizedTemplateNeoStack[];
+  neoBlocks: NormalizedTemplateNeoBlock[];
+  moltBlocks: Array<Omit<NormalizedTemplateMoltBlock, 'role'> & { role: UmgSupportedPromptMoltRole }>;
+  gates: UMGGateRecord[];
+  capabilities: HermesCustomSleevePlanCapability[];
+  reuseDecisions: Array<Record<string, unknown>>;
+  generatedDecisions: HermesGeneratedDecision[];
+  warnings: string[];
+  validationNotes?: string[];
+};
+
+export type HermesCustomSleeveGenerationResponse = {
+  ok: boolean;
+  plan?: HermesCustomSleevePlanV01;
+  validation: { valid: boolean; errors: string[]; warnings: string[] };
+  raw?: unknown;
+  externalActionTaken: false;
+};
+
+function makeRequestId() {
+  return `hermes_custom_sleeve_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+export function buildHermesCustomSleeveGenerationRequest(args: {
+  userPrompt: string;
+  userContext?: string;
+  requestId?: string;
+}): HermesCustomSleeveGenerationRequest {
+  const appLocalSkillBundle = getHermesUmgAppLocalSkillBundle();
+  return {
+    requestId: args.requestId ?? makeRequestId(),
+    userPrompt: args.userPrompt,
+    userContext: args.userContext ?? '',
+    selectedMode: 'custom_workflow',
+    appLocalSkillBundle,
+    decompositionSkillText: appLocalSkillBundle.sleeveDecompositionSkill,
+    hierarchyBlockCardSkillText: appLocalSkillBundle.hierarchyCardSkill,
+    compilerAlignmentRules: appLocalSkillBundle.compilerAlignmentRules,
+    supportedPromptMoltRoles: [...UMG_SUPPORTED_PROMPT_MOLT_ROLES],
+    gatePolicy: 'Gates are control/routing/approval records, not prompt MOLT blocks. Reject plans that put gates in moltBlocks.',
+    sourceLibraryPolicy: 'No source-library mutation. Generated records are runtime-session only and sourceLibraryWrite must remain false.',
+    capabilityPolicy: appLocalSkillBundle.capabilityBoundaryRules,
+    outputContract: 'Return only structured JSON for schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1 with concise decompositionSummary; do not include chain-of-thought.'
+  };
+}
+
+export function validateHermesCustomSleevePlan(plan: unknown): { valid: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const candidate = plan as Partial<HermesCustomSleevePlanV01>;
+  if (!candidate || typeof candidate !== 'object') return { valid: false, errors: ['Hermes custom Sleeve plan must be an object.'], warnings };
+  if (candidate.schemaVersion !== 'umg-studio.hermes-custom-sleeve-plan.v0.1') errors.push('Unsupported Hermes custom Sleeve plan schemaVersion.');
+  if (candidate.source !== 'hermes_custom_workflow_generation') errors.push('Hermes custom Sleeve plan source must be hermes_custom_workflow_generation.');
+  if (candidate.mode !== 'runtime_session_draft') errors.push('Hermes custom Sleeve plan must be runtime_session_draft.');
+  if (!candidate.requestId) errors.push('requestId is required.');
+  if (!candidate.title) errors.push('title is required.');
+  if (!candidate.summary) errors.push('summary is required.');
+  if (!candidate.decompositionSummary) errors.push('decompositionSummary is required.');
+  if (!Array.isArray(candidate.neoStacks) || candidate.neoStacks.length === 0) errors.push('At least one neoStack is required.');
+  if (!Array.isArray(candidate.neoBlocks) || candidate.neoBlocks.length === 0) errors.push('At least one neoBlock is required.');
+  if (!Array.isArray(candidate.moltBlocks) || candidate.moltBlocks.length === 0) errors.push('At least one supported prompt MOLT block is required.');
+  if (!Array.isArray(candidate.gates)) errors.push('gates array is required, even if empty.');
+  if (!Array.isArray(candidate.capabilities)) errors.push('capabilities array is required, even if empty.');
+  if (!Array.isArray(candidate.generatedDecisions)) errors.push('generatedDecisions array is required.');
+  if (!Array.isArray(candidate.reuseDecisions)) errors.push('reuseDecisions array is required.');
+  if (Array.isArray(candidate.moltBlocks) && Array.isArray(candidate.generatedDecisions) && candidate.schemaVersion && candidate.mode) {
+    errors.push(...validateHermesCustomSleevePlanScaffold({ schemaVersion: candidate.schemaVersion as never, mode: candidate.mode as never, moltBlocks: candidate.moltBlocks as never, generatedDecisions: candidate.generatedDecisions as never }));
+  }
+  const gateLikeMolt = (candidate.moltBlocks ?? []).find((block) => /gate|trigger|approval/i.test(`${block.role} ${block.id} ${block.title}`) && !UMG_SUPPORTED_PROMPT_MOLT_ROLES.includes(block.role));
+  if (gateLikeMolt) errors.push(`Gate/control record appears in prompt MOLT blocks: ${gateLikeMolt.id}`);
+  (candidate.gates ?? []).forEach((gate) => {
+    if (!(gate as Record<string, unknown>).id || !(gate as Record<string, unknown>).title) errors.push('Each gate requires id and title.');
+  });
+  (candidate.capabilities ?? []).forEach((capability) => {
+    if (!capability.capabilityId) errors.push('Each capability declaration requires capabilityId.');
+  });
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
+  plan: HermesCustomSleevePlanV01,
+  request: HermesCustomSleeveGenerationRequest
+): NormalizedTemplateSleeve {
+  const now = new Date().toISOString();
+  const firstNeoBlockId = plan.neoBlocks[0]?.id ?? plan.sleeve?.id ?? `runtime.${plan.requestId}.sleeve`;
+  const normalizedGates = plan.gates.map((gate) => ({
+    ...gate,
+    attachesTo: gate.attachesTo ?? { kind: 'neoblock' as const, id: firstNeoBlockId },
+    conditionText: gate.conditionText ?? gate.title,
+    action: gate.action ?? 'require_approval',
+    targetIds: gate.targetIds ?? [firstNeoBlockId],
+    defaultState: gate.defaultState ?? 'closed',
+    runtimeState: gate.runtimeState ?? 'inactive',
+    tags: gate.tags ?? ['hermes_generated', 'runtime_session', 'gate_control']
+  }));
+  return {
+    id: plan.sleeve?.id ?? `runtime.${plan.requestId}.sleeve`,
+    title: plan.sleeve?.title ?? plan.title,
+    version: plan.sleeve?.version ?? 'runtime-session-v1',
+    description: plan.sleeve?.description ?? plan.summary,
+    isTemplate: true,
+    templateKind: 'custom',
+    source: 'session',
+    tags: Array.from(new Set(['custom_workflow', 'runtime_session', 'hermes_generated', ...(plan.sleeve?.tags ?? [])])),
+    neoStacks: plan.neoStacks.map((stack, index) => ({ ...stack, stackOrder: stack.stackOrder ?? index + 1, tags: stack.tags ?? [] })),
+    neoBlocks: plan.neoBlocks.map((block, index) => ({ ...block, blockOrder: block.blockOrder ?? index + 1, tags: block.tags ?? [], gateIds: block.gateIds ?? [], defaultState: block.defaultState ?? 'off' })),
+    moltBlocks: plan.moltBlocks.map((block) => ({ ...block, tags: block.tags ?? [], defaultState: block.defaultState ?? 'off' })),
+    gates: normalizedGates,
+    governanceBlockIds: plan.sleeve?.governanceBlockIds ?? [],
+    defaultExecutionMode: plan.sleeve?.defaultExecutionMode ?? 'approvalRequired',
+    metadata: {
+      ...(plan.sleeve?.metadata ?? {}),
+      generatedByHermes: true,
+      generationSource: plan.generationSource ?? 'live_hermes_cli',
+      requestId: request.requestId,
+      selectedMode: request.selectedMode,
+      sourceLibraryWrite: false,
+      runtimeSessionOnly: true,
+      noGlobalHermesSkillInstall: true,
+      appLocalSkillBundleId: request.appLocalSkillBundle.id,
+      decompositionSummary: plan.decompositionSummary,
+      capabilities: plan.capabilities,
+      reuseDecisions: plan.reuseDecisions,
+      generatedDecisions: plan.generatedDecisions,
+      createdAt: now
+    }
+  };
+}
+
+function deriveGenerationEndpoint(runtimeEndpoint?: string) {
+  if (!runtimeEndpoint) return undefined;
+  return runtimeEndpoint.replace(/\/api\/hermes\/runtime$/, '/api/hermes/custom-sleeve-generation');
+}
+
+export async function requestHermesCustomSleevePlan(args: {
+  endpoint?: string;
+  runtimeEndpoint?: string;
+  request: HermesCustomSleeveGenerationRequest;
+  fetchImpl?: typeof fetch;
+}): Promise<HermesCustomSleeveGenerationResponse> {
+  const endpoint = args.endpoint ?? deriveGenerationEndpoint(args.runtimeEndpoint);
+  if (!endpoint) {
+    return { ok: false, validation: { valid: false, errors: ['Hermes custom Sleeve generation endpoint is not configured.'], warnings: [] }, externalActionTaken: false };
+  }
+  const fetcher = args.fetchImpl ?? fetch;
+  const response = await fetcher(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args.request)
+  });
+  const raw = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    const errorMessages = raw?.validation?.errors?.length ? raw.validation.errors : [raw?.error ?? raw?.finalOutput ?? `Hermes custom Sleeve generation failed with HTTP ${response.status}.`];
+    const warningMessages = raw?.validation?.warnings?.length ? raw.validation.warnings : [];
+    return { ok: false, validation: { valid: false, errors: errorMessages, warnings: warningMessages }, raw, externalActionTaken: false };
+  }
+  const plan = raw?.plan ?? raw;
+  const validation = validateHermesCustomSleevePlan(plan);
+  return { ok: validation.valid, plan: validation.valid ? plan : undefined, validation, raw, externalActionTaken: false };
+}

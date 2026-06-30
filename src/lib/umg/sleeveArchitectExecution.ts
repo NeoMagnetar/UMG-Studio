@@ -270,6 +270,71 @@ function makeCompileCandidate(plan: SleeveArchitectPlan, sleeve: NormalizedTempl
   };
 }
 
+export function buildRuntimeSleeveExecutionArtifacts(args: { runtimeSleeve: NormalizedTemplateSleeve; requiredTools?: string[]; approvalPoints?: string[]; sourceLabel?: string }) {
+  const sleeve = args.runtimeSleeve;
+  const selectedNeoStackIds = sleeve.neoStacks.map((stack) => stack.id);
+  const selectedNeoBlockIds = sleeve.neoBlocks.map((block) => block.id);
+  const selectedMoltBlockIds = sleeve.moltBlocks.map((block) => block.id);
+  const selectedGateIds = sleeve.gates.map((gate) => gate.id);
+  const requiredTools = args.requiredTools ?? [];
+  const allIds = [sleeve.id, ...selectedNeoStackIds, ...selectedNeoBlockIds, ...selectedMoltBlockIds, ...selectedGateIds];
+  const createdAt = new Date().toISOString();
+  const assemblyPlan: SleeveAssemblyPlan = {
+    id: `runtime_session_assembly_${sleeve.id}`,
+    sleeveId: sleeve.id,
+    sleeveTitle: sleeve.title,
+    templateSleeveId: sleeve.id,
+    selectedNeoStackIds,
+    selectedNeoBlockIds,
+    selectedMoltBlockIds,
+    selectedGateIds,
+    acceptedDraftIds: [],
+    discardedDraftIds: [],
+    edges: buildEdges(sleeve),
+    gates: selectedGateIds,
+    activeStates: Object.fromEntries(allIds.map((id) => [id, false])),
+    disabledStates: {},
+    executionOrder: selectedNeoBlockIds,
+    requiredTools,
+    approvalPoints: args.approvalPoints ?? [],
+    compileStatus: 'compile_ready',
+    traceMetadata: { source: args.sourceLabel ?? 'hermes_custom_workflow_runtime_session', runtimeTrace: false, compilerRan: false, hermesCalled: false, sourceLibraryWrite: false },
+    warnings: ['Runtime-session Sleeve is not source-library content.', 'Runtime activation must come only from Hermes runtime trace events.'],
+    createdAt
+  };
+  const blockMatchPlan: BlockMatchPlan = {
+    id: `runtime_session_match_${sleeve.id}`,
+    templateSleeveId: sleeve.id,
+    businessMapSummary: sleeve.description,
+    matchedSleeves: [],
+    matchedNeoStacks: sleeve.neoStacks.map((stack) => ({ id: `match.${stack.id}`, source: 'generatedDraft', targetKind: 'neostack', targetId: stack.id, title: stack.title, summary: stack.description, confidence: 0.76, reason: 'Hermes custom workflow runtime-session NeoStack.', matchedSignals: stack.tags, reusedExisting: false, proposedUse: 'draftReplacementCandidate' })),
+    matchedNeoBlocks: sleeve.neoBlocks.map((block) => ({ id: `match.${block.id}`, source: 'generatedDraft', targetKind: 'neoblock', targetId: block.id, parentId: block.neoStackId, title: block.title, summary: block.description, confidence: 0.76, reason: 'Hermes custom workflow runtime-session NeoBlock.', matchedSignals: block.tags, reusedExisting: false, proposedUse: 'draftReplacementCandidate' })),
+    matchedMoltBlocks: sleeve.moltBlocks.map((block) => ({ id: `match.${block.id}`, source: block.sourceId ? 'library' : 'generatedDraft', targetKind: 'molt', targetId: block.id, sourceId: block.sourceId, parentId: block.parentNeoBlockId, title: block.title, summary: block.content, role: block.role, confidence: block.sourceId ? 0.78 : 0.7, reason: 'Hermes custom workflow MOLT role binding.', matchedSignals: block.tags, reusedExisting: Boolean(block.sourceId), proposedUse: block.sourceId ? 'partialReuse' : 'draftReplacementCandidate' })),
+    matchedGates: sleeve.gates.map((gate) => ({ id: `match.${gate.id}`, source: 'generatedDraft', targetKind: 'gate', targetId: gate.id, title: gate.title, summary: gate.conditionText, parentId: gate.attachesTo.id, confidence: 0.7, reason: 'Hermes custom workflow Gate/control record.', matchedSignals: gate.tags, reusedExisting: false, proposedUse: 'draftReplacementCandidate' })),
+    confidence: 0.76,
+    reasonForMatch: 'Live Hermes custom workflow generation produced runtime-session structure.',
+    missingCapabilities: [],
+    generatedDrafts: [],
+    createdAt,
+    warnings: ['No source library write.']
+  };
+  const compileCandidate: CompileCandidate = {
+    id: `runtime_session_compile_candidate_${sleeve.id}`,
+    assemblyPlanId: assemblyPlan.id,
+    sleeveId: sleeve.id,
+    sleeveTitle: sleeve.title,
+    compileStatus: 'ready_for_compiler',
+    normalizedStructure: { ...sleeve, selectedNeoStackIds, selectedNeoBlockIds, selectedMoltBlockIds, selectedGateIds, requiredTools, approvalPoints: assemblyPlan.approvalPoints, routingHints: assemblyPlan.executionOrder.map((targetId, orderIndex) => ({ targetId, orderIndex, activateOnlyFromTrace: true })), traceMappingAliases: [...selectedNeoBlockIds, ...selectedMoltBlockIds, ...selectedGateIds], metadata: { ...sleeve.metadata, blockMatchPlanId: blockMatchPlan.id } },
+    runtimeInstructions: ['Execute this active Custom Workflow Sleeve as runtime-session architecture only.', 'Use only supplied Sleeve/NeoStack/NeoBlock/MOLT/Gate IDs for trace mapping.', 'Irreversible or high-risk external actions require explicit confirmation and connector setup.', 'Do not fabricate visual activation.'],
+    executionPlan: assemblyPlan.executionOrder.map((targetId, orderIndex) => ({ id: `runtime_session_step_${orderIndex + 1}`, targetId, orderIndex, status: 'ready_for_live_runtime', requiredToolIds: requiredTools, requiredGateIds: assemblyPlan.gates.filter((gateId) => sleeve.gates.find((gate) => gate.id === gateId)?.attachesTo.id === targetId) })),
+    toolPolicySummary: requiredTools.map((tool) => `${tool}: declared capability; resolver verifies availability/authorization.`),
+    sourceBlocks: allIds,
+    traceMetadata: { ...assemblyPlan.traceMetadata, compileCandidateOnly: true, dynamicRoutingPrepared: true, noFakeTrace: true, noFabricatedVisualActivation: true, toolCapabilities: requiredTools },
+    warnings: ['Generated architecture is runtime-session usable but not trusted library content.', 'Review workspace is optional/advanced inspection only.']
+  };
+  return { assemblyPlan, blockMatchPlan, compileCandidate };
+}
+
 export function buildArchitectRuntimeExecution(args: { plan: SleeveArchitectPlan; businessMap: BusinessMap; businessInput?: BusinessInput; policy?: ArchitectExecutionPolicy }) {
   const policy = args.policy ?? defaultArchitectExecutionPolicy;
   const route = args.plan.executionRoute ?? decideArchitectExecutionRoute(args.plan);

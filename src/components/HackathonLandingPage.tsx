@@ -96,7 +96,7 @@ export function HackathonLandingPage({
         <span aria-hidden="true">UMG</span>
       </div>
       <nav className="hackathonNav" aria-label="Studio access">
-        <button type="button" onClick={onOpenStudio}>Open Studio Editor</button>
+        <button type="button" onClick={onOpenStudio}>Open Studio Editor (general canvas)</button>
       </nav>
     </header>
 
@@ -121,8 +121,11 @@ export function HackathonLandingPage({
             <textarea value={context} onChange={(event) => onContextChange(event.target.value)} placeholder="Paste context, requirements, policies, workflows, SOPs, or notes." />
           </label>
           <div className="hackathonChips" aria-label="Quick workflow types">
-            {quickChips.map((chip) => <button type="button" key={chip} className={selectedChip === chip ? 'selected' : ''} onClick={() => onChipSelect(chip)}>{chip}</button>)}
-            <small>More templates later.</small>
+            {quickChips.map((chip) => {
+              const enabled = chip === 'Custom Workflow';
+              return <button type="button" key={chip} className={selectedChip === chip ? 'selected' : ''} disabled={!enabled} title={enabled ? 'Enabled Basic path' : 'Coming soon / advanced template pack'} onClick={() => enabled && onChipSelect(chip)}>{chip}{enabled ? '' : ' · coming soon'}</button>;
+            })}
+            <small>Basic currently enables Custom Workflow only. Other template packs come later.</small>
           </div>
           <div className="hackathonFile">
             <div className="hackathonFileControl">

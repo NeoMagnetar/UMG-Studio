@@ -5,6 +5,7 @@ import { URL } from 'node:url';
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 8788;
 export const RUNTIME_PATH = '/api/hermes/runtime';
+export const CUSTOM_SLEEVE_GENERATION_PATH = '/api/hermes/custom-sleeve-generation';
 export const BODY_LIMIT_BYTES = 1024 * 1024;
 
 export const ALLOWED_ORIGINS = new Set([
@@ -660,6 +661,92 @@ export function buildContinuationTraceEnvelope(request) {
   };
 }
 
+export function validateCustomSleeveGenerationRequest(request) {
+  if (!isRecord(request)) return { ok: false, status: 400, error: 'Hermes custom Sleeve generation request must be JSON.' };
+  if (request.selectedMode !== 'custom_workflow') return { ok: false, status: 400, error: 'Only custom_workflow generation is enabled.' };
+  if (!String(request.requestId || '').trim()) return { ok: false, status: 400, error: 'requestId is required.' };
+  if (!String(request.userPrompt || '').trim()) return { ok: false, status: 400, error: 'userPrompt is required.' };
+  const supported = ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+  const requestedRoles = Array.isArray(request.supportedPromptMoltRoles) ? request.supportedPromptMoltRoles : [];
+  if (!supported.every((role) => requestedRoles.includes(role))) return { ok: false, status: 400, error: 'supportedPromptMoltRoles must include current compiler-supported prompt roles.' };
+  return { ok: true };
+}
+
+export function buildCustomSleeveGenerationPrompt(request) {
+  const safeRequest = redactSecrets(request);
+  return [
+    'You are Hermes generating a UMG Studio Custom Workflow Sleeve plan.',
+    'Use the app-local UMG skill bundle supplied below. Do not assume global Hermes skills are installed.',
+    'Do not provide hidden reasoning. Include only a concise decompositionSummary.',
+    'Do not perform external actions. Do not write source libraries. Do not import Website Builder.',
+    'Gates are control/routing/approval records, not prompt MOLT blocks.',
+    'Return ONLY JSON matching schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1.',
+    'Required top-level fields: schemaVersion, source, mode, generationSource, requestId, title, summary, decompositionSummary, reuseDecisions, generatedDecisions, neoStacks, neoBlocks, moltBlocks, gates, capabilities, warnings.',
+    'Exact required constants: source must equal hermes_custom_workflow_generation; mode must equal runtime_session_draft.',
+    'Exact object field contract: neoStacks use id, title, description, stackOrder; neoBlocks use id, title, description, neoStackId, moltBlockIds, gateIds, blockOrder; moltBlocks use id, title, role, summary; gates use id, title, kind; capabilities use capabilityId, label, riskLevel, safeForAppLocalExecution, requiresConnector; generatedDecisions use id, reason, runtimeSessionOnly, sourceLibraryWrite.',
+    'Do not use alternate keys such as name, stackId, type, content, id-only capability objects, or source objects.',
+    'Use only prompt MOLT roles: directive, instruction, subject, primary, philosophy, blueprint.',
+    'Every generatedDecision must set runtimeSessionOnly true and sourceLibraryWrite false.',
+    'Capability declarations are declarations only; externalActionTaken must remain false.',
+    `CUSTOM_WORKFLOW_REQUEST_JSON:\n${JSON.stringify(safeRequest, null, 2)}`
+  ].join('\n\n');
+}
+
+function parseJsonObjectFromText(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) throw new Error('Hermes returned empty output.');
+  try { return JSON.parse(trimmed); } catch {}
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) return JSON.parse(fenced[1]);
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
+  throw new Error('Hermes output did not contain a JSON object.');
+}
+
+export function validateCustomSleevePlan(plan) {
+  const errors = [];
+  const supported = new Set(['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint']);
+  if (!isRecord(plan)) return { valid: false, errors: ['Hermes custom Sleeve plan must be an object.'], warnings: [] };
+  if (plan.schemaVersion !== 'umg-studio.hermes-custom-sleeve-plan.v0.1') errors.push('Unsupported Hermes custom Sleeve plan schemaVersion.');
+  if (plan.source !== 'hermes_custom_workflow_generation') errors.push('source must be hermes_custom_workflow_generation.');
+  if (plan.mode !== 'runtime_session_draft') errors.push('mode must be runtime_session_draft.');
+  if (!plan.requestId) errors.push('requestId is required.');
+  if (!plan.title) errors.push('title is required.');
+  if (!plan.decompositionSummary) errors.push('decompositionSummary is required.');
+  if (!Array.isArray(plan.neoStacks) || !plan.neoStacks.length) errors.push('neoStacks must be non-empty.');
+  if (!Array.isArray(plan.neoBlocks) || !plan.neoBlocks.length) errors.push('neoBlocks must be non-empty.');
+  if (!Array.isArray(plan.moltBlocks) || !plan.moltBlocks.length) errors.push('moltBlocks must be non-empty.');
+  for (const block of plan.moltBlocks || []) {
+    if (!supported.has(block?.role)) errors.push(`Unsupported prompt MOLT role: ${block?.role}`);
+  }
+  for (const decision of plan.generatedDecisions || []) {
+    if (decision?.runtimeSessionOnly !== true) errors.push(`Generated decision ${decision?.id || '(unknown)'} must be runtimeSessionOnly.`);
+    if (decision?.sourceLibraryWrite !== false) errors.push(`Generated decision ${decision?.id || '(unknown)'} must keep sourceLibraryWrite false.`);
+  }
+  return { valid: errors.length === 0, errors, warnings: Array.isArray(plan.warnings) ? plan.warnings : [] };
+}
+
+export async function buildCustomSleeveGenerationResponse(request, env = process.env, runtimePost = runHermesRuntimeCli) {
+  const validation = validateCustomSleeveGenerationRequest(request);
+  if (!validation.ok) return jsonResponse(validation.status, { ok: false, error: validation.error, validation: { valid: false, errors: [validation.error], warnings: [] }, externalActionTaken: false }, undefined);
+  const prompt = buildCustomSleeveGenerationPrompt(request);
+  try {
+    const timeoutMs = Number(env.HERMES_CUSTOM_SLEEVE_TIMEOUT_MS || env.HERMES_RUNTIME_TIMEOUT_MS || 90000);
+    const hermes = await runtimePost(prompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
+    const plan = parseJsonObjectFromText(hermes.text || '');
+    const planValidation = validateCustomSleevePlan(plan);
+    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false }, undefined);
+    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false }, undefined);
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : undefined;
+    const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';
+    const status = code === 'ETIMEDOUT' ? 504 : 502;
+    const message = code === 'ETIMEDOUT' ? 'Hermes custom Sleeve generation CLI timed out.' : `Hermes custom Sleeve generation CLI failed.${stderr ? ` ${truncateText(stderr, 220)}` : ` ${error?.message || String(error)}`}`;
+    return jsonResponse(status, { ok: false, error: message, validation: { valid: false, errors: [message], warnings: [] }, externalActionTaken: false }, undefined);
+  }
+}
+
 export async function buildRuntimeBridgeResponse(request, env = process.env, runtimePost = runHermesRuntimeCli) {
   const validation = validateRuntimeRequest(request, env);
   if (!validation.ok) return jsonResponse(validation.status, { status: 'error', finalOutput: validation.error, trace: [], events: [], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [{ code: 'HERMES_RUNTIME_REQUEST_REJECTED', message: validation.error, traceId: request?.traceId }], artifacts: [], unmappedEvents: [] }, undefined);
@@ -718,7 +805,7 @@ export function createRuntimeBridgeServer(env = process.env) {
     const origin = req.headers.origin;
     const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
 
-    if (requestUrl.pathname !== RUNTIME_PATH) {
+    if (requestUrl.pathname !== RUNTIME_PATH && requestUrl.pathname !== CUSTOM_SLEEVE_GENERATION_PATH) {
       writeNodeResponse(res, jsonResponse(404, { status: 'error', finalOutput: 'Hermes runtime bridge route not found.' }, origin), origin);
       return;
     }
@@ -744,9 +831,11 @@ export function createRuntimeBridgeServer(env = process.env) {
         writeNodeResponse(res, jsonResponse(400, { status: 'error', finalOutput: 'Hermes runtime bridge received invalid JSON.' }, origin), origin);
         return;
       }
-      const response = await buildRuntimeBridgeResponse(parsed, env);
+      const response = requestUrl.pathname === CUSTOM_SLEEVE_GENERATION_PATH
+        ? await buildCustomSleeveGenerationResponse(parsed, env)
+        : await buildRuntimeBridgeResponse(parsed, env);
       writeNodeResponse(res, response, origin);
-      logSafe('hermes_runtime_bridge_post', { status: response.status, durationMs: Date.now() - started, executionMode: parsed.executionMode, traceId: parsed.traceId });
+      logSafe(requestUrl.pathname === CUSTOM_SLEEVE_GENERATION_PATH ? 'hermes_custom_sleeve_generation_post' : 'hermes_runtime_bridge_post', { status: response.status, durationMs: Date.now() - started, executionMode: parsed.executionMode, selectedMode: parsed.selectedMode, traceId: parsed.traceId, requestId: parsed.requestId });
     } catch (error) {
       const status = error?.status === 413 ? 413 : 500;
       const text = status === 413 ? 'Hermes runtime bridge request body is too large.' : 'Hermes runtime bridge internal error.';
