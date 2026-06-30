@@ -402,11 +402,12 @@ function findRegistryEntry(request, capabilityId) {
   return registry.find((entry) => entry?.capabilityId === capabilityId || entry?.mappedHermesToolName === capabilityId);
 }
 
-function firstSafeCapabilityTarget(request) {
-  const registry = Array.isArray(request.toolCapabilityRegistry) ? request.toolCapabilityRegistry : [];
-  const preferred = ['customer_message_draft', 'report_generate'];
-  const entry = preferred.map((capabilityId) => registry.find((candidate) => candidate?.capabilityId === capabilityId && candidate.available === 'yes' && candidate.executionPolicy === 'autoAllowed' && candidate.safeForLiveExecution === true)).find(Boolean);
-  if (!entry) return undefined;
+function safeCapabilityEntry(request, capabilityId) {
+  const entry = findRegistryEntry(request, capabilityId);
+  return entry?.capabilityId === capabilityId && entry.available === 'yes' && entry.executionPolicy === 'autoAllowed' && entry.safeForLiveExecution === true ? entry : undefined;
+}
+
+function capabilityTargetFromEntry(request, entry) {
   const manifest = request.compiledSleeveManifest || {};
   return {
     capabilityId: entry.capabilityId,
@@ -415,6 +416,42 @@ function firstSafeCapabilityTarget(request) {
     gateId: entry.relatedGateId,
     moltBlockId: entry.relatedMoltId,
     sleeveId: manifest.sleeveId
+  };
+}
+
+function firstSafeCapabilityTarget(request) {
+  const entry = safeCapabilityEntry(request, 'customer_message_draft') || safeCapabilityEntry(request, 'report_generate');
+  return entry ? capabilityTargetFromEntry(request, entry) : undefined;
+}
+
+export function selectNextRuntimeStepAfterCapability(request, completedCapability, completedNeoBlockId) {
+  const preferredNext = completedCapability === 'customer_message_draft' ? ['report_generate', 'audit_log_write'] : [];
+  for (const capabilityId of preferredNext) {
+    const entry = safeCapabilityEntry(request, capabilityId);
+    if (!entry) continue;
+    const target = capabilityTargetFromEntry(request, entry);
+    return {
+      nextCapabilityId: capabilityId,
+      nextNeoBlockId: target.neoBlockId,
+      nextMoltId: target.moltBlockId,
+      nextGateId: target.gateId,
+      routeReason: `${completedCapability} completed; ${capabilityId} is the next configured safe app-local runtime capability.`,
+      routeConfidence: capabilityId === 'report_generate' ? 0.86 : 0.64,
+      safeForLiveExecution: true,
+      externalActionTaken: false,
+      fromCapabilityId: completedCapability,
+      fromNeoBlockId: completedNeoBlockId,
+      target
+    };
+  }
+  return {
+    nextCapabilityId: undefined,
+    routeReason: `${completedCapability} completed; no configured safe next capability is available.`,
+    routeConfidence: 0,
+    safeForLiveExecution: false,
+    externalActionTaken: false,
+    fromCapabilityId: completedCapability,
+    fromNeoBlockId: completedNeoBlockId
   };
 }
 
@@ -443,6 +480,40 @@ function buildCustomerMessageDraftContent(request, target) {
   };
 }
 
+function buildReportGenerateContent(request, target, previousArtifact) {
+  const manifest = request.compiledSleeveManifest || {};
+  return {
+    artifactType: 'return_workflow_report',
+    title: 'Return Workflow Runtime Summary',
+    body: [
+      `Runtime summary for ${manifest.sleeveTitle || 'the generated return/refund Sleeve'}.`,
+      'The customer response draft was prepared as a safe app-local artifact.',
+      'Purchase validation and eligibility review still require real order-system data before any business decision.',
+      'No email was sent, no refund was issued, and no inventory or production record was changed.',
+      'Recommended next action: a human operator should review the draft, verify order/eligibility data in the real system, and approve any refund or customer send action outside this proof path.'
+    ].join('\n'),
+    sourceCapability: 'report_generate',
+    nonDestructive: true,
+    externalActionTaken: false,
+    relatedNeoBlockId: target.neoBlockId,
+    relatedGateId: target.gateId,
+    relatedMoltId: target.moltBlockId,
+    previousArtifactSummary: previousArtifact?.title ? `${previousArtifact.title} completed` : 'customer_message_draft completed',
+    routeRelationship: 'Generated after customer_message_draft'
+  };
+}
+
+function buildCapabilityEvents(request, target, eventBase, base, offset) {
+  return [
+    ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.neoblock.started`, timestamp: base + offset, eventType: 'neoblock_started', message: `${target.capabilityId} NeoBlock started`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'active' }] : []),
+    ...(target.moltBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.molt.used`, timestamp: base + offset + 1, eventType: 'molt_role_used', message: `${target.capabilityId} used MOLT guidance`, scopeKind: 'molt', moltBlockId: target.moltBlockId, status: 'processing' }] : []),
+    { traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.tool.prepared`, timestamp: base + offset + 2, eventType: 'tool_call_prepared', message: `${target.capabilityId} prepared as configured safe app-local capability`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'attention' },
+    { traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.tool.executed`, timestamp: base + offset + 3, eventType: 'tool_call_executed', message: `${target.capabilityId} executed as real safe app-local Hermes capability without external side effects`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'complete' },
+    { traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.tool.result`, timestamp: base + offset + 4, eventType: 'tool_result_received', message: `${target.capabilityId} returned structured non-destructive artifact`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'processing' },
+    ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.neoblock.completed`, timestamp: base + offset + 5, eventType: 'neoblock_completed', message: `${target.capabilityId} NeoBlock completed after artifact generation`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'complete' }] : [])
+  ];
+}
+
 export function buildSafeCapabilityTraceEnvelope(request) {
   const target = firstSafeCapabilityTarget(request);
   if (!target) return undefined;
@@ -450,29 +521,38 @@ export function buildSafeCapabilityTraceEnvelope(request) {
   const eventBase = String(request.traceId || 'safe_capability_trace').replace(/[^a-zA-Z0-9_.-]/g, '_');
   const artifactContent = target.capabilityId === 'customer_message_draft'
     ? buildCustomerMessageDraftContent(request, target)
-    : { artifactType: 'report_generate', title: 'UMG Runtime Report', body: `Runtime report generated for ${request.compiledSleeveManifest?.sleeveTitle || 'compiled Sleeve'}.`, sourceCapability: target.capabilityId, nonDestructive: true, externalActionTaken: false, relatedNeoBlockId: target.neoBlockId, relatedGateId: target.gateId, relatedMoltId: target.moltBlockId };
+    : buildReportGenerateContent(request, target);
+  const route = selectNextRuntimeStepAfterCapability(request, target.capabilityId, target.neoBlockId);
+  const secondTarget = route.target;
+  const secondArtifactContent = secondTarget?.capabilityId === 'report_generate' ? buildReportGenerateContent(request, secondTarget, artifactContent) : undefined;
+  const routeEvents = secondTarget ? [
+    ...(route.nextGateId ? [{ traceId: request.traceId, eventId: `${eventBase}.route.gate.opened`, timestamp: base + 6, eventType: 'gate_opened', message: route.routeReason, scopeKind: 'gate', gateId: route.nextGateId, status: 'active' }] : []),
+    ...buildCapabilityEvents(request, secondTarget, eventBase, base, 7)
+  ] : [];
   const events = [
-    ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.neoblock.started`, timestamp: base, eventType: 'neoblock_started', message: `${target.capabilityId} NeoBlock started`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'active' }] : []),
-    ...(target.moltBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.molt.used`, timestamp: base + 1, eventType: 'molt_role_used', message: `${target.capabilityId} used MOLT guidance`, scopeKind: 'molt', moltBlockId: target.moltBlockId, status: 'processing' }] : []),
-    ...(target.gateId ? [{ traceId: request.traceId, eventId: `${eventBase}.gate.opened`, timestamp: base + 2, eventType: 'gate_opened', message: `${target.capabilityId} safe gate opened`, scopeKind: 'gate', gateId: target.gateId, status: 'active' }] : []),
-    { traceId: request.traceId, eventId: `${eventBase}.tool.prepared`, timestamp: base + 3, eventType: 'tool_call_prepared', message: `${target.capabilityId} prepared as configured safe app-local capability`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'attention' },
-    { traceId: request.traceId, eventId: `${eventBase}.tool.executed`, timestamp: base + 4, eventType: 'tool_call_executed', message: `${target.capabilityId} executed as real safe app-local Hermes capability without external side effects`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'complete' },
-    { traceId: request.traceId, eventId: `${eventBase}.tool.result`, timestamp: base + 5, eventType: 'tool_result_received', message: `${target.capabilityId} returned structured non-destructive artifact`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'processing' },
-    ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.neoblock.completed`, timestamp: base + 6, eventType: 'neoblock_completed', message: `${target.capabilityId} NeoBlock completed after artifact generation`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'complete' }] : []),
-    { traceId: request.traceId, eventId: `${eventBase}.run.completed`, timestamp: base + 7, eventType: 'run_completed', message: 'Hermes bridge completed safe app-local capability execution', scopeKind: 'sleeve', sleeveId: target.sleeveId, status: 'complete' }
+    ...buildCapabilityEvents(request, target, eventBase, base, 0),
+    ...routeEvents,
+    { traceId: request.traceId, eventId: `${eventBase}.run.completed`, timestamp: base + (secondTarget ? 14 : 7), eventType: 'run_completed', message: secondTarget ? 'Hermes bridge completed multi-step safe app-local capability route' : 'Hermes bridge completed safe app-local capability execution', scopeKind: 'sleeve', sleeveId: target.sleeveId, status: 'complete' }
   ];
-  const toolCall = { id: `tool.${eventBase}.${target.capabilityId}`, traceId: request.traceId, toolId: target.capabilityId, toolName: target.toolName, status: 'executed', input: { capabilityId: target.capabilityId, userGoal: request.userGoal, sleeveId: target.sleeveId, relatedNeoBlockId: target.neoBlockId, relatedGateId: target.gateId, relatedMoltId: target.moltBlockId }, output: artifactContent };
+  const toolCalls = [
+    { id: `tool.${eventBase}.${target.capabilityId}`, traceId: request.traceId, toolId: target.capabilityId, toolName: target.toolName, status: 'executed', input: { capabilityId: target.capabilityId, userGoal: request.userGoal, sleeveId: target.sleeveId, relatedNeoBlockId: target.neoBlockId, relatedGateId: target.gateId, relatedMoltId: target.moltBlockId }, output: artifactContent },
+    ...(secondTarget && secondArtifactContent ? [{ id: `tool.${eventBase}.${secondTarget.capabilityId}`, traceId: request.traceId, toolId: secondTarget.capabilityId, toolName: secondTarget.toolName, status: 'executed', input: { capabilityId: secondTarget.capabilityId, previousCapabilityId: target.capabilityId, routeReason: route.routeReason, userGoal: request.userGoal, sleeveId: secondTarget.sleeveId, relatedNeoBlockId: secondTarget.neoBlockId, relatedGateId: secondTarget.gateId, relatedMoltId: secondTarget.moltBlockId }, output: secondArtifactContent }] : [])
+  ];
+  const artifacts = [
+    { id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: artifactContent.title, kind: artifactContent.artifactType, content: artifactContent, metadata: { sourceCapability: target.capabilityId, realSafeAppLocalCapability: true, externalActionTaken: false } },
+    ...(secondTarget && secondArtifactContent ? [{ id: `artifact.${eventBase}.${secondTarget.capabilityId}`, traceId: request.traceId, label: secondArtifactContent.title, kind: secondArtifactContent.artifactType, content: secondArtifactContent, metadata: { sourceCapability: secondTarget.capabilityId, realSafeAppLocalCapability: true, externalActionTaken: false, routeRelationship: 'Generated after customer_message_draft' } }] : [])
+  ];
   return {
     traceId: request.traceId,
     status: 'ok',
-    finalOutput: `${target.capabilityId} generated a structured non-destructive runtime artifact. No external email, refund, inventory, or production mutation occurred.`,
+    finalOutput: secondTarget ? `${target.capabilityId} completed, routed to ${secondTarget.capabilityId}, and generated two structured non-destructive runtime artifacts. No external email, refund, inventory, or production mutation occurred.` : `${target.capabilityId} generated a structured non-destructive runtime artifact. No safe next route was executed. No external email, refund, inventory, or production mutation occurred.`,
     events,
     trace: events,
-    toolCalls: [toolCall],
+    toolCalls,
     blockedCalls: [],
     approvalRequests: [],
     errors: [],
-    artifacts: [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: artifactContent.title, kind: artifactContent.artifactType, content: artifactContent, metadata: { sourceCapability: target.capabilityId, realSafeAppLocalCapability: true, externalActionTaken: false } }],
+    artifacts,
     unmappedEvents: [],
     nextSuggestedActions: []
   };

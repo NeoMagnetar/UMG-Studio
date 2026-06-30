@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from '../lib/umg/cognitiveRuntimeState';
 
 const getRuntimeBridgeModule = async () => import('../../dev/hermes-runtime-bridge.mjs');
 
@@ -142,6 +143,60 @@ describe('Hermes runtime bridge helpers', () => {
     const response = await buildRuntimeBridgeResponse(request, {}, async () => { throw new Error('safe capability should not invoke external CLI'); });
     expect(response.status).toBe(200);
     expect(response.body.artifacts[0].content.externalActionTaken).toBe(false);
+  });
+
+  it('routes customer_message_draft to report_generate as a second safe app-local capability', async () => {
+    const { buildSafeCapabilityTraceEnvelope, selectNextRuntimeStepAfterCapability } = await getRuntimeBridgeModule();
+    const request = {
+      ...safeRuntimeRequest,
+      traceId: 'trace.phase13g.multi_step_route',
+      executionMode: 'approvalRequired',
+      compiledSleeveManifest: {
+        ...safeRuntimeRequest.compiledSleeveManifest,
+        sleeveTitle: 'Customer Return & Refund Orchestration Sleeve',
+        sourceBlocks: [
+          { id: 'nb.customer.message', title: 'Draft Customer Return Instructions', scopeKind: 'neoblock' },
+          { id: 'molt.customer.primary', title: 'Draft Customer Return Instructions Primary', scopeKind: 'molt', role: 'primary', metadata: { parentNeoBlockId: 'nb.customer.message' } },
+          { id: 'nb.report.generate', title: 'Generate Return Metrics', scopeKind: 'neoblock' },
+          { id: 'molt.report.primary', title: 'Generate Return Metrics Primary', scopeKind: 'molt', role: 'primary', metadata: { parentNeoBlockId: 'nb.report.generate' } }
+        ]
+      },
+      toolCapabilityRegistry: [
+        { capabilityId: 'customer_message_draft', available: 'yes', executionPolicy: 'autoAllowed', safeForLiveExecution: true, mappedHermesToolName: 'app_local_customer_message_draft', relatedNeoBlockId: 'nb.customer.message', relatedMoltId: 'molt.customer.primary' },
+        { capabilityId: 'report_generate', available: 'yes', executionPolicy: 'autoAllowed', safeForLiveExecution: true, mappedHermesToolName: 'app_local_report_generate', relatedNeoBlockId: 'nb.report.generate', relatedMoltId: 'molt.report.primary' }
+      ]
+    };
+    const route = selectNextRuntimeStepAfterCapability(request, 'customer_message_draft', 'nb.customer.message');
+    expect(route).toMatchObject({ nextCapabilityId: 'report_generate', nextNeoBlockId: 'nb.report.generate', nextMoltId: 'molt.report.primary', safeForLiveExecution: true, externalActionTaken: false });
+    const envelope = buildSafeCapabilityTraceEnvelope(request);
+    expect(envelope.artifacts).toHaveLength(2);
+    expect(envelope.artifacts[1].content).toMatchObject({ artifactType: 'return_workflow_report', sourceCapability: 'report_generate', nonDestructive: true, externalActionTaken: false, previousArtifactSummary: 'Return Request Customer Reply Draft completed' });
+    expect(envelope.toolCalls.map((call) => call.toolId)).toEqual(['customer_message_draft', 'report_generate']);
+    expect(envelope.events.filter((event) => event.eventType === 'tool_call_executed')).toHaveLength(2);
+    expect(envelope.events.filter((event) => event.eventType === 'tool_result_received')).toHaveLength(2);
+    const visualEvents = envelope.events.map((event) => ({ ...event, state: event.state ?? event.status }));
+    const visualState = applyRuntimeTraceEvents(createEmptyRuntimeVisualState(request.traceId), visualEvents);
+    expect(visualState.completeIds).toEqual(expect.arrayContaining(['nb.customer.message', 'nb.report.generate']));
+    expect(envelope.unmappedEvents).toHaveLength(0);
+  });
+
+  it('does not invent or execute a second route when no safe next capability is available', async () => {
+    const { buildSafeCapabilityTraceEnvelope, selectNextRuntimeStepAfterCapability } = await getRuntimeBridgeModule();
+    const request = {
+      ...safeRuntimeRequest,
+      traceId: 'trace.phase13g.no_safe_next_route',
+      executionMode: 'approvalRequired',
+      toolCapabilityRegistry: [
+        { capabilityId: 'customer_message_draft', available: 'yes', executionPolicy: 'autoAllowed', safeForLiveExecution: true, mappedHermesToolName: 'app_local_customer_message_draft', relatedNeoBlockId: 'nb.customer.message', relatedMoltId: 'molt.customer.primary' },
+        { capabilityId: 'report_generate', available: 'no', executionPolicy: 'blocked', safeForLiveExecution: false, mappedHermesToolName: 'app_local_report_generate', relatedNeoBlockId: 'nb.report.generate', relatedMoltId: 'molt.report.primary' }
+      ]
+    };
+    const route = selectNextRuntimeStepAfterCapability(request, 'customer_message_draft', 'nb.customer.message');
+    expect(route).toMatchObject({ nextCapabilityId: undefined, safeForLiveExecution: false, externalActionTaken: false });
+    const envelope = buildSafeCapabilityTraceEnvelope(request);
+    expect(envelope.artifacts).toHaveLength(1);
+    expect(envelope.toolCalls).toHaveLength(1);
+    expect(envelope.events.filter((event) => event.neoBlockId === 'nb.report.generate')).toHaveLength(0);
   });
 
   it('labels local continuation fallback as local_dev_proof and non external', async () => {
