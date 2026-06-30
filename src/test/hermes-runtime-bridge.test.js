@@ -318,5 +318,32 @@ describe('Hermes runtime bridge helpers', () => {
     expect(continuation.artifacts[0].content.body).toContain('Greek philosophy');
   });
 
+  it('prepares native Hermes action approval without executing external actions', async () => {
+    const { buildNativeActionBridgeResponse } = await getRuntimeBridgeModule();
+    const request = { actionId: 'native.note.approval', capabilityId: 'umg.native.hermes.note_create', mode: 'approval', risk: 'low', prompt: 'Create a desktop note', sleeveId: 'sleeve_business_automation_core', neoBlockId: 'block_strategy', gateId: 'gate.native.note' };
+    const response = await buildNativeActionBridgeResponse(request, {}, async () => { throw new Error('approval mode must not invoke Hermes CLI'); });
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('approval_required');
+    expect(response.body.externalActionTaken).toBe(false);
+    expect(response.body.traceEvents.map((event) => event.eventType)).toEqual(expect.arrayContaining(['tool_block_resolved', 'action_request_created', 'action_approval_required']));
+  });
+
+  it('reports real created files for direct native Hermes note execution', async () => {
+    const { buildNativeActionBridgeResponse } = await getRuntimeBridgeModule();
+    const tmpFile = '/tmp/umg-hermes-native-bridge-test-note.txt';
+    await import('node:fs/promises').then((fs) => fs.rm(tmpFile, { force: true }));
+    const request = { actionId: 'native.note.direct', capabilityId: 'umg.native.hermes.note_create', mode: 'direct', risk: 'low', prompt: 'Create a desktop note', expectedOutputs: [tmpFile], sleeveId: 'sleeve_business_automation_core', neoBlockId: 'block_strategy', moltId: 'molt_strategy', gateId: 'gate.native.note', userApproved: true };
+    const response = await buildNativeActionBridgeResponse(request, {}, async () => {
+      await import('node:fs/promises').then((fs) => fs.writeFile(tmpFile, 'hi im hermes from UMG\n', 'utf8'));
+      return { text: 'created real note', stderr: '' };
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('executed');
+    expect(response.body.externalActionTaken).toBe(true);
+    expect(response.body.createdFiles).toContain(tmpFile);
+    expect(response.body.artifacts[0]).toMatchObject({ kind: 'file', path: tmpFile, externalActionTaken: true });
+    expect(response.body.traceEvents.map((event) => event.eventType)).toEqual(expect.arrayContaining(['action_executed', 'file_created', 'artifact_created']));
+  });
+
 });
 

@@ -126,6 +126,84 @@ const knownCapabilities: Record<string, KnownCapability> = {
     executionPolicy: 'approvalRequired',
     requiredApproval: true,
     safeForLiveExecution: false
+  },
+  'umg.native.hermes.note_create': {
+    capabilityId: 'umg.native.hermes.note_create',
+    displayName: 'Hermes Native Note Create',
+    description: 'Create a text note through Hermes native file/tool execution and return the real created path.',
+    riskLevel: 'low',
+    available: 'yes',
+    mappedHermesToolName: 'hermes_native_note_create',
+    mappedHermesSkillId: 'app-local:metamolt_tool:TOOL.HERMES.NOTE_CREATE.v0.1',
+    source: 'configured',
+    executionPolicy: 'approvalRequired',
+    requiredApproval: true,
+    safeForLiveExecution: true
+  },
+  'umg.native.hermes.file_write': {
+    capabilityId: 'umg.native.hermes.file_write',
+    displayName: 'Hermes Native File Write',
+    description: 'Write or update a file through Hermes native file/tool execution and return real file paths.',
+    riskLevel: 'medium',
+    available: 'yes',
+    mappedHermesToolName: 'hermes_native_file_write',
+    mappedHermesSkillId: 'app-local:metamolt_tool:TOOL.HERMES.FILE_WRITE.v0.1',
+    source: 'configured',
+    executionPolicy: 'approvalRequired',
+    requiredApproval: true,
+    safeForLiveExecution: false
+  },
+  'umg.native.hermes.file_read': {
+    capabilityId: 'umg.native.hermes.file_read',
+    displayName: 'Hermes Native File Read',
+    description: 'Read a file through Hermes native file/tool execution when policy allows access to the path.',
+    riskLevel: 'low',
+    available: 'yes',
+    mappedHermesToolName: 'hermes_native_file_read',
+    mappedHermesSkillId: 'app-local:metamolt_tool:TOOL.HERMES.FILE_READ.v0.1',
+    source: 'configured',
+    executionPolicy: 'autoAllowed',
+    requiredApproval: false,
+    safeForLiveExecution: true
+  },
+  'umg.native.hermes.shell_command': {
+    capabilityId: 'umg.native.hermes.shell_command',
+    displayName: 'Hermes Native Shell Command',
+    description: 'Run a shell command through Hermes native terminal execution after approval; high-risk by default.',
+    riskLevel: 'high',
+    available: 'yes',
+    mappedHermesToolName: 'hermes_native_shell_command',
+    mappedHermesSkillId: 'app-local:metamolt_tool:TOOL.HERMES.SHELL_COMMAND.v0.1',
+    source: 'configured',
+    executionPolicy: 'approvalRequired',
+    requiredApproval: true,
+    safeForLiveExecution: false
+  },
+  'umg.native.hermes.project_edit': {
+    capabilityId: 'umg.native.hermes.project_edit',
+    displayName: 'Hermes Native Project Edit',
+    description: 'Edit project files through Hermes native tools after approval and project policy checks.',
+    riskLevel: 'high',
+    available: 'yes',
+    mappedHermesToolName: 'hermes_native_project_edit',
+    mappedHermesSkillId: 'app-local:metamolt_tool:TOOL.HERMES.PROJECT_EDIT.v0.1',
+    source: 'configured',
+    executionPolicy: 'approvalRequired',
+    requiredApproval: true,
+    safeForLiveExecution: false
+  },
+  'umg.native.hermes.runtime_task': {
+    capabilityId: 'umg.native.hermes.runtime_task',
+    displayName: 'Hermes Native Runtime Task',
+    description: 'Ask Hermes to perform a native runtime task using configured tools under UMG Gate/action policy.',
+    riskLevel: 'medium',
+    available: 'yes',
+    mappedHermesToolName: 'hermes_native_runtime_task',
+    mappedHermesSkillId: 'app-local:metamolt_tool:TOOL.HERMES.RUNTIME_TASK.v0.1',
+    source: 'configured',
+    executionPolicy: 'approvalRequired',
+    requiredApproval: true,
+    safeForLiveExecution: false
   }
 };
 
@@ -143,6 +221,12 @@ function preferredTermsForCapability(capabilityId: string) {
   if (capabilityId === 'order_lookup') return ['validate order', 'purchase record', 'order'];
   if (capabilityId === 'umg.capability.local_text_composition') return ['note', 'compose', 'composition', 'text', 'greek', 'apples', 'philosophy'];
   if (capabilityId === 'umg.capability.local_note_file_write') return ['desktop', 'note', 'file', 'write', 'artifact', 'review'];
+  if (capabilityId === 'umg.native.hermes.note_create') return ['desktop', 'note', 'create', 'file'];
+  if (capabilityId === 'umg.native.hermes.file_write') return ['file', 'write', 'update'];
+  if (capabilityId === 'umg.native.hermes.file_read') return ['file', 'read'];
+  if (capabilityId === 'umg.native.hermes.shell_command') return ['shell', 'terminal', 'command'];
+  if (capabilityId === 'umg.native.hermes.project_edit') return ['project', 'edit', 'source'];
+  if (capabilityId === 'umg.native.hermes.runtime_task') return ['runtime', 'task', 'hermes'];
   return capabilityId.split(/[_-]+/);
 }
 

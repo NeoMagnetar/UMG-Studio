@@ -51,6 +51,15 @@ export type UMGTraceEventType =
   | 'tool_executed'
   | 'tool_blocked'
   | 'route_completed'
+  | 'tool_block_resolved'
+  | 'action_request_created'
+  | 'action_approval_required'
+  | 'action_executed'
+  | 'file_created'
+  | 'file_modified'
+  | 'artifact_created'
+  | 'action_failed'
+  | 'action_blocked'
   | 'error';
 
 export type UMGTraceEvent = {
@@ -240,6 +249,44 @@ export type UMGRuntimeArtifact = {
   metadata?: Record<string, unknown>;
 };
 
+export type UMGNativeActionMode = 'direct' | 'approval' | 'observe' | 'blocked';
+
+export type UMGNativeActionRisk = 'low' | 'medium' | 'high' | 'irreversible';
+
+export type UMGNativeHermesActionRequest = {
+  actionId: string;
+  capabilityId: string;
+  mode: UMGNativeActionMode;
+  risk: UMGNativeActionRisk;
+  prompt: string;
+  workingDirectory?: string;
+  expectedOutputs?: string[];
+  neoStackId?: string;
+  neoBlockId?: string;
+  moltId?: string;
+  gateId?: string;
+  sleeveId: string;
+  traceId?: string;
+  userApproved?: boolean;
+};
+
+export type UMGNativeHermesActionResult = {
+  actionId: string;
+  capabilityId: string;
+  mode: UMGNativeActionMode;
+  status: 'executed' | 'approval_required' | 'observed' | 'blocked' | 'failed';
+  externalActionTaken: boolean;
+  createdFiles?: string[];
+  modifiedFiles?: string[];
+  commandOutput?: string;
+  stdout?: string;
+  stderr?: string;
+  summary: string;
+  artifacts: unknown[];
+  traceEvents: unknown[];
+  error?: string;
+};
+
 export type HermesCognitiveRuntimeResult = {
   status: 'ok' | 'blocked' | 'needsApproval' | 'error';
   finalOutput: string;
@@ -249,6 +296,7 @@ export type HermesCognitiveRuntimeResult = {
   approvalRequests: UMGApprovalRequest[];
   errors: UMGRuntimeError[];
   artifacts: UMGRuntimeArtifact[];
+  nativeActionResult?: UMGNativeHermesActionResult;
   unmappedEvents?: UMGTraceEvent[];
   nextSuggestedActions: string[];
   raw?: unknown;

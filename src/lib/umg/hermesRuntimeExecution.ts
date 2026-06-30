@@ -3,6 +3,11 @@ import type {
   HermesCognitiveRuntimeRequest,
   HermesCognitiveRuntimeResult,
   UMGCompiledRuntimeManifest,
+  UMGNativeActionMode,
+  UMGNativeHermesActionRequest,
+  UMGNativeHermesActionResult,
+  UMGRuntimeArtifact,
+  UMGRuntimeError,
   UMGRuntimeVisualState
 } from './cognitiveRuntimeTypes';
 import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from './cognitiveRuntimeState';
@@ -15,6 +20,14 @@ export type HermesRuntimeConnectionSummary = {
   endpoint?: string;
   source: 'env' | 'not_configured';
   message: string;
+};
+
+export type NativeHermesActionExecutionResult = {
+  request: UMGNativeHermesActionRequest;
+  result: UMGNativeHermesActionResult;
+  runtimeResult: HermesCognitiveRuntimeResult;
+  visualState: UMGRuntimeVisualState;
+  warnings: string[];
 };
 
 export type HermesRuntimeRequestValidation = {
@@ -166,4 +179,117 @@ export async function runCompiledManifestThroughHermes(args: {
   const visualState = applyRuntimeTraceEvents(createEmptyRuntimeVisualState(args.request.traceId), result.trace);
   const warnings = result.trace.length ? [] : ['Hermes returned no runtime trace events.'];
   return { request: args.request, result, visualState, warnings };
+}
+
+function nativeActionEndpointFromRuntime(endpoint: string) {
+  if (endpoint.endsWith('/api/hermes/runtime')) return endpoint.replace(/\/api\/hermes\/runtime$/, '/api/hermes/native-action');
+  if (endpoint.includes('/api/hermes/runtime')) return endpoint.replace('/api/hermes/runtime', '/api/hermes/native-action');
+  return endpoint.replace(/\/$/, '') + '/native-action';
+}
+
+function inferNativeCapability(prompt: string): { capabilityId: string; risk: UMGNativeHermesActionRequest['risk'] } {
+  const text = prompt.toLowerCase();
+  if (text.includes('read') && text.includes('file')) return { capabilityId: 'umg.native.hermes.file_read', risk: 'low' };
+  if (text.includes('shell') || text.includes('terminal') || text.includes('command')) return { capabilityId: 'umg.native.hermes.shell_command', risk: 'high' };
+  if (text.includes('project') && (text.includes('edit') || text.includes('source'))) return { capabilityId: 'umg.native.hermes.project_edit', risk: 'high' };
+  if (text.includes('note')) return { capabilityId: 'umg.native.hermes.note_create', risk: 'low' };
+  if (text.includes('file') || text.includes('write')) return { capabilityId: 'umg.native.hermes.file_write', risk: 'medium' };
+  return { capabilityId: 'umg.native.hermes.runtime_task', risk: 'medium' };
+}
+
+function getConfiguredDesktopWslPath() {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  return env?.VITE_UMG_WINDOWS_DESKTOP_WSL_PATH?.replace(/\/$/, '') || '/mnt/c/Users/Magne/OneDrive/Desktop';
+}
+
+function guessDesktopNoteOutput(prompt: string) {
+  const text = prompt.toLowerCase();
+  if (!text.includes('desktop')) return undefined;
+  const nameMatch = prompt.match(/(?:as|named|called)\s+[“\"]?([a-zA-Z0-9._-]+)[”\"]?/i);
+  const base = (nameMatch?.[1] || 'umg-hermes-native-test').replace(/\.txt$/i, '');
+  return `${getConfiguredDesktopWslPath()}/${base}.txt`;
+}
+
+export function createNativeHermesActionRequestFromManifest(args: {
+  compiledRuntimeManifest: UMGCompiledRuntimeManifest;
+  prompt: string;
+  mode: Exclude<UMGNativeActionMode, 'blocked'>;
+  traceId?: string;
+  userApproved?: boolean;
+}): UMGNativeHermesActionRequest {
+  const inferred = inferNativeCapability(args.prompt);
+  const firstStack = args.compiledRuntimeManifest.sourceBlocks.find((block) => block.scopeKind === 'neostack');
+  const firstBlock = args.compiledRuntimeManifest.sourceBlocks.find((block) => block.scopeKind === 'neoblock');
+  const firstMolt = args.compiledRuntimeManifest.sourceBlocks.find((block) => block.scopeKind === 'molt');
+  const output = guessDesktopNoteOutput(args.prompt);
+  return {
+    actionId: `native_action_${Date.now()}`,
+    capabilityId: inferred.capabilityId,
+    mode: args.mode,
+    risk: inferred.risk,
+    prompt: args.prompt,
+    expectedOutputs: output ? [output] : undefined,
+    neoStackId: firstStack?.id,
+    neoBlockId: firstBlock?.id,
+    moltId: firstMolt?.id,
+    gateId: args.compiledRuntimeManifest.gates[0]?.id,
+    sleeveId: args.compiledRuntimeManifest.sleeveId,
+    traceId: args.traceId ?? makeTraceId(args.compiledRuntimeManifest),
+    userApproved: args.userApproved ?? args.mode === 'direct'
+  };
+}
+
+function normalizeNativeResultToRuntimeResult(actionResult: UMGNativeHermesActionResult): HermesCognitiveRuntimeResult {
+  const status: HermesCognitiveRuntimeResult['status'] = actionResult.status === 'approval_required'
+    ? 'needsApproval'
+    : actionResult.status === 'blocked'
+      ? 'blocked'
+      : actionResult.status === 'failed'
+        ? 'error'
+        : 'ok';
+  const errors: UMGRuntimeError[] = actionResult.error ? [{ code: 'NATIVE_HERMES_ACTION_FAILED', message: actionResult.error, raw: actionResult }] : [];
+  const artifacts: UMGRuntimeArtifact[] = actionResult.artifacts.map((artifact, index) => ({
+    id: `${actionResult.actionId}_artifact_${index}`,
+    traceId: actionResult.actionId,
+    kind: 'file',
+    label: typeof artifact === 'object' && artifact && 'path' in artifact ? String((artifact as { path?: unknown }).path) : `Native Hermes artifact ${index + 1}`,
+    uri: typeof artifact === 'object' && artifact && 'path' in artifact ? String((artifact as { path?: unknown }).path) : undefined,
+    content: artifact,
+    metadata: typeof artifact === 'object' && artifact ? artifact as Record<string, unknown> : { value: artifact }
+  }));
+  return {
+    status,
+    finalOutput: actionResult.summary,
+    trace: actionResult.traceEvents as HermesCognitiveRuntimeResult['trace'],
+    toolCalls: [],
+    blockedCalls: actionResult.status === 'blocked' ? [] : [],
+    approvalRequests: actionResult.status === 'approval_required' ? [{ id: actionResult.actionId, traceId: actionResult.actionId, approvalId: actionResult.actionId, label: actionResult.capabilityId, reason: actionResult.summary, requestedAt: Date.now(), status: 'pending', raw: actionResult }] : [],
+    errors,
+    artifacts,
+    nativeActionResult: actionResult,
+    nextSuggestedActions: actionResult.status === 'approval_required' ? ['Approve the native Hermes action to execute it.'] : []
+  };
+}
+
+export async function runNativeHermesAction(args: {
+  request: UMGNativeHermesActionRequest;
+  config: HermesRuntimeAdapterConfig;
+}): Promise<NativeHermesActionExecutionResult> {
+  if (!args.config.enabled || !args.config.endpoint) throw new Error('Hermes runtime endpoint is not configured.');
+  const response = await fetch(nativeActionEndpointFromRuntime(args.config.endpoint), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(args.request)
+  });
+  const raw = await response.text();
+  let parsed: UMGNativeHermesActionResult;
+  try {
+    parsed = JSON.parse(raw) as UMGNativeHermesActionResult;
+  } catch {
+    throw new Error(`Native Hermes action bridge returned non-JSON response: ${raw.slice(0, 300)}`);
+  }
+  if (!response.ok && parsed.status !== 'failed') throw new Error(parsed.error || parsed.summary || `Native Hermes action bridge failed with HTTP ${response.status}`);
+  const runtimeResult = normalizeNativeResultToRuntimeResult(parsed);
+  const visualState = applyRuntimeTraceEvents(createEmptyRuntimeVisualState(args.request.traceId ?? args.request.actionId), runtimeResult.trace);
+  return { request: args.request, result: parsed, runtimeResult, visualState, warnings: parsed.traceEvents.length ? [] : ['Native Hermes bridge returned no trace events.'] };
 }

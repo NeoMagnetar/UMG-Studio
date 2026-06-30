@@ -46,6 +46,15 @@ const eventTypes: UMGTraceEventType[] = [
   'tool_executed',
   'tool_blocked',
   'route_completed',
+  'tool_block_resolved',
+  'action_request_created',
+  'action_approval_required',
+  'action_executed',
+  'file_created',
+  'file_modified',
+  'artifact_created',
+  'action_failed',
+  'action_blocked',
   'error'
 ];
 
@@ -85,6 +94,15 @@ const eventStateDefaults: Record<UMGTraceEventType, UMGRuntimeState> = {
   tool_executed: 'complete',
   tool_blocked: 'blocked',
   route_completed: 'complete',
+  tool_block_resolved: 'processing',
+  action_request_created: 'processing',
+  action_approval_required: 'attention',
+  action_executed: 'complete',
+  file_created: 'complete',
+  file_modified: 'complete',
+  artifact_created: 'complete',
+  action_failed: 'error',
+  action_blocked: 'blocked',
   error: 'error'
 };
 

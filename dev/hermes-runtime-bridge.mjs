@@ -1,10 +1,13 @@
 import http from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { URL } from 'node:url';
 
 export const DEFAULT_HOST = '127.0.0.1';
 export const DEFAULT_PORT = 8788;
 export const RUNTIME_PATH = '/api/hermes/runtime';
+export const NATIVE_ACTION_PATH = '/api/hermes/native-action';
 export const CUSTOM_SLEEVE_GENERATION_PATH = '/api/hermes/custom-sleeve-generation';
 export const BODY_LIMIT_BYTES = 1024 * 1024;
 
@@ -408,6 +411,199 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
       else reject(Object.assign(new Error(signal ? `Hermes runtime CLI exited with ${signal}` : `Hermes runtime CLI exited with status ${code}`), { code: signal || code, stderr }));
     });
   });
+}
+
+const NATIVE_CAPABILITY_POLICIES = {
+  'umg.native.hermes.note_create': { risk: 'low', directAllowed: true, approvalRequiredByDefault: true, toolsets: 'file,terminal' },
+  'umg.native.hermes.file_write': { risk: 'medium', directAllowed: true, approvalRequiredByDefault: true, toolsets: 'file,terminal' },
+  'umg.native.hermes.file_read': { risk: 'low', directAllowed: true, approvalRequiredByDefault: false, toolsets: 'file,terminal' },
+  'umg.native.hermes.shell_command': { risk: 'high', directAllowed: false, approvalRequiredByDefault: true, toolsets: 'terminal' },
+  'umg.native.hermes.project_edit': { risk: 'high', directAllowed: false, approvalRequiredByDefault: true, toolsets: 'file,terminal' },
+  'umg.native.hermes.runtime_task': { risk: 'medium', directAllowed: true, approvalRequiredByDefault: true, toolsets: 'file,terminal,browser,web' }
+};
+
+export function validateNativeActionRequest(request) {
+  if (!isRecord(request)) return { ok: false, status: 400, error: 'Native Hermes action request must be JSON.' };
+  if (!String(request.actionId || '').trim()) return { ok: false, status: 400, error: 'actionId is required.' };
+  if (!String(request.capabilityId || '').trim()) return { ok: false, status: 400, error: 'capabilityId is required.' };
+  if (!String(request.sleeveId || '').trim()) return { ok: false, status: 400, error: 'sleeveId is required.' };
+  if (!String(request.prompt || '').trim()) return { ok: false, status: 400, error: 'prompt is required.' };
+  if (!['direct', 'approval', 'observe', 'blocked'].includes(request.mode)) return { ok: false, status: 400, error: 'mode must be direct, approval, observe, or blocked.' };
+  if (!['low', 'medium', 'high', 'irreversible'].includes(request.risk)) return { ok: false, status: 400, error: 'risk must be low, medium, high, or irreversible.' };
+  if (!NATIVE_CAPABILITY_POLICIES[request.capabilityId]) return { ok: false, status: 400, error: `Unsupported native Hermes capability: ${request.capabilityId}` };
+  return { ok: true };
+}
+
+function nativeActionTraceEvent(request, eventType, state, label, extra = {}) {
+  return {
+    traceId: request.traceId || request.actionId,
+    eventId: `${request.actionId}.${eventType}.${Date.now()}`,
+    timestamp: Date.now(),
+    eventType,
+    scopeKind: eventType.includes('approval') || eventType.includes('blocked') ? 'gate' : eventType.includes('file') || eventType.includes('artifact') ? 'tool' : 'neoblock',
+    sleeveId: request.sleeveId,
+    neoStackId: request.neoStackId,
+    neoBlockId: request.neoBlockId,
+    moltBlockId: request.moltId,
+    gateId: request.gateId,
+    toolId: request.capabilityId,
+    status: state,
+    state,
+    message: label,
+    label,
+    rawHermesPayload: { actionId: request.actionId, capabilityId: request.capabilityId, mode: request.mode, ...extra }
+  };
+}
+
+function buildNativeActionResult(request, status, summary, extra = {}) {
+  const traceEvents = [
+    nativeActionTraceEvent(request, 'tool_block_resolved', 'processing', `Resolved MetaMOLT Tool Block for ${request.capabilityId}`),
+    nativeActionTraceEvent(request, 'action_request_created', status === 'failed' ? 'error' : status === 'blocked' ? 'blocked' : status === 'approval_required' ? 'attention' : status === 'observed' ? 'queued' : 'processing', `Native Hermes action request created for ${request.capabilityId}`)
+  ];
+  if (status === 'approval_required') traceEvents.push(nativeActionTraceEvent(request, 'action_approval_required', 'attention', `${request.capabilityId} requires approval before execution.`));
+  if (status === 'blocked') traceEvents.push(nativeActionTraceEvent(request, 'action_blocked', 'blocked', `${request.capabilityId} blocked by action policy.`));
+  if (status === 'failed') traceEvents.push(nativeActionTraceEvent(request, 'action_failed', 'error', `${request.capabilityId} failed.`));
+  return {
+    actionId: request.actionId,
+    capabilityId: request.capabilityId,
+    mode: request.mode,
+    status,
+    externalActionTaken: false,
+    summary,
+    artifacts: [],
+    traceEvents,
+    ...extra
+  };
+}
+
+export function buildNativeHermesActionPrompt(request) {
+  const expectedOutputs = Array.isArray(request.expectedOutputs) ? request.expectedOutputs : [];
+  return [
+    'You are native Hermes executing one UMG-approved action request using your normal tools.',
+    'Do the requested action for real if it is low-risk or already approved by the supplied request. Do not fake file paths or success.',
+    'After execution, return a short JSON summary only. The bridge will independently verify expected output paths when supplied.',
+    JSON.stringify({
+      actionId: request.actionId,
+      capabilityId: request.capabilityId,
+      mode: request.mode,
+      risk: request.risk,
+      prompt: request.prompt,
+      workingDirectory: request.workingDirectory,
+      expectedOutputs,
+      userApproved: request.userApproved === true,
+      outputContract: { createdFiles: expectedOutputs, externalActionTaken: true, noFakeSuccess: true }
+    }, null, 2)
+  ].join('\n\n');
+}
+
+export function runNativeHermesActionCli(request, env = process.env, spawnFn = spawn, timeoutMs = 120000) {
+  const policy = NATIVE_CAPABILITY_POLICIES[request.capabilityId] || {};
+  const prompt = buildNativeHermesActionPrompt(request);
+  const toolsets = env.HERMES_NATIVE_ACTION_TOOLSETS || policy.toolsets || 'file,terminal';
+  const childEnv = { ...env, HERMES_RUNTIME_TOOLSETS: toolsets };
+  return runHermesRuntimeCli(prompt, childEnv, spawnFn, timeoutMs);
+}
+
+function statOutputPaths(paths) {
+  return uniqueStrings(paths).map((filePath) => {
+    try {
+      const stat = fs.statSync(filePath);
+      return { path: filePath, exists: true, mtimeMs: stat.mtimeMs, size: stat.size, isFile: stat.isFile() };
+    } catch {
+      return { path: filePath, exists: false };
+    }
+  });
+}
+
+function windowsPathToWslPath(windowsPath) {
+  const normalized = String(windowsPath || '').trim().replace(/\\/g, '/');
+  const match = normalized.match(/^([A-Za-z]):\/(.*)$/);
+  if (!match) return normalized;
+  return `/mnt/${match[1].toLowerCase()}/${match[2]}`;
+}
+
+function detectWindowsDesktopWslPath(env = process.env) {
+  if (env.UMG_WINDOWS_DESKTOP_WSL_PATH) return { path: env.UMG_WINDOWS_DESKTOP_WSL_PATH.replace(/\/$/, ''), source: 'env' };
+  try {
+    const desktop = execFileSync('powershell.exe', ['-NoProfile', '-Command', '[Environment]::GetFolderPath(\'Desktop\')'], { encoding: 'utf8', timeout: 5000 }).trim();
+    if (desktop) return { path: windowsPathToWslPath(desktop).replace(/\/$/, ''), source: 'powershell' };
+  } catch {}
+  return { path: '/mnt/c/Users/Magne/OneDrive/Desktop', source: 'fallback' };
+}
+
+function inferDesktopNoteOutputFromPrompt(request, env = process.env) {
+  const text = String(request?.prompt || '').toLowerCase();
+  if (!text.includes('desktop') || !(request?.capabilityId === 'umg.native.hermes.note_create' || request?.capabilityId === 'umg.native.hermes.file_write')) return undefined;
+  const nameMatch = String(request.prompt || '').match(/(?:as|named|called)\s+[“\"]?([a-zA-Z0-9._-]+)[”\"]?/i);
+  const base = (nameMatch?.[1] || 'umg-hermes-native-test').replace(/\.txt$/i, '');
+  const desktop = detectWindowsDesktopWslPath(env);
+  return { path: `${desktop.path}/${base}.txt`, source: desktop.source };
+}
+
+function withInferredExpectedOutputs(request, env = process.env) {
+  if (Array.isArray(request.expectedOutputs) && request.expectedOutputs.length) return { request, pathSource: 'request' };
+  const inferred = inferDesktopNoteOutputFromPrompt(request, env);
+  if (!inferred) return { request, pathSource: 'none' };
+  return { request: { ...request, expectedOutputs: [inferred.path], pathResolutionSource: inferred.source }, pathSource: inferred.source };
+}
+
+function hasDirectPermission(request, env = process.env) {
+  const policy = NATIVE_CAPABILITY_POLICIES[request.capabilityId];
+  if (!policy || request.mode !== 'direct') return false;
+  if (request.risk === 'irreversible') return false;
+  if (['high'].includes(request.risk) && request.userApproved !== true) return false;
+  if (request.risk === 'medium' && policy.approvalRequiredByDefault && request.userApproved !== true && env.HERMES_NATIVE_ALLOW_MEDIUM_DIRECT !== 'true') return false;
+  return policy.directAllowed === true || request.userApproved === true;
+}
+
+export async function buildNativeActionBridgeResponse(inputRequest, env = process.env, nativePost = runNativeHermesActionCli) {
+  const inferredRequest = withInferredExpectedOutputs(inputRequest || {}, env);
+  const request = inferredRequest.request;
+  const validation = validateNativeActionRequest(request);
+  if (!validation.ok) return jsonResponse(validation.status, buildNativeActionResult(request || {}, 'failed', validation.error, { error: validation.error }), undefined);
+  if (request.mode === 'observe') return jsonResponse(200, buildNativeActionResult(request, 'observed', `Observed native Hermes action only; no execution occurred for ${request.capabilityId}.`), undefined);
+  if (request.mode === 'blocked') return jsonResponse(200, buildNativeActionResult(request, 'blocked', `${request.capabilityId} blocked by UMG action policy.`), undefined);
+  if (request.mode === 'approval' || !hasDirectPermission(request, env)) {
+    return jsonResponse(200, buildNativeActionResult(request, 'approval_required', `${request.capabilityId} requires explicit approval before native Hermes execution.`), undefined);
+  }
+  const before = statOutputPaths(Array.isArray(request.expectedOutputs) ? request.expectedOutputs : []);
+  try {
+    const timeoutMs = Number(env.HERMES_NATIVE_ACTION_TIMEOUT_MS || 120000);
+    const hermes = await nativePost(request, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 120000);
+    const after = statOutputPaths(Array.isArray(request.expectedOutputs) ? request.expectedOutputs : []);
+    const createdFiles = after.filter((entry) => entry.exists && !before.find((pre) => pre.path === entry.path && pre.exists)).map((entry) => entry.path);
+    const modifiedFiles = after.filter((entry) => entry.exists && before.find((pre) => pre.path === entry.path && pre.exists && pre.mtimeMs !== entry.mtimeMs)).map((entry) => entry.path);
+    const externalActionTaken = createdFiles.length > 0 || modifiedFiles.length > 0 || request.capabilityId === 'umg.native.hermes.shell_command';
+    if ((request.capabilityId === 'umg.native.hermes.note_create' || request.capabilityId === 'umg.native.hermes.file_write') && !externalActionTaken) {
+      return jsonResponse(502, buildNativeActionResult(request, 'failed', 'Hermes CLI returned without producing the expected file output.', { stdout: hermes.text || '', commandOutput: hermes.text || '', error: 'Expected file output was not created or modified.' }), undefined);
+    }
+    const traceEvents = [
+      ...buildNativeActionResult(request, 'executed', `${request.capabilityId} executed through native Hermes CLI.`).traceEvents,
+      nativeActionTraceEvent(request, 'action_executed', 'complete', `${request.capabilityId} executed through native Hermes CLI.`),
+      ...createdFiles.map((filePath) => nativeActionTraceEvent(request, 'file_created', 'complete', `File created: ${filePath}`, { filePath })),
+      ...modifiedFiles.map((filePath) => nativeActionTraceEvent(request, 'file_modified', 'complete', `File modified: ${filePath}`, { filePath })),
+      ...[...createdFiles, ...modifiedFiles].map((filePath) => nativeActionTraceEvent(request, 'artifact_created', 'complete', `Artifact recorded: ${filePath}`, { filePath }))
+    ];
+    return jsonResponse(200, {
+      actionId: request.actionId,
+      capabilityId: request.capabilityId,
+      mode: request.mode,
+      status: 'executed',
+      externalActionTaken,
+      createdFiles,
+      modifiedFiles,
+      pathResolutionSource: inferredRequest.pathSource,
+      commandOutput: hermes.text || '',
+      stdout: hermes.text || '',
+      stderr: hermes.stderr || '',
+      summary: `${request.capabilityId} executed through native Hermes CLI.${createdFiles.length ? ` Created: ${createdFiles.join(', ')}` : ''}${modifiedFiles.length ? ` Modified: ${modifiedFiles.join(', ')}` : ''}`,
+      artifacts: [...createdFiles, ...modifiedFiles].map((filePath) => ({ kind: 'file', uri: filePath, path: filePath, sourceCapability: request.capabilityId, externalActionTaken: true })),
+      traceEvents
+    }, undefined);
+  } catch (error) {
+    const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';
+    return jsonResponse(502, buildNativeActionResult(request, 'failed', `Hermes native action CLI failed.${stderr ? ` ${truncateText(stderr, 220)}` : ''}`, { error: error?.message || String(error), stderr }), undefined);
+  }
 }
 
 function firstContinuationTarget(request) {
@@ -942,7 +1138,7 @@ export function createRuntimeBridgeServer(env = process.env) {
     const origin = req.headers.origin;
     const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
 
-    if (requestUrl.pathname !== RUNTIME_PATH && requestUrl.pathname !== CUSTOM_SLEEVE_GENERATION_PATH) {
+    if (requestUrl.pathname !== RUNTIME_PATH && requestUrl.pathname !== CUSTOM_SLEEVE_GENERATION_PATH && requestUrl.pathname !== NATIVE_ACTION_PATH) {
       writeNodeResponse(res, jsonResponse(404, { status: 'error', finalOutput: 'Hermes runtime bridge route not found.' }, origin), origin);
       return;
     }
@@ -970,9 +1166,11 @@ export function createRuntimeBridgeServer(env = process.env) {
       }
       const response = requestUrl.pathname === CUSTOM_SLEEVE_GENERATION_PATH
         ? await buildCustomSleeveGenerationResponse(parsed, env)
-        : await buildRuntimeBridgeResponse(parsed, env);
+        : requestUrl.pathname === NATIVE_ACTION_PATH
+          ? await buildNativeActionBridgeResponse(parsed, env)
+          : await buildRuntimeBridgeResponse(parsed, env);
       writeNodeResponse(res, response, origin);
-      logSafe(requestUrl.pathname === CUSTOM_SLEEVE_GENERATION_PATH ? 'hermes_custom_sleeve_generation_post' : 'hermes_runtime_bridge_post', { status: response.status, durationMs: Date.now() - started, executionMode: parsed.executionMode, selectedMode: parsed.selectedMode, traceId: parsed.traceId, requestId: parsed.requestId });
+      logSafe(requestUrl.pathname === CUSTOM_SLEEVE_GENERATION_PATH ? 'hermes_custom_sleeve_generation_post' : requestUrl.pathname === NATIVE_ACTION_PATH ? 'hermes_native_action_post' : 'hermes_runtime_bridge_post', { status: response.status, durationMs: Date.now() - started, executionMode: parsed.executionMode, selectedMode: parsed.selectedMode, actionMode: parsed.mode, capabilityId: parsed.capabilityId, traceId: parsed.traceId, requestId: parsed.requestId, actionId: parsed.actionId });
     } catch (error) {
       const status = error?.status === 413 ? 413 : 500;
       const text = status === 413 ? 'Hermes runtime bridge request body is too large.' : 'Hermes runtime bridge internal error.';
