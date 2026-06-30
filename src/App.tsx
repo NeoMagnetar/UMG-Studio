@@ -46,6 +46,7 @@ import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
 import { createHermesRuntimeRequestFromManifest, getHermesRuntimeAdapterConfigFromEnv, getHermesRuntimeConnectionSummary, runCompiledManifestThroughHermes, validateHermesRuntimeRequest } from './lib/umg/hermesRuntimeExecution';
 import { buildRuntimeGeometryManifest } from './lib/umg/runtimeGeometryProjection';
 import { buildSleeveArchitectPlan } from './lib/umg/sleeveArchitectPlanner';
+import { buildArchitectRuntimeExecution } from './lib/umg/sleeveArchitectExecution';
 import { SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
@@ -1750,6 +1751,104 @@ export default function App() {
     setStatus(decision === 'accepted' ? 'Draft accepted into sleeve-local assembly plan only; source library was not modified.' : 'Draft discarded in assembly plan; source library was not modified.');
   };
 
+  const buildAndRunArchitectMode = async () => {
+    if (!sleeveArchitectPlan || !publicBusinessMap) {
+      setStatus('Analyze a prompt before running Architect Mode.');
+      return;
+    }
+    const execution = buildArchitectRuntimeExecution({ plan: sleeveArchitectPlan, businessMap: publicBusinessMap, businessInput: publicBusinessInput });
+    setSleeveArchitectPlan(execution.plan);
+    setBusinessAutomationCoreBuild(undefined);
+    setBlockMatchPlan(execution.blockMatchPlan);
+    setDraftReviewState(execution.plan.generatedDrafts);
+    setSleeveAssemblyPlan(execution.assemblyPlan);
+    setCompileCandidate(execution.compileCandidate);
+    clearCompilerRuntimeState();
+    if (!execution.policy.allowCompile || execution.compileCandidate.compileStatus !== 'ready_for_compiler') {
+      setStatus('Architect execution policy blocked compile.');
+      return;
+    }
+    try {
+      const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate: execution.compileCandidate, assemblyPlan: execution.assemblyPlan, blockMatchPlan: execution.blockMatchPlan, businessMap: publicBusinessMap, businessInput: publicBusinessInput });
+      const validationErrors = validateCompilerInput(compilerInput);
+      const sleeveInputPreview = buildCompilerSleeveInput(compilerInput);
+      const request = createCompilerRequest(compilerInput);
+      setCompilerRequestPreview(request);
+      if (validationErrors.length) {
+        setCompilerResult({ status: 'error', errors: validationErrors.map((message) => ({ code: 'UMG_COMPILER_INPUT_INVALID', message })), warnings: sleeveInputPreview.warnings, raw: { compilerSleeveInputPreview: sleeveInputPreview, architectExecution: execution } });
+        setStatus('Architect Mode generated a runtime Sleeve, but compiler input validation failed. No compiler request was sent.');
+        return;
+      }
+      const compilerConfig = getCompilerAdapterConfigFromEnv();
+      if (!compilerConfig.enabled || !compilerConfig.endpoint) {
+        setCompilerResult({ status: 'not_configured', errors: [{ code: 'UMG_COMPILER_ENDPOINT_NOT_CONFIGURED', message: 'UMG compiler endpoint is not configured.' }], warnings: sleeveInputPreview.warnings, raw: { compilerSleeveInputPreview: sleeveInputPreview, architectExecution: execution } });
+        setStatus('Architect runtime Sleeve and CompileCandidate created. UMG compiler endpoint is not configured, so no compiler or Hermes call was made.');
+        return;
+      }
+      setStatus(`Architect route ${execution.route}: compiling runtime-session Sleeve with actual UMG compiler…`);
+      const compilerResult = await compileWithRealCompiler(request, compilerConfig);
+      const mergedResult = { ...compilerResult, warnings: [...sleeveInputPreview.warnings, ...compilerResult.warnings] };
+      setCompilerResult(mergedResult);
+      if (mergedResult.status !== 'ok' || !mergedResult.manifest) {
+        setStatus('Architect Mode compiler call completed without a runtime manifest. Hermes was not called.');
+        return;
+      }
+      setCompiledRuntimeManifest(mergedResult.manifest);
+      const hermesRequest = createHermesRuntimeRequestFromManifest({
+        compiledRuntimeManifest: mergedResult.manifest,
+        userGoal: publicGoal || publicBusinessInput?.text || 'Run Architect Mode UMG Sleeve',
+        businessInput: publicBusinessInput,
+        executionMode: execution.policy.allowHermesTools ? 'approvalRequired' : 'dryRun',
+        approvalMode: 'manual',
+        traceId: `architect_hermes_trace_${execution.compileCandidate.id}`
+      });
+      setHermesRequestPreview(hermesRequest);
+      if (!execution.policy.allowHermesRun) {
+        setStatus('Actual UMG compiler succeeded. Architect execution policy blocked Hermes run.');
+        return;
+      }
+      const hermesValidation = validateHermesRuntimeRequest(hermesRequest);
+      setHermesRuntimeWarnings(hermesValidation.warnings);
+      if (!hermesValidation.valid) {
+        setHermesRuntimeErrors(hermesValidation.errors);
+        setStatus('Architect Hermes runtime request validation failed. No Hermes call was made.');
+        return;
+      }
+      const hermesConfig = getHermesRuntimeAdapterConfigFromEnv();
+      if (!hermesConfig.enabled || !hermesConfig.endpoint) {
+        setHermesRuntimeResult({
+          status: 'error',
+          finalOutput: 'Hermes runtime endpoint is not configured.',
+          trace: [],
+          toolCalls: [],
+          blockedCalls: [],
+          approvalRequests: [],
+          errors: [{ code: 'HERMES_ENDPOINT_NOT_CONFIGURED', message: 'Hermes runtime endpoint is not configured.', traceId: hermesRequest.traceId }],
+          artifacts: [],
+          nextSuggestedActions: ['Set VITE_HERMES_RUNTIME_ENDPOINT to a real Hermes runtime endpoint.']
+        });
+        setHermesRuntimeVisualState(undefined);
+        setHermesRuntimeErrors(['HERMES_ENDPOINT_NOT_CONFIGURED: Hermes runtime endpoint is not configured.']);
+        setStatus('Actual UMG compiler succeeded. Hermes runtime endpoint is not configured, so no Hermes call was made.');
+        return;
+      }
+      setIsHermesRunning(true);
+      setHermesRuntimeErrors([]);
+      setStatus('Sending Architect Mode compiled runtime manifest to configured Hermes runtime endpoint…');
+      const hermesExecution = await runCompiledManifestThroughHermes({ request: hermesRequest, config: hermesConfig });
+      setHermesRuntimeResult(hermesExecution.result);
+      setHermesRuntimeVisualState(hermesExecution.visualState);
+      setHermesRuntimeWarnings([...hermesValidation.warnings, ...hermesExecution.warnings]);
+      setHermesRuntimeErrors(hermesExecution.result.errors.map((error) => `${error.code}: ${error.message}`));
+      setStatus(hermesExecution.result.trace.length ? 'Architect Mode Hermes returned real runtime trace events; trace ingested into visual state.' : 'Architect Mode Hermes returned a real response but no runtime trace events.');
+    } catch (error) {
+      setCompilerResult({ status: 'error', errors: [{ code: 'ARCHITECT_EXECUTION_FAILED', message: error instanceof Error ? error.message : String(error), raw: error }], warnings: [] });
+      setStatus('Architect Mode build/compile/run failed.');
+    } finally {
+      setIsHermesRunning(false);
+    }
+  };
+
   const runActualUMGCompiler = async () => {
     if (!compileCandidate || !sleeveAssemblyPlan || !blockMatchPlan || !publicBusinessMap) {
       setStatus('Create a ready CompileCandidate before compiling with the UMG compiler.');
@@ -1891,6 +1990,7 @@ export default function App() {
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onRunBlockMatching={runBusinessAutomationBlockMatching}
       onReviewDraft={updateGeneratedDraftReview}
+      onRunArchitectExecution={buildAndRunArchitectMode}
       onCompileWithUMGCompiler={runActualUMGCompiler}
       onRunHermesRuntime={runHermesRuntimeFromManifest}
       onOpenStudio={() => openStudioShell('canvas')}
@@ -2125,6 +2225,7 @@ function PublicLandingShell({
   onCreateBusinessAutomationCore,
   onRunBlockMatching,
   onReviewDraft,
+  onRunArchitectExecution,
   onCompileWithUMGCompiler,
   onRunHermesRuntime,
   onOpenStudio,
@@ -2165,6 +2266,7 @@ function PublicLandingShell({
   onCreateBusinessAutomationCore: () => void;
   onRunBlockMatching: () => void;
   onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void;
+  onRunArchitectExecution: () => void;
   onCompileWithUMGCompiler: () => void;
   onRunHermesRuntime: () => void;
   onOpenStudio: () => void;
@@ -2199,7 +2301,7 @@ function PublicLandingShell({
     onOpenRuntime={onOpenRuntime}
     onOpenDebug={onOpenDebug}
   >
-    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onOpenStudio={onOpenStudio} />}
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onOpenStudio={onOpenStudio} />}
   </HackathonLandingPage>;
 }
 
@@ -2234,7 +2336,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onCompileWithUMGCompiler, onRunHermesRuntime, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onOpenStudio: () => void }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
@@ -2298,7 +2400,19 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, s
       </div>}
       <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
     </div>
-    {sleeveArchitectPlan && <SleeveArchitectReviewPanel plan={sleeveArchitectPlan} />}
+    {sleeveArchitectPlan && <div className="analysisPanel architectExecutionPanel">
+      <div className="publicSectionTitle"><span>06</span><div><b>Architect Live Execution</b><small>Primary path: build runtime-session Sleeve, compile, then run Hermes when configured.</small></div></div>
+      <SummaryRows rows={[
+        ['route', sleeveArchitectPlan.executionRoute],
+        ['policy', `${sleeveArchitectPlan.executionPolicy.executionMode} · approvals ${sleeveArchitectPlan.executionPolicy.approvalMode}`],
+        ['library save', sleeveArchitectPlan.executionPolicy.allowLibrarySave ? 'allowed only by explicit approval' : 'disabled'],
+        ['trust', sleeveArchitectPlan.executionPolicy.generatedContentTrustLevel],
+        ['tool capabilities', sleeveArchitectPlan.toolCapabilityNeeds.map((tool) => tool.capability).join(', ') || 'none declared']
+      ]} />
+      <button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{isHermesRunning ? 'Hermes Running…' : 'Build Sleeve & Run Hermes'}</button>
+      <p>Generated architecture may execute in this runtime session but is not promoted to trusted library content. Review is optional/advanced and does not block compile/run.</p>
+    </div>}
+    {sleeveArchitectPlan && <details className="architectReviewAdvanced"><summary>Advanced inspection: Architect Plan Review Workspace</summary><SleeveArchitectReviewPanel plan={sleeveArchitectPlan} /></details>}
     {(businessAutomationCoreBuild || sleeveAssemblyPlan || compiledRuntimeManifest) && <HierarchicalRuntimeVisualizer
       instantiatedSleeve={businessAutomationCoreBuild}
       assemblyPlan={sleeveAssemblyPlan}

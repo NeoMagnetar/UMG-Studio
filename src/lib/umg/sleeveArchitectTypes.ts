@@ -10,6 +10,21 @@ export type SleeveArchitectureMode =
 
 export type ArchitectMoltRole = MOLTRole | 'gate_control' | 'strategy' | 'aim' | 'need' | 'use_case';
 
+export type ArchitectExecutionRoute = 'load_existing_sleeve' | 'modify_existing_sleeve' | 'create_new_sleeve';
+
+export type ArchitectExecutionPolicy = {
+  allowCompile: boolean;
+  allowHermesRun: boolean;
+  allowHermesTools: boolean;
+  allowExternalToolExecution: boolean;
+  requireConfirmationForIrreversibleActions: boolean;
+  allowLibrarySave: boolean;
+  generatedContentPersistence: 'runtime_session';
+  generatedContentTrustLevel: 'runtime_ephemeral_until_saved';
+  executionMode: 'live_or_approvalRequired' | 'approvalRequired' | 'dryRun';
+  approvalMode: 'manual' | 'beforeHighRisk' | 'beforeToolUse';
+};
+
 export type ArchitectNeoStackProposal = {
   id: string;
   title: string;
@@ -65,6 +80,8 @@ export type LegacyRoleMapping = {
 export type SleeveArchitectPlan = {
   id: string;
   mode: SleeveArchitectureMode;
+  executionRoute: ArchitectExecutionRoute;
+  executionPolicy: ArchitectExecutionPolicy;
   sourcePrompt: string;
   uploadedContextSummary: string;
   requestedAgentType?: BusinessInput['requestedAgentType'];

@@ -3,6 +3,7 @@ import type { GeneratedBlockDraft } from './blockMatchingTypes';
 import type { MOLTRole } from './types';
 import { searchBlocksForArchitectPlan } from './semanticBlockSearch';
 import type { BuildSleeveArchitectPlanInput, SleeveArchitectPlan, SleeveArchitectureMode } from './sleeveArchitectTypes';
+import { defaultArchitectExecutionPolicy } from './sleeveArchitectExecution';
 import { normalizeLegacyMoltRole } from './legacySleeveImport';
 
 const coreRoles: MOLTRole[] = ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -57,6 +58,10 @@ function buildToolNeeds(text: string, input: BusinessInput) {
   if (/inventory|restock|item/.test(lower)) add('inventory_update_request', 'Needed to prepare restock/inventory update requests for review.');
   if (/audit|log|record/.test(lower)) add('audit_log_write', 'Needed to write reviewable audit records after approval.');
   if (/report|metrics|dashboard/.test(lower)) add('report_generate', 'Needed to generate return/refund metrics and status reports.');
+  if (/return|refund|e-?commerce|online retail/.test(lower)) {
+    add('inventory_update_request', 'Needed to prepare restock/inventory update requests for review.');
+    add('report_generate', 'Needed to generate return/refund metrics and status reports.');
+  }
   input.toolsAvailable.forEach((tool) => add(tool.name.replace(/\s+/g, '_').toLowerCase(), tool.capability));
   return Array.from(declared.entries()).map(([capability, whyDeclared], index) => ({ id: `tool_capability_${index + 1}`, capability, whyDeclared, executionEnabled: false as const }));
 }
@@ -119,7 +124,7 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
   ] : seed.map(([id, title, reason]) => [id, title.replace('Stack', 'Coordinator'), reason]);
   const proposedNeoBlocks = blockTitles.map(([stackKey, blockTitle, purpose], index) => {
     const stack = proposedNeoStacks.find((candidate) => candidate.id.includes(`.${stackKey}`)) ?? proposedNeoStacks[index % proposedNeoStacks.length];
-    return { id: `draft.neoblock.${sleeveSlug}.${slug(blockTitle)}`, title: blockTitle, parentNeoStackId: stack.id, purpose, requiredMoltRoles: ['directive', 'instruction', 'subject', 'blueprint'] as MOLTRole[], draftOnly: true };
+    return { id: `draft.neoblock.${sleeveSlug}.${slug(blockTitle)}`, title: blockTitle, parentNeoStackId: stack.id, purpose, requiredMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'blueprint'] as MOLTRole[], draftOnly: true };
   });
   const proposedMoltBlocks = proposedNeoBlocks.flatMap((block) => block.requiredMoltRoles.map((role) => ({
     id: `draft.molt.${slug(block.title)}.${role}`,
@@ -155,9 +160,12 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
     ...proposedMoltBlocks.slice(0, 8).map((molt, index) => draft(`draft_arch_molt_${index + 1}`, 'molt', molt.title, molt.summary, molt.parentNeoBlockId, molt.role as GeneratedBlockDraft['role'])),
     ...proposedGates.slice(0, 5).map((gate, index) => draft(`draft_arch_gate_${index + 1}`, 'gate', gate.title, gate.reason, gate.controlledNeoBlockId ?? title))
   ];
+  const executionRoute = mode === 'demo_template_mode' ? 'load_existing_sleeve' as const : matched.length ? 'modify_existing_sleeve' as const : 'create_new_sleeve' as const;
   return {
     id: `architect_plan_${Date.now()}`,
     mode,
+    executionRoute,
+    executionPolicy: defaultArchitectExecutionPolicy,
     sourcePrompt: args.businessInput.text,
     uploadedContextSummary: args.businessInput.documents.length ? `${args.businessInput.documents.length} uploaded/pasted context item(s) captured locally.` : 'No uploaded context parsed yet.',
     requestedAgentType: args.businessInput.requestedAgentType,
@@ -185,10 +193,10 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
     legacyRoleMappings: ['TRG', 'STRAT', 'AIM', 'NEED', 'USE', 'DIR', 'INST', 'SUBJ', 'PHIL', 'BP', 'PRIM'].map(normalizeLegacyMoltRole),
     confidence: Number(Math.min(0.86, Math.max(0.54, args.businessMap.confidence + (matched.length ? 0.08 : 0))).toFixed(2)),
     warnings: [
-      mode === 'demo_template_mode' ? 'Current public demo is Seed Template Mode; it proves runtime but is not a fully custom Sleeve.' : 'Architect Plan is draft-only and must be reviewed before compile.',
+      mode === 'demo_template_mode' ? 'Current public demo is Seed Template Mode; it proves runtime but is not a fully custom Sleeve.' : 'Architect Plan is execution-ready as runtime-session architecture; optional review does not block compile/run.',
       'Search is currently limited to loaded/local blocks.',
       'No source library writes are performed.',
-      'Tool capabilities are declarations only; no tools are executed in Architect Mode.'
+      'Tool capabilities are passed to Hermes as capability declarations; configured non-destructive tools may run, irreversible actions require confirmation.'
     ]
   };
 }

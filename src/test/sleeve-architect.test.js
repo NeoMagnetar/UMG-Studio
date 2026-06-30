@@ -5,6 +5,10 @@ import { createBusinessInputFromPublicIntake, analyzeBusinessInput } from '../li
 import { SleeveArchitectReviewPanel, summarizeArchitectReview } from '../components/SleeveArchitectReviewPanel';
 import { getBusinessAutomationCoreSleeve } from '../lib/umg/businessAutomationCoreSleeve';
 import { buildSleeveArchitectPlan } from '../lib/umg/sleeveArchitectPlanner';
+import { buildArchitectRuntimeExecution, defaultArchitectExecutionPolicy } from '../lib/umg/sleeveArchitectExecution';
+import { createCompilerInputFromCompileCandidate, createCompilerRequest, validateCompilerInput } from '../lib/umg/compileCandidateAdapter';
+import { createHermesRuntimeRequestFromManifest } from '../lib/umg/hermesRuntimeExecution';
+import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapter';
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
 
@@ -119,5 +123,47 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(reviewed.needsEditCount).toBe(1);
     expect(reviewed.compileGateLabel).toMatch(/compile remains a separate/);
     expect(plan.generatedDrafts.every((draft) => draft.metadata?.sourceLibraryWrite === false)).toBe(true);
+  });
+
+  it('creates an executable runtime-session CompileCandidate without mandatory review', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    expect(['create_new_sleeve', 'modify_existing_sleeve']).toContain(execution.route);
+    expect(execution.compileCandidate.compileStatus).toBe('ready_for_compiler');
+    expect(execution.assemblyPlan.compileStatus).toBe('compile_ready');
+    expect(execution.runtimeSleeve.source).toBe('session');
+    expect(execution.runtimeSleeve.metadata.sourceLibraryWrite).toBe(false);
+    expect(execution.runtimeSleeve.metadata.noTrustedLibraryPromotion).toBe(true);
+    expect(execution.compileCandidate.warnings.join(' ')).toMatch(/does not require manual review/);
+    expect(execution.compileCandidate.traceMetadata.noFakeTrace).toBe(true);
+  });
+
+  it('converts Architect execution to compiler request and Hermes tool capability declarations', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate: execution.compileCandidate, assemblyPlan: execution.assemblyPlan, blockMatchPlan: execution.blockMatchPlan, businessMap: map, businessInput: input });
+    expect(validateCompilerInput(compilerInput)).toEqual([]);
+    const request = createCompilerRequest(compilerInput);
+    expect(request.input.requiredTools).toEqual(expect.arrayContaining([
+      'order_lookup',
+      'customer_message_draft',
+      'refund_prepare_or_request',
+      'inventory_update_request',
+      'audit_log_write',
+      'report_generate'
+    ]));
+    const compilerResult = normalizeCompilerResponseToManifest({
+      ok: true,
+      result: { runtime: { sleeveId: execution.runtimeSleeve.id, sleeveName: execution.runtimeSleeve.title, promptSpec: { neoBlockPrompts: [] } }, executionPlan: [], toolPolicy: undefined }
+    }, request);
+    expect(compilerResult.status).toBe('ok');
+    const hermesRequest = createHermesRuntimeRequestFromManifest({ compiledRuntimeManifest: compilerResult.manifest, userGoal: input.text, businessInput: input, executionMode: 'approvalRequired', approvalMode: defaultArchitectExecutionPolicy.approvalMode });
+    expect(hermesRequest.compiledSleeveManifest.toolPolicy.allowedTools).toEqual(expect.arrayContaining(['order_lookup', 'refund_prepare_or_request']));
+    expect(hermesRequest.executionMode).toBe('approvalRequired');
+    expect(hermesRequest.approvalMode).toBe('manual');
   });
 });
