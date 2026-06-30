@@ -30,6 +30,17 @@ const genericStacks = [
   ['audit', 'Reporting & Audit Stack', 'Captures final outputs, logs, and status reports.']
 ] as const;
 
+const greekBusinessPlanStacks = [
+  ['philosophical_principle_intake', 'Philosophical Principle Intake Stack', 'Captures Greek philosophy principles, audience, plan type, and interpretive constraints.'],
+  ['business_model_discovery', 'Business Model Discovery Stack', 'Frames venture model, offer, customer, revenue logic, and strategic assumptions.'],
+  ['market_polis_context', 'Market and Polis Context Stack', 'Maps market, stakeholders, civic context, competition, and positioning.'],
+  ['ethics_telos_value', 'Ethics / Telos / Value Proposition Stack', 'Connects telos, virtue, value proposition, customer benefit, and mission coherence.'],
+  ['strategy_operations_design', 'Strategy and Operations Design Stack', 'Designs operating model, milestones, channels, teams, and execution plan.'],
+  ['financial_viability', 'Financial Assumptions and Viability Stack', 'Builds assumptions, revenue drivers, costs, scenarios, and viability checks.'],
+  ['plan_narrative_assembly', 'Plan Narrative Assembly Stack', 'Assembles executive summary, market analysis, operations, financials, and final plan narrative.'],
+  ['review_critique_finalization', 'Review / Critique / Finalization Stack', 'Reviews the plan through Socratic critique, risk checks, and final polish.']
+] as const;
+
 function slug(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 64) || 'custom_sleeve';
 }
@@ -44,6 +55,7 @@ function combinedText(input: BusinessInput) {
 
 function detectDomain(text: string, map: BusinessMap) {
   const lower = text.toLowerCase();
+  if (/greek|philosophy|aristotle|plato|socratic|telos|virtue/.test(lower) && /business plan|plan template|business/.test(lower)) return 'Greek philosophy business plan generation';
   if (/return|refund|e-?commerce|online retail|order|purchase/.test(lower)) return 'ecommerce return and refund orchestration';
   return map.inferredIndustry || 'custom workflow architecture';
 }
@@ -58,6 +70,8 @@ function buildToolNeeds(text: string, input: BusinessInput) {
   if (/inventory|restock|item/.test(lower)) add('inventory_update_request', 'Needed to prepare restock/inventory update requests for review.');
   if (/audit|log|record/.test(lower)) add('audit_log_write', 'Needed to write reviewable audit records after approval.');
   if (/report|metrics|dashboard/.test(lower)) add('report_generate', 'Needed to generate return/refund metrics and status reports.');
+  if (/business plan|executive summary|market analysis|financial|operations|plan template/.test(lower)) add('report_generate', 'Needed to generate reviewable business plan sections and final plan reports.');
+  if (/greek|philosophy|aristotle|plato|socratic|telos|virtue/.test(lower)) add('philosophy_principle_apply', 'Needed to apply Greek philosophy principles as local reasoning guidance.');
   if (/return|refund|e-?commerce|online retail/.test(lower)) {
     add('inventory_update_request', 'Needed to prepare restock/inventory update requests for review.');
     add('report_generate', 'Needed to generate return/refund metrics and status reports.');
@@ -101,9 +115,10 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
   const text = combinedText(args.businessInput);
   const domainSummary = detectDomain(text, args.businessMap);
   const ecommerce = /return|refund|e-?commerce|online retail|purchase|order/.test(text.toLowerCase());
-  const seed = ecommerce ? ecommerceStacks : genericStacks;
+  const greekBusinessPlan = /greek|philosophy|aristotle|plato|socratic|telos|virtue/.test(text.toLowerCase()) && /business plan|plan template|business/.test(text.toLowerCase());
+  const seed = ecommerce ? ecommerceStacks : greekBusinessPlan ? greekBusinessPlanStacks : genericStacks;
   const mode: SleeveArchitectureMode = args.mode ?? (shouldUseArchitectMode(args.businessInput, args.businessMap) ? 'architect_mode' : 'demo_template_mode');
-  const title = ecommerce ? 'Customer Return & Refund Orchestration Sleeve' : `${titleCase(domainSummary)} Sleeve`;
+  const title = ecommerce ? 'Customer Return & Refund Orchestration Sleeve' : greekBusinessPlan ? 'Greek Philosophy Business Plan Generator Sleeve' : `${titleCase(domainSummary)} Sleeve`;
   const sleeveSlug = slug(title);
   const semanticTags = Array.from(new Set([domainSummary, ...args.businessMap.coreOperations, ...args.businessMap.automationCandidates, ...args.businessMap.externalTools, ...args.businessMap.outputsNeeded].flatMap((value) => value.toLowerCase().split(/[^a-z0-9]+/)).filter((value) => value.length > 2))).slice(0, 24);
   const searchQueries = [title, domainSummary, ...seed.map((stack) => stack[1]), ...args.businessMap.recurringWorkflows.map((workflow) => workflow.title)].slice(0, 12);
@@ -121,6 +136,15 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
     ['inventory_restock', 'Update Inventory / Restock Queue', 'Prepare inventory/restock queue update request.'],
     ['reporting_audit', 'Log Audit Trail', 'Persist reviewable decision, policy, and action log.'],
     ['reporting_audit', 'Generate Return Metrics', 'Summarize return/refund metrics for reporting.']
+  ] : greekBusinessPlan ? [
+    ['philosophical_principle_intake', 'Capture Greek Philosophy Principles', 'Identify the requested Greek philosophical lens, audience, and plan constraints.'],
+    ['business_model_discovery', 'Define Business Model Thesis', 'Translate the venture into offer, customer, revenue, and operating assumptions.'],
+    ['market_polis_context', 'Analyze Market and Polis Context', 'Frame market forces, stakeholders, competition, and civic/social context.'],
+    ['ethics_telos_value', 'Map Telos and Value Proposition', 'Connect purpose, virtue, customer value, and mission coherence.'],
+    ['strategy_operations_design', 'Draft Strategy and Operations Plan', 'Build channels, milestones, resources, team design, and operating model.'],
+    ['financial_viability', 'Create Financial Assumptions', 'Prepare reviewable revenue, cost, scenario, and viability assumptions.'],
+    ['plan_narrative_assembly', 'Assemble Professional Business Plan', 'Generate the executive summary and full plan narrative from section outputs.'],
+    ['review_critique_finalization', 'Run Socratic Critique and Final Review', 'Challenge assumptions, surface risks, and finalize recommendations.']
   ] : seed.map(([id, title, reason]) => [id, title.replace('Stack', 'Coordinator'), reason]);
   const proposedNeoBlocks = blockTitles.map(([stackKey, blockTitle, purpose], index) => {
     const stack = proposedNeoStacks.find((candidate) => candidate.id.includes(`.${stackKey}`)) ?? proposedNeoStacks[index % proposedNeoStacks.length];
@@ -131,7 +155,7 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
     title: `${block.title} ${titleCase(role)}`,
     role,
     parentNeoBlockId: block.id,
-    summary: `${titleCase(role)} content needed for ${block.title}.`,
+    summary: greekBusinessPlan ? `${titleCase(role)} guidance for ${block.title}: connect business-plan work to Greek philosophy, market reasoning, ethical purpose, operational clarity, and reviewable outputs.` : `${titleCase(role)} content needed for ${block.title}.`,
     draftOnly: true,
     matchedExistingBlockId: matched.find((match) => match.role === role)?.blockId
   })));

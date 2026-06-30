@@ -3,13 +3,9 @@ import './HackathonLandingPage.css';
 
 const pipelineStages = [
   'Intake',
-  'Analyze',
-  'Match',
-  'Draft',
-  'Assemble',
+  'Sleeve',
   'Compile',
-  'Hermes',
-  'Trace'
+  'Runtime'
 ];
 
 type SelectedLocalFile = {
@@ -91,7 +87,7 @@ export function HackathonLandingPage({
   const hasResults = Boolean(children);
   const stageClass = hasResults ? sleeveInstantiated ? ' hasResults hasSleeve' : ' hasResults isProcessing' : '';
   const promptSummary = goal.trim() || 'No prompt entered yet.';
-  const intakeStatus = sleeveInstantiated ? 'Sleeve runtime view ready' : templateSelected ? 'BusinessMap ready · template selected' : businessMapReady ? 'BusinessMap ready' : intakeSubmitted ? 'Compiling cognition · assembling sleeve' : 'Awaiting intake';
+  const intakeStatus = sleeveInstantiated ? 'Sleeve preview ready' : templateSelected ? 'Sleeve plan ready' : businessMapReady ? 'Intake understood' : intakeSubmitted ? 'Creating Sleeve' : 'Awaiting intake';
 
   return <div className={`hackathonLanding${stageClass}`}>
     <header className="hackathonHeader">
@@ -143,7 +139,7 @@ export function HackathonLandingPage({
               {selectedFiles.length > 1 && <button type="button" className="hackathonClearFiles" onClick={onFilesClear}>Clear All</button>}
             </div>}
           </div>
-          <button type="button" className="hackathonPrimary" onClick={onSubmit}>Start Cognition Upload</button>
+          <button type="button" className="hackathonPrimary" onClick={onSubmit}>Build UMG Sleeve</button>
         </> : <>
           <div className="hackathonCompactSource">
             <span>Source Prompt</span>
@@ -167,13 +163,9 @@ export function HackathonLandingPage({
 function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sleeveInstantiated, blockMatched, missingGenerated, assemblyReady, compilerComplete, hermesRunComplete, traceComplete }: { intakeSubmitted: boolean; businessMapReady: boolean; templateSelected: boolean; sleeveInstantiated: boolean; blockMatched: boolean; missingGenerated: boolean; assemblyReady: boolean; compilerComplete: boolean; hermesRunComplete: boolean; traceComplete: boolean }) {
   const isActive = (stage: string, index: number) => {
     if (index === 0) return intakeSubmitted;
-    if (stage === 'Analyze') return businessMapReady;
-    if (stage === 'Match') return blockMatched;
-    if (stage === 'Draft') return missingGenerated;
-    if (stage === 'Assemble') return assemblyReady || sleeveInstantiated;
+    if (stage === 'Sleeve') return businessMapReady || templateSelected || sleeveInstantiated || assemblyReady;
     if (stage === 'Compile') return compilerComplete;
-    if (stage === 'Hermes') return hermesRunComplete;
-    if (stage === 'Trace') return traceComplete;
+    if (stage === 'Runtime') return hermesRunComplete || traceComplete;
     return false;
   };
 

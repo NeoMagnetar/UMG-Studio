@@ -16,6 +16,7 @@ import { validateArchitectSleeveForCompiler } from '../lib/umg/sleeveArchitectCo
 import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapter';
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
+import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, redactSensitiveText } from '../lib/umg/basicModeScaffolds';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
 
@@ -292,6 +293,52 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(validation.primaryRolePresent).toBe(true);
     expect(validation.gatesAreControlRecords).toBe(true);
     expect(validation.oversaturatedNeoBlockIds).toEqual([]);
+  });
+
+  it('creates a domain-specific Greek philosophy business plan Sleeve for Basic Mode', () => {
+    const prompt = 'a business plan template generator that can create any kind of full professional business plan based on Greek philosophy principles';
+    const input = createBusinessInputFromPublicIntake({ goal: prompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    expect(plan.mode).toBe('architect_mode');
+    expect(plan.proposedSleeveTitle).toBe('Greek Philosophy Business Plan Generator Sleeve');
+    expect(plan.proposedNeoStacks.map((stack) => stack.title)).toEqual(expect.arrayContaining([
+      'Philosophical Principle Intake Stack',
+      'Business Model Discovery Stack',
+      'Market and Polis Context Stack',
+      'Ethics / Telos / Value Proposition Stack',
+      'Financial Assumptions and Viability Stack'
+    ]));
+    expect(plan.proposedNeoBlocks.map((block) => block.title)).toEqual(expect.arrayContaining([
+      'Capture Greek Philosophy Principles',
+      'Define Business Model Thesis',
+      'Create Financial Assumptions',
+      'Assemble Professional Business Plan'
+    ]));
+    expect(plan.proposedNeoBlocks.filter((block) => block.title.includes('Coordinator'))).toHaveLength(0);
+    expect(plan.proposedMoltBlocks.every((block) => !/content needed for/i.test(block.summary))).toBe(true);
+    expect(evaluateBasicSleeveQuality(plan).status).toBe('strong');
+  });
+
+  it('derives Basic capability palette statuses and unsafe connector boundaries', () => {
+    const prompt = 'Draft customer emails, send email later, and create a business plan using Greek philosophy principles.';
+    const input = createBusinessInputFromPublicIntake({ goal: prompt, context: 'contacts.csv with email,phone', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const content = classifyBasicContent({ text: 'email,phone\nada@example.com,555-1000', filenames: ['contacts.csv'] });
+    const palette = buildBasicCapabilityPalette({ plan, content, resolutions: [{ capabilityId: 'customer_message_draft', toolId: 'safe_customer_message_draft', label: 'Draft customer email', available: 'yes', source: 'configured', riskLevel: 'low', requiredApproval: false, safeForLiveExecution: true, executionPolicy: 'autoAllowed', reason: 'safe draft' }] });
+    expect(palette.map((card) => card.label)).toEqual(expect.arrayContaining(['Draft customer email', 'Read uploaded contact file', 'Send email', 'Generate executive summary', 'Apply Greek philosophy principles']));
+    expect(palette.find((card) => card.capabilityId === 'customer_message_draft')).toMatchObject({ status: 'available', riskLevel: 'low', externalActionTaken: false });
+    expect(palette.find((card) => card.capabilityId === 'email_send')).toMatchObject({ status: 'unsafe/high-risk', riskLevel: 'high', externalActionTaken: false });
+  });
+
+  it('classifies content and redacts secret-like material before Basic UI/runtime previews', () => {
+    const text = 'OpenAPI docs for connector. api_key=sk-testsecret123456789 contact email ada@example.com';
+    const classified = classifyBasicContent({ text, filenames: ['contacts.csv', 'openapi.yaml'] });
+    expect(classified.map((entry) => entry.kind)).toEqual(expect.arrayContaining(['api_documentation', 'contact_list', 'credential_or_secret']));
+    expect(classified.find((entry) => entry.kind === 'credential_or_secret')?.warnings.join(' ')).toMatch(/Sensitive material detected/);
+    expect(redactSensitiveText(text)).not.toContain('sk-testsecret123456789');
+    expect(classified.map((entry) => entry.redactedPreview).join('\n')).not.toContain('sk-testsecret123456789');
   });
 
 });

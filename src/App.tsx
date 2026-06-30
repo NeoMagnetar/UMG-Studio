@@ -49,6 +49,7 @@ import { buildRuntimeGeometryManifest } from './lib/umg/runtimeGeometryProjectio
 import { buildSleeveArchitectPlan } from './lib/umg/sleeveArchitectPlanner';
 import { buildArchitectRuntimeExecution } from './lib/umg/sleeveArchitectExecution';
 import { SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
+import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, StudioMode } from './lib/umg/basicModeScaffolds';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -237,6 +238,9 @@ export default function App() {
   const [publicContext, setPublicContext] = useState('');
   const [publicSelectedChip, setPublicSelectedChip] = useState<string | undefined>();
   const [publicSelectedFiles, setPublicSelectedFiles] = useState<PublicSelectedFile[]>([]);
+  const [studioMode, setStudioMode] = useState<StudioMode>('basic');
+  const [runtimeObserverOpen, setRuntimeObserverOpen] = useState(false);
+  const [runtimeObserverPrompt, setRuntimeObserverPrompt] = useState('');
   const [publicIntakeSubmitted, setPublicIntakeSubmitted] = useState(false);
   const [publicBusinessInput, setPublicBusinessInput] = useState<BusinessInput | undefined>();
   const [publicBusinessMap, setPublicBusinessMap] = useState<BusinessMap | undefined>();
@@ -2046,6 +2050,9 @@ export default function App() {
       isHermesRunning={isHermesRunning}
       toolCapabilityResolutions={toolCapabilityResolutions}
       pendingRuntimeApproval={pendingRuntimeApproval}
+      studioMode={studioMode}
+      runtimeObserverOpen={runtimeObserverOpen}
+      runtimeObserverPrompt={runtimeObserverPrompt}
       hermesEndpointConfigured={getHermesRuntimeAdapterConfigFromEnv().enabled}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
@@ -2067,6 +2074,9 @@ export default function App() {
       onCompileWithUMGCompiler={runActualUMGCompiler}
       onRunHermesRuntime={runHermesRuntimeFromManifest}
       onContinueRuntimeApproval={continueHermesRuntimeAfterApproval}
+      onStudioModeChange={setStudioMode}
+      onRuntimeObserverOpenChange={setRuntimeObserverOpen}
+      onRuntimeObserverPromptChange={setRuntimeObserverPrompt}
       onOpenStudio={() => openStudioShell('canvas')}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
@@ -2290,6 +2300,9 @@ function PublicLandingShell({
   isHermesRunning,
   toolCapabilityResolutions,
   pendingRuntimeApproval,
+  studioMode,
+  runtimeObserverOpen,
+  runtimeObserverPrompt,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
@@ -2305,6 +2318,9 @@ function PublicLandingShell({
   onCompileWithUMGCompiler,
   onRunHermesRuntime,
   onContinueRuntimeApproval,
+  onStudioModeChange,
+  onRuntimeObserverOpenChange,
+  onRuntimeObserverPromptChange,
   onOpenStudio,
   onOpenRuntime,
   onOpenDebug
@@ -2334,6 +2350,9 @@ function PublicLandingShell({
   isHermesRunning: boolean;
   toolCapabilityResolutions: ToolCapabilityResolution[];
   pendingRuntimeApproval?: PendingRuntimeApproval;
+  studioMode: StudioMode;
+  runtimeObserverOpen: boolean;
+  runtimeObserverPrompt: string;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -2349,6 +2368,9 @@ function PublicLandingShell({
   onCompileWithUMGCompiler: () => void;
   onRunHermesRuntime: () => void;
   onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void;
+  onStudioModeChange: (mode: StudioMode) => void;
+  onRuntimeObserverOpenChange: (open: boolean) => void;
+  onRuntimeObserverPromptChange: (value: string) => void;
   onOpenStudio: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
@@ -2381,7 +2403,16 @@ function PublicLandingShell({
     onOpenRuntime={onOpenRuntime}
     onOpenDebug={onOpenDebug}
   >
-    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <>
+      <div className="studioModeSwitch" aria-label="Basic and advanced studio mode">
+        <button type="button" className={studioMode === 'basic' ? 'hot' : ''} onClick={() => onStudioModeChange('basic')}>Basic</button>
+        <button type="button" className={studioMode === 'advanced' ? 'hot' : ''} onClick={() => onStudioModeChange('advanced')}>Advanced</button>
+        <small>{studioMode === 'basic' ? 'Clean Hermes-first Sleeve Builder + Runtime Observer.' : 'Developer / Architect inspection panels.'}</small>
+      </div>
+      {studioMode === 'basic'
+        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} />
+        : <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
+    </>}
   </HackathonLandingPage>;
 }
 
@@ -2414,6 +2445,64 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
       })}
     </div>
   </aside>;
+}
+
+function BasicReviewPanels({ businessInput, sleeveArchitectPlan, compilerResult, compiledRuntimeManifest, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void }) {
+  const quality = evaluateBasicSleeveQuality(sleeveArchitectPlan);
+  const classifications = classifyBasicContent({ text: [businessInput.text, ...businessInput.documents.map((doc) => doc.text)].join('\n'), filenames: businessInput.documents.map((doc) => doc.filename ?? '').filter(Boolean) });
+  const palette = buildBasicCapabilityPalette({ plan: sleeveArchitectPlan, resolutions: toolCapabilityResolutions, content: classifications });
+  const geometryManifest = useMemo(() => {
+    if (!compiledRuntimeManifest) return undefined;
+    try {
+      return buildRuntimeGeometryManifest({ compiledRuntimeManifest, runtimeVisualState: hermesRuntimeVisualState, viewMode: hermesRuntimeVisualState?.timeline.length ? 'runtime' : 'structure' });
+    } catch {
+      return undefined;
+    }
+  }, [compiledRuntimeManifest, hermesRuntimeVisualState]);
+  const compileStatus = compiledRuntimeManifest ? 'Compile succeeded' : compilerResult?.status === 'error' ? 'Compile failed' : 'Compile needed';
+  const runtimeStatus = isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? 'Hermes completed' : compiledRuntimeManifest ? 'Runtime ready' : 'Waiting for compile';
+  return <section className="basicModeFlow" aria-label="Basic UMG Sleeve Builder">
+    <div className="basicStageRail" aria-label="Basic stage rail">
+      {['Intake', 'Sleeve', 'Compile', 'Runtime'].map((stage) => <div key={stage} className={stage === 'Intake' || (stage === 'Sleeve' && sleeveArchitectPlan) || (stage === 'Compile' && compiledRuntimeManifest) || (stage === 'Runtime' && (runtimeObserverOpen || hermesRuntimeResult)) ? 'active' : ''}><b>{stage}</b></div>)}
+    </div>
+    <div className="analysisPanel basicSleevePanel">
+      <div className="publicSectionTitle"><span>01</span><div><b>Create Sleeve</b><small>Hermes-first runtime-session Sleeve; no source library write.</small></div></div>
+      <p className="analysisSummary">{businessInput.text}</p>
+      <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{sleeveArchitectPlan ? 'Regenerate Sleeve' : 'Build UMG Sleeve'}</button><button type="button" className="publicSecondaryCta" onClick={() => onStudioModeChange('advanced')}>Open Advanced Details</button></div>
+      {classifications.some((entry) => entry.sensitive) && <div className="analysisWarnings"><b>Sensitive material detected</b><span>It will not be shown in prompts, trace, or artifacts.</span></div>}
+      <div className="basicClassificationChips">{classifications.map((entry) => <span key={entry.kind}>{entry.label}{entry.sensitive ? ' · protected' : ''}</span>)}</div>
+    </div>
+    {sleeveArchitectPlan && <div className="analysisPanel basicSleevePreview">
+      <div className="publicSectionTitle"><span>02</span><div><b>Sleeve Preview</b><small>High-level structure, not draft-record spam.</small></div></div>
+      <h3>{sleeveArchitectPlan.proposedSleeveTitle}</h3>
+      <p>{sleeveArchitectPlan.domainSummary}. Hermes chose this structure to route prompt-specific work through NeoStacks, NeoBlocks, MOLT roles, Gates, and declared safe capabilities.</p>
+      <div className="templateCountGrid"><div><b>{sleeveArchitectPlan.proposedNeoStacks.length}</b><span>NeoStacks</span></div><div><b>{sleeveArchitectPlan.proposedNeoBlocks.length}</b><span>NeoBlocks</span></div><div><b>{sleeveArchitectPlan.proposedMoltBlocks.length}</b><span>MOLT roles</span></div><div><b>{sleeveArchitectPlan.proposedGates.length}</b><span>Gates</span></div><div><b>{palette.length}</b><span>Capabilities</span></div><div><b>{sleeveArchitectPlan.matchedExistingBlocks.length}</b><span>Reused blocks</span></div><div><b>{sleeveArchitectPlan.generatedDrafts.length}</b><span>Runtime-session drafts</span></div></div>
+      <div className="neoStackSummaryList">{sleeveArchitectPlan.proposedNeoStacks.slice(0, 8).map((stack) => <div key={stack.id} className="neoStackSummaryItem"><b>{stack.title}</b><small>{stack.reason}</small></div>)}</div>
+      <div className={quality.status === 'strong' ? 'basicQualityStrong' : 'analysisWarnings'}><b>{quality.status === 'strong' ? 'Structure looks strong' : 'Structure needs refinement'}</b>{quality.issues.map((issue) => <span key={issue}>{issue}</span>)}</div>
+      <small>Runtime-session only. This Sleeve is not saved to the source library.</small>
+    </div>}
+    {sleeveArchitectPlan && <div className="analysisPanel basicCapabilityPalette">
+      <div className="publicSectionTitle"><span>03</span><div><b>Capability Palette</b><small>Actions derived from the active Sleeve and registry status.</small></div></div>
+      <div className="phase5CardGrid">{palette.map((card) => <div key={card.capabilityId} className={`capabilityCard risk-${card.riskLevel}`}><b>{card.label}</b><small>{card.capabilityId} · {card.status} · risk {card.riskLevel}</small><p>{card.description}</p><span>{card.sourceNeoBlock ?? card.sourceNeoStack ?? 'Sleeve-level action'}</span><span>externalActionTaken: false</span><button type="button" disabled={!card.safeAction}>{card.safeAction ? 'Use safely' : 'Not runnable without setup'}</button></div>)}</div>
+    </div>}
+    {sleeveArchitectPlan && <div className="analysisPanel basicCompilePanel">
+      <div className="publicSectionTitle"><span>04</span><div><b>Compile</b><small>{compileStatus}</small></div></div>
+      <p>{compilerResult?.errors?.length ? 'Compiler bridge unavailable. Start the local compiler bridge to compile this Sleeve.' : compiledRuntimeManifest ? 'Compiler returned a real runtime manifest.' : 'Compile this Sleeve with the local UMG compiler bridge.'}</p>
+      <button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{isHermesRunning ? 'Compiling…' : compiledRuntimeManifest ? 'Recompile Sleeve' : 'Compile Sleeve'}</button>
+    </div>}
+    {sleeveArchitectPlan && <div className="analysisPanel basicRuntimeObserver">
+      <div className="publicSectionTitle"><span>05</span><div><b>Runtime Observer</b><small>{runtimeStatus}</small></div></div>
+      <SummaryRows rows={[["active Sleeve", sleeveArchitectPlan.proposedSleeveTitle], ["compiled", compiledRuntimeManifest ? 'yes' : 'no'], ["Hermes runtime", runtimeStatus], ["trace events", String(hermesRuntimeVisualState?.timeline.length ?? 0)]]} />
+      <button type="button" className="publicSecondaryCta" onClick={() => onRuntimeObserverOpenChange(!runtimeObserverOpen)}>{runtimeObserverOpen ? 'Hide Runtime Observer' : 'Open Runtime Observer'}</button>
+      {runtimeObserverOpen && <div className="runtimeObserverBox"><label className="hackathonField"><span>Ask Hermes to perform a task inside this Sleeve…</span><textarea value={runtimeObserverPrompt} onChange={(event) => onRuntimeObserverPromptChange(event.target.value)} placeholder="Generate the executive summary. Run the next reporting step. Draft a customer email." /></label><div className="templateActionRow"><button type="button" className="publicPrimaryCta" disabled={!compiledRuntimeManifest || isHermesRunning} onClick={onRunHermesRuntime}>{isHermesRunning ? 'Hermes Running…' : 'Run Hermes in Active Sleeve'}</button></div><div className="basicSuggestedActions">{palette.slice(0, 5).map((card) => <button type="button" key={card.capabilityId} disabled={!card.safeAction}>{card.label}</button>)}</div></div>}
+      {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
+      {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content.slice(0, 240) : JSON.stringify(artifact.content).slice(0, 240)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}
+      {hermesRuntimeVisualState?.timeline.length ? <ol className="basicTraceList">{hermesRuntimeVisualState.timeline.map((event) => <li key={`${event.traceId}:${event.timestamp}`}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol> : <small>No runtime trace yet. Basic mode does not fabricate activation.</small>}
+      {geometryManifest && <RuntimeGeometryPreview manifest={geometryManifest} />}
+      {hermesRuntimeWarnings.length > 0 && <div className="analysisWarnings"><b>Runtime warnings</b>{hermesRuntimeWarnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
+      {hermesRuntimeErrors.length > 0 && <div className="analysisWarnings"><b>Runtime error</b><span>Hermes runtime error. Open Advanced Details for raw diagnostics.</span></div>}
+    </div>}
+  </section>;
 }
 
 function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onOpenStudio: () => void }) {
