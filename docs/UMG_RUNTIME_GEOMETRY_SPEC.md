@@ -189,10 +189,26 @@ Projection rules:
 - Unknown runtime IDs remain unmapped and must not create fallback glow on parent nodes.
 - Compiler trace remains separate from Hermes runtime trace.
 
-## Non-Goals for Phase 12A/12B
+## Phase 12C Geometry Preview MVP
 
-- no runtime graph UI implementation
-- no animation engine
+Phase 12C adds the first conservative visual/debug preview of the `UMGGeometryManifest`.
+
+This preview is a Structure View MVP, not the final animated runtime graph. It renders the shared geometry projection as compact summary counts, Sleeve metadata, NeoStack groups, selected NeoBlock rows, and connection-type counts. It must sit near the existing runtime visualizer without replacing it or blocking compile/runtime actions.
+
+Rules:
+
+- Geometry Preview renders a `UMGGeometryManifest` projection and is not a source of truth.
+- It appears only after real structure exists, such as an instantiated Sleeve, CompileCandidate, or compiled runtime manifest.
+- Structure View and future Runtime View should share this manifest shape.
+- Runtime overlay may appear only from real `UMGRuntimeVisualState` / Hermes trace events.
+- Missing runtime state keeps nodes idle.
+- No force-directed physics, canvas/WebGL graph, fake animation, fake trace, or fabricated active nodes are part of Phase 12C.
+
+## Non-Goals for Phase 12A/12B/12C
+
+- no final runtime graph UI implementation
+- no graph animation engine
+- no canvas/WebGL graph renderer
 - no compiler bridge behavior change
 - no Hermes runtime bridge behavior change
 - no runtime trace mapper behavior change

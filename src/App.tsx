@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './style.css';
 import { HackathonLandingPage } from './components/HackathonLandingPage';
 import { HierarchicalRuntimeVisualizer } from './components/HierarchicalRuntimeVisualizer';
+import { RuntimeGeometryPreview } from './components/RuntimeGeometryPreview';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
 import migrationReport from '../data/library/migration-report.json';
@@ -41,6 +42,7 @@ import { UMGCompilerRequest, UMGCompilerResult } from './lib/umg/compilerIntegra
 import { HermesCognitiveRuntimeRequest, HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeVisualState } from './lib/umg/cognitiveRuntimeTypes';
 import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
 import { createHermesRuntimeRequestFromManifest, getHermesRuntimeAdapterConfigFromEnv, getHermesRuntimeConnectionSummary, runCompiledManifestThroughHermes, validateHermesRuntimeRequest } from './lib/umg/hermesRuntimeExecution';
+import { buildRuntimeGeometryManifest } from './lib/umg/runtimeGeometryProjection';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -2226,6 +2228,21 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
+  const geometryManifest = useMemo(() => {
+    if (!businessAutomationCoreBuild && !compileCandidate && !compiledRuntimeManifest) return undefined;
+    try {
+      return buildRuntimeGeometryManifest({
+        templateSleeve: businessAutomationCoreBuild?.templateSleeve,
+        assemblyPlan: sleeveAssemblyPlan,
+        compileCandidate,
+        compiledRuntimeManifest,
+        runtimeVisualState: hermesRuntimeVisualState,
+        viewMode: hermesRuntimeVisualState?.timeline.length ? 'runtime' : 'structure'
+      });
+    } catch {
+      return undefined;
+    }
+  }, [businessAutomationCoreBuild, sleeveAssemblyPlan, compileCandidate, compiledRuntimeManifest, hermesRuntimeVisualState]);
   return <section className="analysisReviewGrid" aria-label="Phase 3 analysis review">
     <div className="analysisPanel">
       <div className="publicSectionTitle"><span>03</span><div><b>Intake Captured</b><small>Typed BusinessInput created locally.</small></div></div>
@@ -2280,6 +2297,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, b
       hasHermesResult={Boolean(hermesRuntimeResult)}
       hasRuntimeTrace={Boolean(hermesRuntimeVisualState?.timeline.length)}
     />}
+    {geometryManifest && <RuntimeGeometryPreview manifest={geometryManifest} />}
     {businessAutomationCoreBuild && <BusinessAutomationCoreBuiltPanel build={businessAutomationCoreBuild} />}
     {businessAutomationCoreBuild && <div className="analysisPanel phase5ActionPanel"><div className="publicSectionTitle"><span>07</span><div><b>Block Matching + Gap Detection</b><small>Reuse existing blocks first, then propose draft-only gaps.</small></div></div><button type="button" className="publicPrimaryCta" onClick={onRunBlockMatching}>Match Blocks & Detect Gaps</button><p>No Hermes call, no compiler call, no source library write.</p></div>}
     {blockMatchPlan && <BlockMatchResultsPanel plan={blockMatchPlan} />}
