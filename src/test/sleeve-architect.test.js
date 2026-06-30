@@ -11,6 +11,8 @@ import { createHermesRuntimeRequestFromManifest } from '../lib/umg/hermesRuntime
 import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from '../lib/umg/cognitiveRuntimeState';
 import { createHermesContinuationRequest, createPendingRuntimeApproval, resolveToolCapabilities } from '../lib/umg/toolCapabilityResolver';
 import { getHermesUmgRuntimeSkillPack } from '../lib/umg/hermesUmgRuntimeSkill';
+import { getHermesUmgAppLocalSkillBundle } from '../lib/umg/hermesUmgSkillBundle';
+import { HERMES_CUSTOM_SLEEVE_PLAN_SCHEMA_NOTE, validateHermesCustomSleevePlanScaffold } from '../lib/umg/hermesSleevePlanSchema';
 import { buildHermesToolCapabilityRegistry } from '../lib/umg/hermesToolCapabilityRegistry';
 import { validateArchitectSleeveForCompiler } from '../lib/umg/sleeveArchitectCompilerValidation';
 import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapter';
@@ -239,7 +241,7 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(state.timeline).toHaveLength(4);
   });
 
-  it('packages UMG Runtime Skill knowledge with hierarchy rules, trace schema, and strict JSON envelope', () => {
+  it('packages UMG Runtime Skill knowledge with hierarchy rules, trace schema, app-local skill bundle, and strict JSON envelope', () => {
     const skill = getHermesUmgRuntimeSkillPack();
     expect(skill.id).toBe('umg_runtime_skill_pack.v1');
     expect(skill.instructions).toContain('Sleeve');
@@ -247,8 +249,54 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(skill.instructions).toContain('NeoBlock');
     expect(skill.instructions).toContain('MOLT');
     expect(skill.instructions).toContain('Gate/control record');
+    expect(skill.instructions).toContain('UMG Sleeve Decomposition Skill');
+    expect(skill.instructions).toContain('Bundle block-card JSON schemas are authoring/import schemas and must not be sent directly to the compiler.');
+    expect(skill.instructions).toContain('Website Builder / Web Creation is a future scoped Domain Pack');
+    expect(skill.appLocalSkillBundle.supportedPromptMoltRoles).toEqual(['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint']);
+    expect(skill.appLocalSkillBundle.hierarchyCardSkill).toContain('MOLT -> NeoBlock -> NeoStack -> Sleeve');
+    expect(skill.appLocalSkillBundle.sleeveDecompositionSkill).toContain('Library-first, generate-second');
+    expect(skill.appLocalSkillBundle.compilerAlignmentRules).toContain('Current app/compiler/runtime schemas are authoritative.');
+    expect(skill.appLocalSkillBundle.sourceLibraryBoundaryRules).toContain('No source-library mutation');
+    expect(skill.appLocalSkillBundle.capabilityBoundaryRules).toContain('Capabilities are declarations until resolved');
     expect(skill.traceEventTypes).toEqual(expect.arrayContaining(['run_started', 'tool_call_requires_approval', 'tool_result_received', 'run_completed']));
     expect(skill.outputEnvelopeSchema.required).toEqual(expect.arrayContaining(['traceId', 'status', 'finalOutput', 'events']));
+  });
+
+  it('keeps app-local hierarchy and Sleeve decomposition skill available to Custom Workflow plans without global install', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const bundle = getHermesUmgAppLocalSkillBundle();
+
+    expect(plan.appLocalSkillBundle.id).toBe('umg_app_local_skill_bundle.phase13i_b');
+    expect(plan.appLocalSkillBundle).toEqual(bundle);
+    expect(plan.appLocalSkillBundle.hierarchyCardSkill).toContain('Domain Pack walls');
+    expect(plan.appLocalSkillBundle.sleeveDecompositionSkill).toContain('Gates are control/routing/approval records, not prompt MOLT blocks.');
+    expect(plan.appLocalSkillBundle.websiteBuilderBoundary).toContain('Keep Website Builder greyed/scoped until explicitly imported.');
+    expect(plan.appLocalSkillBundle.sourceLibraryBoundaryRules).toContain('No global Hermes skill install');
+    expect(plan.generatedDrafts.every((draft) => draft.metadata?.sourceLibraryWrite === false)).toBe(true);
+  });
+
+  it('scaffolds future Hermes custom Sleeve generation as app-aligned runtime-session output only', () => {
+    expect(HERMES_CUSTOM_SLEEVE_PLAN_SCHEMA_NOTE).toContain('app-aligned structures, not uploaded bundle card schemas');
+    expect(HERMES_CUSTOM_SLEEVE_PLAN_SCHEMA_NOTE).toContain('NormalizedTemplateSleeve');
+    expect(HERMES_CUSTOM_SLEEVE_PLAN_SCHEMA_NOTE).toContain('gates map to UMGGateRecord control/routing/approval records, not prompt MOLT blocks.');
+    const errors = validateHermesCustomSleevePlanScaffold({
+      schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1',
+      mode: 'runtime_session_draft',
+      moltBlocks: [{ id: 'molt.1', title: 'Directive', role: 'directive', content: 'Do the safe thing.', tags: [], defaultState: 'off' }],
+      generatedDecisions: [{ id: 'decision.1', targetKind: 'molt', proposedId: 'molt.1', reason: 'Gap found.', runtimeSessionOnly: true, sourceLibraryWrite: false, needsUserReview: true }]
+    });
+    expect(errors).toEqual([]);
+    const bad = validateHermesCustomSleevePlanScaffold({
+      schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1',
+      mode: 'runtime_session_draft',
+      moltBlocks: [{ id: 'molt.bad', title: 'Trigger', role: 'trigger', content: 'Unsupported prompt role.', tags: [], defaultState: 'off' }],
+      generatedDecisions: [{ id: 'decision.bad', targetKind: 'molt', proposedId: 'molt.bad', reason: 'Bad gap.', runtimeSessionOnly: false, sourceLibraryWrite: true, needsUserReview: true }]
+    });
+    expect(bad.join(' ')).toContain('Unsupported prompt MOLT role: trigger');
+    expect(bad.join(' ')).toContain('must be runtimeSessionOnly');
+    expect(bad.join(' ')).toContain('must keep sourceLibraryWrite false');
   });
 
   it('builds a Tool Capability Registry v1 for e-commerce capabilities without treating unknowns as available', () => {

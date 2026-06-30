@@ -1,5 +1,6 @@
 import type { UMGCompiledRuntimeManifest, UMGTraceEventType } from './cognitiveRuntimeTypes';
 import type { HermesToolCapabilityRegistryEntry } from './hermesToolCapabilityRegistry';
+import { getHermesUmgAppLocalSkillBundle, type HermesUmgAppLocalSkillBundle } from './hermesUmgSkillBundle';
 
 export const UMG_RUNTIME_TRACE_EVENT_TYPES: UMGTraceEventType[] = [
   'run_started',
@@ -28,6 +29,7 @@ export type HermesUmgRuntimeSkillPack = {
   id: 'umg_runtime_skill_pack.v1';
   title: string;
   instructions: string;
+  appLocalSkillBundle: HermesUmgAppLocalSkillBundle;
   traceEventTypes: UMGTraceEventType[];
   outputEnvelopeSchema: {
     required: string[];
@@ -60,9 +62,11 @@ function unique(values: Array<string | undefined>) {
 }
 
 export function getHermesUmgRuntimeSkillPack(): HermesUmgRuntimeSkillPack {
+  const appLocalSkillBundle = getHermesUmgAppLocalSkillBundle();
   return {
     id: 'umg_runtime_skill_pack.v1',
     title: 'UMG Runtime Skill Pack',
+    appLocalSkillBundle,
     traceEventTypes: UMG_RUNTIME_TRACE_EVENT_TYPES,
     outputEnvelopeSchema: {
       required: ['traceId', 'status', 'finalOutput', 'events', 'toolCalls', 'blockedCalls', 'approvalRequests', 'errors', 'artifacts', 'unmappedEvents'],
@@ -70,6 +74,14 @@ export function getHermesUmgRuntimeSkillPack(): HermesUmgRuntimeSkillPack {
     },
     instructions: [
       'UMG Runtime Skill Pack: execute the supplied compiled Sleeve as the cognitive operating structure.',
+      'App-local UMG Skill Bundle is attached: hierarchy/card skill, Sleeve decomposition skill, compiler alignment rules, source-library boundaries, capability boundaries, and Website Builder Domain Pack walling rules.',
+      appLocalSkillBundle.hierarchyCardSkill,
+      appLocalSkillBundle.sleeveDecompositionSkill,
+      appLocalSkillBundle.compilerAlignmentRules,
+      appLocalSkillBundle.sourceLibraryBoundaryRules,
+      appLocalSkillBundle.capabilityBoundaryRules,
+      appLocalSkillBundle.websiteBuilderBoundary,
+      appLocalSkillBundle.runtimeTraceSkill,
       'Hierarchy: Sleeve contains NeoStacks; NeoStacks contain NeoBlocks; NeoBlocks use focused MOLT roles; Gate/control record entries are controls, not prompt MOLT blocks; Tool capabilities are declarations until resolved.',
       'Runtime behavior: select active NeoStacks/NeoBlocks from the user goal, current route, and runtime context; use MOLT roles as local cognitive guidance; evaluate Gates before tool/capability execution; keep unused blocks inactive/off; route dynamically from real trace/results.',
       'ID rule: do not invent IDs. Use supplied Sleeve, NeoStack, NeoBlock, MOLT, Gate, source, tool, and approval IDs only. If relevant ID is unknown, return the attempted event in unmappedEvents without visual IDs.',

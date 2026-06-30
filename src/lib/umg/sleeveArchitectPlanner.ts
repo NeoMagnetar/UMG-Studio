@@ -3,6 +3,7 @@ import type { GeneratedBlockDraft } from './blockMatchingTypes';
 import type { MOLTRole } from './types';
 import { searchBlocksForArchitectPlan } from './semanticBlockSearch';
 import type { BuildSleeveArchitectPlanInput, SleeveArchitectPlan, SleeveArchitectureMode } from './sleeveArchitectTypes';
+import { getHermesUmgAppLocalSkillBundle } from './hermesUmgSkillBundle';
 import { defaultArchitectExecutionPolicy } from './sleeveArchitectExecution';
 import { normalizeLegacyMoltRole } from './legacySleeveImport';
 
@@ -113,6 +114,7 @@ export function shouldUseArchitectMode(input: BusinessInput, businessMap: Busine
 
 export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): SleeveArchitectPlan {
   const text = combinedText(args.businessInput);
+  const appLocalSkillBundle = getHermesUmgAppLocalSkillBundle();
   const domainSummary = detectDomain(text, args.businessMap);
   const ecommerce = /return|refund|e-?commerce|online retail|purchase|order/.test(text.toLowerCase());
   const greekBusinessPlan = /greek|philosophy|aristotle|plato|socratic|telos|virtue/.test(text.toLowerCase()) && /business plan|plan template|business/.test(text.toLowerCase());
@@ -215,6 +217,7 @@ export function buildSleeveArchitectPlan(args: BuildSleeveArchitectPlanInput): S
     missingCapabilities,
     generatedDrafts,
     legacyRoleMappings: ['TRG', 'STRAT', 'AIM', 'NEED', 'USE', 'DIR', 'INST', 'SUBJ', 'PHIL', 'BP', 'PRIM'].map(normalizeLegacyMoltRole),
+    appLocalSkillBundle,
     confidence: Number(Math.min(0.86, Math.max(0.54, args.businessMap.confidence + (matched.length ? 0.08 : 0))).toFixed(2)),
     warnings: [
       mode === 'demo_template_mode' ? 'Current public demo is Seed Template Mode; it proves runtime but is not a fully custom Sleeve.' : 'Architect Plan is execution-ready as runtime-session architecture; optional review does not block compile/run.',

@@ -1,5 +1,6 @@
 import type { BusinessInput, BusinessMap } from './businessIntakeTypes';
 import type { GeneratedBlockDraft } from './blockMatchingTypes';
+import type { HermesUmgAppLocalSkillBundle } from './hermesUmgSkillBundle';
 import type { MOLTRole, UMGBlock } from './types';
 
 export type SleeveArchitectureMode =
@@ -107,6 +108,7 @@ export type SleeveArchitectPlan = {
   missingCapabilities: string[];
   generatedDrafts: GeneratedBlockDraft[];
   legacyRoleMappings: LegacyRoleMapping[];
+  appLocalSkillBundle: HermesUmgAppLocalSkillBundle;
   confidence: number;
   warnings: string[];
 };
