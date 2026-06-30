@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { RuntimeGeometryObserver, buildRuntimeVisualViewModel } from '../components/RuntimeGeometryObserver';
@@ -35,6 +35,20 @@ function makeSleeve() {
     metadata: { runtimeSessionOnly: true, capabilities: [{ capabilityId: 'umg.capability.local_note_file_write', label: 'Local note safe artifact', sourceNeoBlock: 'block.output_assembly' }] }
   };
 }
+
+const compiledRuntimeManifest = {
+  sleeveId: 'sleeve.greek_note',
+  sleeveTitle: 'Greek Philosophy Desktop Note Sleeve',
+  compiledStructure: { source: 'test' },
+  runtimeInstructions: ['Use UMG route IDs.'],
+  executionPlan: [{ id: 'step.request', label: 'Request Intake', targetId: 'block.request_intake', requiredGateIds: [], requiredToolIds: ['umg.capability.local_note_file_write'] }],
+  gates: [],
+  toolPolicy: { executionMode: 'dryRun', approvalMode: 'beforeToolUse', allowedTools: ['umg.capability.local_note_file_write'], blockedTools: [] },
+  sourceBlocks: [{ id: 'block.request_intake', title: 'Request Intake NeoBlock', scopeKind: 'neoblock' }],
+  routeEdges: [{ id: 'route.request.output', fromId: 'block.request_intake', toId: 'block.output_assembly', fromType: 'neoblock', toType: 'neoblock' }],
+  structuralIR: makeSleeve().metadata.structuralIR,
+  traceMetadata: { dynamicRoutingPrepared: true }
+};
 
 const trace = [
   { traceId: 'trace.greek', timestamp: 1, eventType: 'neoblock_started', state: 'active', neoBlockId: 'block.request_intake', label: 'Request Intake started' },
@@ -126,5 +140,61 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
     expect(screen.getByText('missing.tool · target_not_found')).toBeTruthy();
     expect(screen.getAllByText('Greek Apple Note Artifact').length).toBeGreaterThan(0);
     expect(screen.getByText('Approval boundary active')).toBeTruthy();
+  });
+
+  it('submits the runtime prompt with Enter, keeps Shift+Enter as newline, and labels the button Send to Hermes', () => {
+    const onRunHermesRuntime = vi.fn();
+    renderObserver({ compiledRuntimeManifest, hermesRuntimeResult: undefined, pendingRuntimeApproval: undefined, runtimePrompt: 'draft a file', onRunHermesRuntime });
+    expect(screen.getByRole('button', { name: 'Send to Hermes' })).toBeTruthy();
+    const prompt = screen.getByLabelText('Runtime prompt');
+    fireEvent.keyDown(prompt, { key: 'Enter', code: 'Enter', shiftKey: true });
+    expect(onRunHermesRuntime).not.toHaveBeenCalled();
+    fireEvent.keyDown(prompt, { key: 'Enter', code: 'Enter' });
+    expect(onRunHermesRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not submit empty prompts and disables execution before compile', () => {
+    const onRunHermesRuntime = vi.fn();
+    renderObserver({ compiledRuntimeManifest: undefined, hermesRuntimeResult: undefined, pendingRuntimeApproval: undefined, runtimePrompt: '   ', onRunHermesRuntime, compileStatus: 'Structure view is available. Runtime execution requires compile.', runtimeStatus: 'compiling_required' });
+    const send = screen.getByRole('button', { name: 'Send to Hermes' });
+    expect(send.disabled).toBe(true);
+    fireEvent.keyDown(screen.getByLabelText('Runtime prompt'), { key: 'Enter', code: 'Enter' });
+    expect(onRunHermesRuntime).not.toHaveBeenCalled();
+    expect(screen.getAllByText('compiling_required').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Structure view is available. Runtime execution requires compile.').length).toBeGreaterThan(0);
+  });
+
+  it('shows runtime execution state transitions and compiler bridge setup copy', () => {
+    renderObserver({ compiledRuntimeManifest: undefined, hermesRuntimeResult: undefined, pendingRuntimeApproval: undefined, compileStatus: 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge', runtimeStatus: 'compiling_required' });
+    expect(screen.getByText('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge')).toBeTruthy();
+    expect(screen.getByText('Starting route: compile required')).toBeTruthy();
+  });
+
+  it('shows working and returned-trace graph state without fake trace activation', () => {
+    renderObserver({ compiledRuntimeManifest, hermesRuntimeResult: undefined, pendingRuntimeApproval: undefined, isHermesRunning: true, runtimeStatus: 'Hermes working…' });
+    expect(screen.getByText('sending')).toBeTruthy();
+    expect(screen.getAllByText('Hermes working…').length).toBeGreaterThan(0);
+    expect(screen.getByText('Starting route · Waiting for trace')).toBeTruthy();
+  });
+
+  it('shows running state once real returned trace events are present', () => {
+    renderObserver({ compiledRuntimeManifest, isHermesRunning: true, runtimeStatus: 'Hermes working…' });
+    expect(screen.getByText('running')).toBeTruthy();
+    expect(screen.getByText('Running')).toBeTruthy();
+  });
+
+  it('keeps MOLT as internal layers and exposes compact MOLT rows', () => {
+    renderObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock View' }));
+    expect(screen.getByText('Directive')).toBeTruthy();
+    expect(screen.getByText('Instruction')).toBeTruthy();
+    expect(screen.getByText('Subject')).toBeTruthy();
+    expect(screen.getByText('Primary')).toBeTruthy();
+    expect(screen.getByText('Philosophy')).toBeTruthy();
+    expect(screen.getByText('Blueprint')).toBeTruthy();
+    expect(screen.getByText('Merge')).toBeTruthy();
+    expect(screen.getByText('Tool')).toBeTruthy();
+    expect(screen.getByText('Gate')).toBeTruthy();
+    expect(screen.getByText(/MOLT details stay in drawer/)).toBeTruthy();
   });
 });

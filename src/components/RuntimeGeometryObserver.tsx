@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import type { NormalizedTemplateSleeve } from '../lib/umg/templateSleeveStructures';
 import type { HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeArtifact, UMGRuntimeVisualState, UMGTraceEvent } from '../lib/umg/cognitiveRuntimeTypes';
 import type { PendingRuntimeApproval, ToolCapabilityResolution } from '../lib/umg/toolCapabilityResolver';
@@ -7,6 +8,8 @@ import { buildRuntimeGeometryManifest, summarizeGeometryManifest } from '../lib/
 import { getRuntimeTargetId } from '../lib/umg/cognitiveRuntimeState';
 
 export type RuntimeGeometryObserverMode = 'structure' | 'runtime';
+export type RuntimeExecutionState = 'idle' | 'ready' | 'compiling_required' | 'sending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+export type RuntimeExecutionMode = 'batch' | 'stream';
 
 type RuntimeGeometryNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'molt' | 'merge' | 'gate' | 'tool' | 'capability' | 'artifact';
 type RuntimeGeometryNodeStatus = 'idle' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error';
@@ -633,6 +636,29 @@ function statusRows(node?: RuntimeGeometryNode) {
   ];
 }
 
+function deriveRuntimeExecutionState(args: { compiledRuntimeManifest?: UMGCompiledRuntimeManifest; isHermesRunning: boolean; pendingRuntimeApproval?: PendingRuntimeApproval; hermesRuntimeResult?: HermesCognitiveRuntimeResult; traceCount?: number }): RuntimeExecutionState {
+  if (args.isHermesRunning) return args.traceCount ? 'running' : 'sending';
+  if (args.pendingRuntimeApproval) return 'awaiting_approval';
+  if (!args.compiledRuntimeManifest) return 'compiling_required';
+  if (!args.hermesRuntimeResult) return 'ready';
+  if (args.hermesRuntimeResult.status === 'needsApproval') return 'awaiting_approval';
+  if (args.hermesRuntimeResult.status === 'error') return 'failed';
+  return 'completed';
+}
+
+function routeStatusLabel(state: RuntimeExecutionState, traceCount: number) {
+  if (state === 'compiling_required') return 'Starting route: compile required';
+  if (state === 'ready') return 'Starting route: ready · Waiting for trace';
+  if (state === 'sending') return 'Starting route · Waiting for trace';
+  if (state === 'running') return traceCount ? 'Running' : 'Starting route · Waiting for trace';
+  if (state === 'awaiting_approval') return 'Running · awaiting approval';
+  if (state === 'completed') return 'Completed';
+  if (state === 'failed') return 'Failed';
+  return 'idle';
+}
+
+const MOLT_LAYER_ROWS = ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint', 'merge', 'tool', 'gate'];
+
 export function RuntimeGeometryObserver({
   activeSessionSleeve,
   compiledRuntimeManifest,
@@ -659,6 +685,23 @@ export function RuntimeGeometryObserver({
   const grouped = useMemo(() => groupByParent(graph.nodes), [graph.nodes]);
   const traceEvents = hermesRuntimeVisualState?.timeline ?? hermesRuntimeResult?.trace ?? [];
   const artifactCount = hermesRuntimeResult?.artifacts?.length ?? 0;
+  const runtimeExecutionState = deriveRuntimeExecutionState({ compiledRuntimeManifest, isHermesRunning, pendingRuntimeApproval, hermesRuntimeResult, traceCount: traceEvents.length });
+  const runtimeExecutionMode: RuntimeExecutionMode = 'batch';
+  const canSendRuntimePrompt = Boolean(compiledRuntimeManifest && runtimePrompt.trim() && !isHermesRunning);
+  const runtimeExecutionCopy = !compiledRuntimeManifest
+    ? 'Structure view is available. Runtime execution requires compile.'
+    : isHermesRunning
+      ? 'Hermes working…'
+      : 'Runtime trace appears after Hermes runs.';
+  const submitRuntimePrompt = () => {
+    if (!canSendRuntimePrompt) return;
+    onRunHermesRuntime();
+  };
+  const handleRuntimePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    submitRuntimePrompt();
+  };
   const summary = useMemo(() => {
     try { return summarizeGeometryManifest(geometryManifest ?? buildRuntimeGeometryManifest({ templateSleeve: activeSessionSleeve, compiledRuntimeManifest })); } catch { return undefined; }
   }, [activeSessionSleeve, compiledRuntimeManifest, geometryManifest]);
@@ -716,8 +759,8 @@ export function RuntimeGeometryObserver({
       </div>
       <div className="runtime-neostack-clusters">
         {model.neoStacks.map((stack) => <article key={stack.id} className="runtime-neostack-cluster">
-          <button type="button" className={`runtime-stack-title runtime-node runtime-node--${stack.status}`} onClick={() => { selectStack(stack); setViewMode('neostack'); }}><span>▦</span><b>{stack.label}</b><small>NeoStack cluster</small></button>
-          <div className="runtime-neoblock-tile-grid">{childBlocksForStack(stack.id).map((block) => <button key={block.id} type="button" className={`runtime-neoblock-tile runtime-node runtime-node--${block.status}`} onClick={() => selectBlock(block)}><span>◈</span><b>{block.shortLabel ?? block.label}</b><small>{layersForBlock(block).length} MOLT layers</small></button>)}</div>
+          <button type="button" className={`runtime-stack-title runtime-node runtime-node--${stack.status}`} onClick={() => { selectStack(stack); setViewMode('neostack'); }}><span>▦</span><b>{stack.label}</b><small>{childBlocksForStack(stack.id).length} child NeoBlocks</small></button>
+          <div className="runtime-neoblock-tile-grid">{childBlocksForStack(stack.id).slice(0, 4).map((block) => <button key={block.id} type="button" className={`runtime-neoblock-tile runtime-node runtime-node--${block.status}`} onClick={() => selectBlock(block)}><span>◈</span><b>{block.shortLabel ?? block.label}</b><small>{layersForBlock(block).length} MOLT layers</small></button>)}{childBlocksForStack(stack.id).length > 4 && <small>+ {childBlocksForStack(stack.id).length - 4} more NeoBlocks</small>}</div>
         </article>)}
       </div>
     </section>
@@ -741,12 +784,14 @@ export function RuntimeGeometryObserver({
     {selectedBlock ? <article className="runtime-neoblock-cube runtime-node runtime-node--available">
       <header><span>◈</span><div><b>{selectedBlock.label}</b><small>Parent NeoStack: {model.neoStacks.find((stack) => stack.id === selectedBlock.parentId)?.label ?? 'unknown'}</small></div></header>
       <div className="runtime-molt-layer-stack">
-        {['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'].map((role) => {
+        {MOLT_LAYER_ROWS.map((role) => {
+          const roleLabel = role[0].toUpperCase() + role.slice(1);
           const layer = selectedLayers.find((entry) => String(entry.metadata?.localSlotRole ?? entry.rawNode?.subtitle ?? entry.label).toLowerCase().includes(role));
-          return <button key={role} type="button" className={`runtime-molt-layer runtime-node runtime-node--${layer?.status ?? 'off'}`} disabled={!layer} onClick={() => layer && selectVisualNode(layer)}><span>{role === 'trigger' ? 'Trigger' : role[0].toUpperCase() + role.slice(1)}</span><b>{layer?.label ?? 'not present'}</b><small>{layer?.sourceStatus ?? 'off'}</small></button>;
+          const synthetic = role === 'tool' ? model.capabilities.find((capability) => capability.parentId === selectedBlock.id) : role === 'gate' ? model.gates.find((gate) => gate.parentId === selectedBlock.id || model.edges.some((edge) => edge.kind === 'guards' && edge.to === selectedBlock.id && edge.from === gate.id)) : undefined;
+          return <button key={role} type="button" className={`runtime-molt-layer runtime-node runtime-node--${layer?.status ?? synthetic?.status ?? 'off'}`} disabled={!layer && !synthetic} onClick={() => layer ? selectVisualNode(layer) : synthetic && selectVisualNode(synthetic)}><span>{roleLabel}</span><b>{layer?.shortLabel ?? layer?.label ?? synthetic?.shortLabel ?? synthetic?.label ?? 'not present'}</b><small>{layer?.sourceStatus ?? synthetic?.kind ?? 'off'}</small></button>;
         })}
       </div>
-      <footer><span>Gates: {model.gates.filter((gate) => gate.parentId === selectedBlock.id || model.edges.some((edge) => edge.kind === 'guards' && edge.to === selectedBlock.id && edge.from === gate.id)).length}</span><span>Capabilities: {model.capabilities.filter((capability) => capability.parentId === selectedBlock.id).length}</span><span>Trigger / Merge / Off are visual state labels only.</span></footer>
+      <footer><span>Gates: {model.gates.filter((gate) => gate.parentId === selectedBlock.id || model.edges.some((edge) => edge.kind === 'guards' && edge.to === selectedBlock.id && edge.from === gate.id)).length}</span><span>Capabilities: {model.capabilities.filter((capability) => capability.parentId === selectedBlock.id).length}</span><span>MOLT details stay in drawer/inspector; Merge/Tool/Gate rows are compact runtime layer references.</span></footer>
     </article> : <small>Select a NeoBlock to inspect compressed layers.</small>}
     {selectedMoltLayer && <aside className="runtime-molt-detail"><h3>MOLT detail</h3><b>{selectedMoltLayer.label}</b><p>{moltLayerBody(selectedMoltLayer)}</p><small>{selectedMoltLayer.sourceStatus}</small></aside>}
   </div>;
@@ -765,15 +810,18 @@ export function RuntimeGeometryObserver({
   const selectedTrace = selectedGeometryNode?.traceEvents ?? [];
   const selectedArtifacts = selectedGeometryNode?.artifacts ?? hermesRuntimeResult?.artifacts ?? [];
 
-  return <section className="runtime-geometry-observer runtime-graph-shell" aria-label="Runtime Geometry Observer">
+  return <section className="runtime-geometry-observer runtime-graph-shell" aria-label="Runtime Graph">
     <header className="runtime-geometry-header runtime-top-status">
       <div>
-        <p className="runtime-geometry-eyebrow">Graph-first UMG modular cognition observer</p>
+        <p className="runtime-geometry-eyebrow">Runtime Graph</p>
         <h1>{activeSessionSleeve.title}</h1>
-        <small>Runtime-session only. Real trace is the only activation source; MOLT layers stay compressed inside NeoBlocks.</small>
+        <small>{runtimeExecutionCopy} Real trace is the only activation source; MOLT layers stay compressed inside NeoBlocks.</small>
       </div>
       <div className="runtime-geometry-status-grid">
         <span><b>compile</b>{compileStatus}</span>
+        <span><b>runtime state</b>{runtimeExecutionState}</span>
+        <span><b>route</b>{routeStatusLabel(runtimeExecutionState, traceEvents.length)}</span>
+        <span><b>mode</b>{runtimeExecutionMode}</span>
         <span><b>Hermes</b>{runtimeStatus}</span>
         <span><b>trace</b>{traceEvents.length}</span>
         <span><b>artifacts</b>{artifactCount}</span>
@@ -784,8 +832,8 @@ export function RuntimeGeometryObserver({
     <div className="runtime-geometry-controls runtime-view-tabs">
       <button type="button" onClick={onBackToBuilder}>Back to Sleeve Builder</button>
       {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => setViewMode(tab)}>{tab === 'system_sleeve' ? 'System Sleeve' : tab === 'neostack' ? 'NeoStack View' : tab === 'neoblock' ? 'NeoBlock View' : 'Runtime Path'}</button>)}
-      <label className="runtime-geometry-prompt"><span>Runtime prompt</span><textarea value={runtimePrompt} onChange={(event) => onRuntimePromptChange(event.target.value)} placeholder="write a note on my desktop about apples" /></label>
-      <button type="button" className="publicPrimaryCta" disabled={!compiledRuntimeManifest || isHermesRunning} onClick={onRunHermesRuntime}>{isHermesRunning ? 'Hermes Running…' : 'Run Hermes in Active Sleeve'}</button>
+      <label className="runtime-geometry-prompt"><span>Runtime prompt</span><textarea value={runtimePrompt} onChange={(event) => onRuntimePromptChange(event.target.value)} onKeyDown={handleRuntimePromptKeyDown} placeholder="Ask Hermes to perform a task through this Sleeve…" disabled={isHermesRunning} aria-label="Runtime prompt" /></label>
+      <button type="button" className="publicPrimaryCta" disabled={!canSendRuntimePrompt} onClick={submitRuntimePrompt}>{isHermesRunning ? 'Hermes working…' : 'Send to Hermes'}</button>
       {pendingRuntimeApproval && <div className="runtime-geometry-approval"><b>Approval boundary active</b><button type="button" onClick={() => onContinueRuntimeApproval('approve')} disabled={isHermesRunning}>Approve & Continue</button><button type="button" onClick={() => onContinueRuntimeApproval('skip')} disabled={isHermesRunning}>Skip</button></div>}
     </div>
 

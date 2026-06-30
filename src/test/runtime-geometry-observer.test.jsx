@@ -71,10 +71,11 @@ function renderObserver(extra = {}) {
 }
 
 describe('RuntimeGeometryObserver', () => {
-  it('renders the active Sleeve title and runtime-session-only warning without source-library controls', () => {
+  it('renders the active Sleeve title and Runtime Graph warning without source-library controls', () => {
     const html = renderObserver();
     expect(html).toContain('Greek-Infused Desktop Note Creator');
-    expect(html).toContain('Runtime-session only');
+    expect(html).toContain('Runtime Graph');
+    expect(html).toContain('Structure view is available. Runtime execution requires compile.');
     expect(html).not.toContain('Save to Source Library');
     expect(html).not.toContain('Promote to Source Library');
   });

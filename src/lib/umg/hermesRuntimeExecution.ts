@@ -101,6 +101,7 @@ export function createHermesRuntimeRequestFromManifest(args: {
   return {
     compiledSleeveManifest: compiledRuntimeManifest,
     compiledRuntimeManifest,
+    runtimeExecutionMode: 'batch',
     userGoal: args.userGoal || businessInput?.text || `Run ${compiledRuntimeManifest.sleeveTitle}`,
     executionMode,
     approvalMode,
@@ -139,6 +140,8 @@ export function createHermesRuntimeRequestFromManifest(args: {
       businessName: businessInput?.businessName,
       requestedAgentType: businessInput?.requestedAgentType,
       createdFromCompiledManifest: true,
+      runtimeExecutionMode: 'batch',
+      replayingReturnedTraceOnly: true,
       traceContractVersion: 'phase10.v1',
       hierarchyProofCounts: {
         sourceBlocks: compiledRuntimeManifest.sourceBlocks.length,

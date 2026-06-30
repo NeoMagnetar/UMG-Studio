@@ -225,6 +225,7 @@ export type UMGCompiledRuntimeManifest = {
 export type HermesCognitiveRuntimeRequest = {
   compiledSleeveManifest: UMGCompiledRuntimeManifest;
   compiledRuntimeManifest?: UMGCompiledRuntimeManifest;
+  runtimeExecutionMode?: 'batch' | 'stream';
   userGoal: string;
   executionMode: 'dryRun' | 'approvalRequired' | 'liveAllowed';
   approvalMode: 'none' | 'beforeToolUse' | 'beforeHighRisk' | 'manual';

@@ -1739,7 +1739,7 @@ export default function App() {
     }
     setAppSurfaceMode('runtime_geometry_observer');
     setRuntimeObserverOpen(true);
-    setStatus('Opened dedicated Runtime Geometry Observer. Activation remains real-trace-only.');
+    setStatus(compiledRuntimeManifest ? 'Runtime Graph opened. Activation remains real-trace-only.' : 'Runtime Graph opened. Structure View available before compile. Runtime trace appears after Hermes runs.');
   };
 
   const clearCompilerRuntimeState = () => {
@@ -2095,7 +2095,7 @@ export default function App() {
       const config = getCompilerAdapterConfigFromEnv();
       if (!config.enabled || !config.endpoint) {
         setCompilerResult({ status: 'not_configured', errors: [{ code: 'UMG_COMPILER_ENDPOINT_NOT_CONFIGURED', message: 'UMG compiler endpoint is not configured.' }], warnings: sleeveInputPreview.warnings, raw: { compilerSleeveInputPreview: sleeveInputPreview } });
-        setStatus('UMG compiler endpoint not configured. Start npm run umg:compiler-bridge and set VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile.');
+        setStatus('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
         return;
       }
       setStatus('Compiling with actual UMG compiler endpoint…');
@@ -2123,7 +2123,11 @@ export default function App() {
   const runHermesRuntimeFromManifest = async () => {
     if (!compiledRuntimeManifest) {
       setHermesRuntimeErrors(['UMGCompiledRuntimeManifest is required before Hermes runtime execution.']);
-      setStatus('Compile with the actual UMG compiler before running Hermes.');
+      setStatus('Structure view is available. Runtime execution requires compile.');
+      return;
+    }
+    if (!runtimeObserverPrompt.trim()) {
+      setStatus('Runtime prompt is empty. Type a task before sending to Hermes.');
       return;
     }
     const request = runtimeObserverPrompt.trim()
@@ -2168,7 +2172,7 @@ export default function App() {
     }
     setIsHermesRunning(true);
     setHermesRuntimeErrors([]);
-    setStatus(nativeActionMode === 'observe' ? 'Preparing native Hermes action in Observe mode…' : nativeActionMode === 'approval' ? 'Preparing native Hermes action approval request…' : 'Sending native Hermes action to configured bridge…');
+    setStatus('Hermes working… Starting route. Waiting for trace.');
     try {
       if (runtimeObserverPrompt.trim()) {
         const nativeRequest = createNativeHermesActionRequestFromManifest({
@@ -2186,17 +2190,17 @@ export default function App() {
         setHermesRuntimeErrors(nativeExecution.runtimeResult.errors.map((error) => `${error.code}: ${error.message}`));
         setPendingRuntimeApproval(undefined);
         setStatus(nativeExecution.result.status === 'approval_required'
-          ? 'Native Hermes action prepared and waiting for approval. No external action was taken.'
+          ? 'Hermes working… awaiting approval. Runtime trace updated from returned events.'
           : nativeExecution.result.status === 'executed'
-            ? 'Native Hermes action executed; real result and trace ingested.'
+            ? 'Hermes completed. Runtime trace updated from returned events.'
             : nativeExecution.result.status === 'observed'
-              ? 'Native Hermes action observed only; no external action was taken.'
+              ? 'Hermes completed in observe mode. Runtime trace updated from returned events.'
               : nativeExecution.result.status === 'blocked'
-                ? 'Native Hermes action blocked by UMG Gate/action policy.'
-                : 'Native Hermes action failed.');
+                ? 'Hermes failed or blocked. Current route failed.'
+                : 'Hermes failed. Current route failed.');
         return;
       }
-      setStatus('Sending compiled runtime manifest to configured Hermes runtime endpoint…');
+      setStatus('Hermes working… Running route through compiled runtime manifest.');
       const execution = await runCompiledManifestThroughHermes({ request, config: hermesConfig });
       setHermesRuntimeResult(execution.result);
       setHermesRuntimeVisualState(execution.visualState);
@@ -2209,10 +2213,10 @@ export default function App() {
       setStatus(execution.result.status === 'needsApproval' && !pendingApproval
         ? 'needsApproval returned but no approval capability could be resolved.'
         : pendingApproval
-          ? 'Hermes reached a runtime approval boundary. Approve or skip to continue execution.'
+          ? 'Hermes working… awaiting approval. Runtime trace updated from returned events.'
           : execution.result.trace.length
-            ? 'Hermes returned real runtime trace events; trace ingested into visual state.'
-            : 'Hermes returned a real response but no runtime trace events.');
+            ? 'Hermes completed. Runtime trace updated from returned events.'
+            : 'Hermes completed with no returned runtime trace events.');
     } finally {
       setIsHermesRunning(false);
     }
@@ -2288,8 +2292,8 @@ export default function App() {
         onRunHermesRuntime={runHermesRuntimeFromManifest}
         onContinueRuntimeApproval={continueHermesRuntimeAfterApproval}
         onBackToBuilder={() => setAppSurfaceMode('public')}
-        compileStatus={compiledRuntimeManifest ? 'Compile succeeded' : compilerResult?.status === 'error' ? 'Compile failed' : compilerResult?.status === 'not_configured' ? 'Compiler not configured' : 'Compile pending'}
-        runtimeStatus={isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'Runtime ready' : 'Not run'}
+        compileStatus={compiledRuntimeManifest ? 'Compiler bridge connected. Compile Sleeve' : compilerResult?.status === 'not_configured' || compilerResult?.status === 'error' ? 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge' : activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile.' : 'Compile pending'}
+        runtimeStatus={isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'ready' : 'compiling_required'}
         isHermesRunning={isHermesRunning}
         pendingRuntimeApproval={pendingRuntimeApproval}
         toolCapabilityResolutions={toolCapabilityResolutions}
@@ -2514,8 +2518,8 @@ export default function App() {
             setSelectedActiveSessionNeoBlockId(blockId);
             setGraphViewMode('neoblock');
           }}
-          compileStatus={compiledRuntimeManifest ? 'Compile succeeded' : compilerResult?.status === 'error' ? 'Compile failed' : compilerResult?.status === 'not_configured' ? 'Compiler not configured' : 'Compile pending'}
-          runtimeStatus={isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'Runtime request prepared' : 'Not run'}
+          compileStatus={compiledRuntimeManifest ? 'Compiler bridge connected. Compile Sleeve' : compilerResult?.status === 'not_configured' || compilerResult?.status === 'error' ? 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge' : 'Structure view is available. Runtime execution requires compile.'}
+          runtimeStatus={isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'ready' : 'compiling_required'}
           onCompile={runActualUMGCompiler}
           isCompiling={isHermesRunning}
         />}
@@ -2779,10 +2783,10 @@ function getBasicCandidatePreview(candidates: unknown, prompt: string) {
 
 function getCompilerBridgeCopy(result?: UMGCompilerResult) {
   const config = getCompilerAdapterConfigFromEnv();
-  if (!config.endpoint) return 'Compiler endpoint not configured. Start it with: npm run umg:compiler-bridge';
-  if (result?.status === 'error') return 'Compiler endpoint configured, but bridge is not responding. Start it with: npm run umg:compiler-bridge';
+  if (!config.endpoint) return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
+  if (result?.status === 'error') return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
   if (result?.status === 'not_configured') return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
-  return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
+  return 'Compiler bridge connected. Compile Sleeve';
 }
 
 function StatusLine({ label, value, tone }: { label: string; value: string; tone: 'ready' | 'pending' }) {
@@ -2843,8 +2847,8 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
   const activeStackPreview = activeSessionSleeve?.neoStacks.map((stack) => ({ id: stack.id, title: stack.title, reason: stack.description })) ?? [];
   const compositionSource = (hermesCustomGenerationDiagnostics?.compositionSource ?? buildCompositionSourceDiagnostics({ sleeve: activeSessionSleeve, route: activeSessionSleeve ? 'live Hermes' : 'intake draft' })) as Record<string, unknown>;
   const compilerBridgeCopy = getCompilerBridgeCopy(compilerResult);
-  const compileStatus = compiledRuntimeManifest ? 'Compile succeeded' : activeSessionSleeve?.metadata?.generatedByHermes ? (compilerResult?.status === 'ok' ? 'Compile Sleeve' : compilerBridgeCopy) : 'Compile available after source-bound Sleeve is ready.';
-  const runtimeStatus = isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? 'Hermes completed' : compiledRuntimeManifest ? 'Runtime ready' : activeSessionSleeve ? 'Structure view available before compile' : 'Waiting for Sleeve';
+  const compileStatus = compiledRuntimeManifest ? 'Compiler bridge connected. Compile Sleeve' : activeSessionSleeve?.metadata?.generatedByHermes ? (compilerResult?.status === 'ok' ? 'Compile Sleeve' : compilerBridgeCopy) : 'Compile available after source-bound Sleeve is ready.';
+  const runtimeStatus = isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? 'completed' : compiledRuntimeManifest ? 'ready' : activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile.' : 'Waiting for Sleeve';
   const basicCandidatePreview = getBasicCandidatePreview(hermesCustomGenerationDiagnostics?.topCandidates, businessInput.text);
   const hermesGenerationFailed = Boolean(hermesCustomGenerationStatus?.startsWith('failed') || compilerResult?.errors?.some((error) => String(error.code).startsWith('HERMES_CUSTOM_SLEEVE_GENERATION')));
   const nonCanonicalDevRoute = typeof window !== 'undefined' && ['5185', '5174', '5175', '5177'].includes(window.location.port);
@@ -2892,7 +2896,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     {sleeveArchitectPlan && <div className="analysisPanel basicRuntimeObserver">
       <div className="publicSectionTitle"><span>05</span><div><b>Runtime</b><small>{runtimeStatus}</small></div></div>
       <SummaryRows rows={[["Hermes", hermesEndpointConfigured ? 'configured' : 'not connected'], ["Native tools", 'available'], ["Runtime Graph", activeSessionSleeve ? 'structure available' : 'waiting for Sleeve'], ["Action mode", nativeActionMode], ...runtimeDetailRows]} />
-      <small>{activeSessionSleeve ? 'Structure view available before compile. Runtime trace appears after compile/run.' : 'Generate a Sleeve first.'}</small>
+      <small>{activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.' : 'Generate a Sleeve first.'}</small>
       <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onOpenRuntimeGeometry} disabled={!activeSessionSleeve}>Open Runtime Graph</button></div>
       {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
       {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}

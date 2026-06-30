@@ -400,10 +400,10 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(palette.map((card) => card.label)).not.toEqual(expect.arrayContaining(['Generate executive summary', 'Create financial assumptions']));
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     expect(appSource).toContain('Open Runtime Graph');
-    expect(appSource).toContain('Structure view available before compile. Runtime trace appears after compile/run.');
+    expect(appSource).toContain('Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.');
     expect(appSource).toContain('Generate a Sleeve first.');
     expect(appSource).toContain('npm run umg:compiler-bridge');
-    expect(appSource).toContain('Compiler endpoint configured, but bridge is not responding.');
+    expect(appSource).toContain('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
     expect(appSource).not.toContain('Open Runtime Observer');
     expect(appSource).not.toContain('Open Runtime Geometry');
     expect(appSource).not.toContain('Generated glue');
