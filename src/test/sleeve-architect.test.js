@@ -10,6 +10,9 @@ import { createCompilerInputFromCompileCandidate, createCompilerRequest, validat
 import { createHermesRuntimeRequestFromManifest } from '../lib/umg/hermesRuntimeExecution';
 import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from '../lib/umg/cognitiveRuntimeState';
 import { createHermesContinuationRequest, createPendingRuntimeApproval, resolveToolCapabilities } from '../lib/umg/toolCapabilityResolver';
+import { getHermesUmgRuntimeSkillPack } from '../lib/umg/hermesUmgRuntimeSkill';
+import { buildHermesToolCapabilityRegistry } from '../lib/umg/hermesToolCapabilityRegistry';
+import { validateArchitectSleeveForCompiler } from '../lib/umg/sleeveArchitectCompilerValidation';
 import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapter';
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
@@ -234,5 +237,63 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(state.activeIds).toContain('gate.refund.approval');
     expect(state.timeline).toHaveLength(4);
   });
+
+  it('packages UMG Runtime Skill knowledge with hierarchy rules, trace schema, and strict JSON envelope', () => {
+    const skill = getHermesUmgRuntimeSkillPack();
+    expect(skill.id).toBe('umg_runtime_skill_pack.v1');
+    expect(skill.instructions).toContain('Sleeve');
+    expect(skill.instructions).toContain('NeoStack');
+    expect(skill.instructions).toContain('NeoBlock');
+    expect(skill.instructions).toContain('MOLT');
+    expect(skill.instructions).toContain('Gate/control record');
+    expect(skill.traceEventTypes).toEqual(expect.arrayContaining(['run_started', 'tool_call_requires_approval', 'tool_result_received', 'run_completed']));
+    expect(skill.outputEnvelopeSchema.required).toEqual(expect.arrayContaining(['traceId', 'status', 'finalOutput', 'events']));
+  });
+
+  it('builds a Tool Capability Registry v1 for e-commerce capabilities without treating unknowns as available', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate: execution.compileCandidate, assemblyPlan: execution.assemblyPlan, blockMatchPlan: execution.blockMatchPlan, businessMap: map, businessInput: input });
+    const compilerResult = normalizeCompilerResponseToManifest({ ok: true, result: { runtime: { sleeveId: execution.runtimeSleeve.id, sleeveName: execution.runtimeSleeve.title, promptSpec: { neoBlockPrompts: [] } }, executionPlan: [], toolPolicy: undefined } }, createCompilerRequest(compilerInput));
+    const registry = buildHermesToolCapabilityRegistry({ manifest: compilerResult.manifest });
+    expect(registry.map((entry) => entry.capabilityId)).toEqual(expect.arrayContaining(['order_lookup', 'customer_message_draft', 'refund_prepare_or_request', 'inventory_update_request', 'audit_log_write', 'report_generate']));
+    expect(registry.find((entry) => entry.capabilityId === 'customer_message_draft')).toMatchObject({ available: 'yes', riskLevel: 'low', requiredApproval: false, safeForLiveExecution: true, source: 'configured' });
+    expect(registry.find((entry) => entry.capabilityId === 'refund_prepare_or_request')).toMatchObject({ riskLevel: 'irreversible', requiredApproval: true, safeForLiveExecution: false });
+    const unknown = buildHermesToolCapabilityRegistry({ manifest: compilerResult.manifest, declaredCapabilities: ['unknown_external_tool'] })[0];
+    expect(unknown.available).not.toBe('yes');
+    expect(unknown.source).toBe('unknown');
+    expect(unknown.safeForLiveExecution).toBe(false);
+  });
+
+  it('injects UMG skill instructions and capability declarations into Architect Mode Hermes requests', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate: execution.compileCandidate, assemblyPlan: execution.assemblyPlan, blockMatchPlan: execution.blockMatchPlan, businessMap: map, businessInput: input });
+    const compilerResult = normalizeCompilerResponseToManifest({ ok: true, result: { runtime: { sleeveId: execution.runtimeSleeve.id, sleeveName: execution.runtimeSleeve.title, promptSpec: { neoBlockPrompts: [] } }, executionPlan: [], toolPolicy: undefined } }, createCompilerRequest(compilerInput));
+    const hermesRequest = createHermesRuntimeRequestFromManifest({ compiledRuntimeManifest: compilerResult.manifest, userGoal: input.text, businessInput: input, executionMode: 'approvalRequired', approvalMode: 'manual', traceId: 'trace.phase13e.request' });
+    expect(hermesRequest.umgRuntimeSkillPack?.id).toBe('umg_runtime_skill_pack.v1');
+    expect(hermesRequest.toolCapabilityRegistry?.map((entry) => entry.capabilityId)).toEqual(expect.arrayContaining(['customer_message_draft', 'order_lookup']));
+    expect(hermesRequest.geometryTraceMappingIds?.sleeveId).toBe(compilerResult.manifest.sleeveId);
+    expect(hermesRequest.currentExecutionRoute?.executionPlanIds.length).toBeGreaterThan(0);
+  });
+
+  it('validates generated MOLT compiler shape and keeps gates as control records', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    const validation = validateArchitectSleeveForCompiler(execution.runtimeSleeve);
+    expect(validation.valid).toBe(true);
+    expect(validation.errors).toEqual([]);
+    expect(validation.primaryRolePresent).toBe(true);
+    expect(validation.gatesAreControlRecords).toBe(true);
+    expect(validation.oversaturatedNeoBlockIds).toEqual([]);
+  });
+
 });
+
 

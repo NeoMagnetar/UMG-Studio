@@ -187,6 +187,12 @@ export type HermesCognitiveRuntimeRequest = {
   runtimeInstructions?: string[];
   sourceBlocks?: UMGSourceBlockRef[];
   expectedTraceContract?: unknown;
+  umgRuntimeSkillPack?: unknown;
+  umgRuntimeSkillInstructions?: string;
+  toolCapabilityRegistry?: unknown[];
+  geometryTraceMappingIds?: unknown;
+  currentExecutionRoute?: unknown;
+  approvalRuntimeMode?: string;
   traceId: string;
   metadata?: Record<string, unknown>;
 };

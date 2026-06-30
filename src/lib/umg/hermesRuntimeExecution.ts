@@ -7,6 +7,8 @@ import type {
 } from './cognitiveRuntimeTypes';
 import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from './cognitiveRuntimeState';
 import { HermesRuntimeAdapterConfig, runHermesCognitiveRuntime } from './hermesCognitiveRuntimeAdapter';
+import { buildHermesToolCapabilityRegistry } from './hermesToolCapabilityRegistry';
+import { buildHermesUmgRuntimeSkillPacket, collectGeometryTraceMappingIds, getHermesUmgRuntimeSkillPack } from './hermesUmgRuntimeSkill';
 
 export type HermesRuntimeConnectionSummary = {
   configured: boolean;
@@ -67,6 +69,21 @@ export function createHermesRuntimeRequestFromManifest(args: {
     ?? compiledRuntimeManifest.toolPolicy.approvalMode
     ?? 'beforeToolUse';
   const traceId = args.traceId ?? makeTraceId(compiledRuntimeManifest);
+  const toolCapabilityRegistry = buildHermesToolCapabilityRegistry({ manifest: compiledRuntimeManifest });
+  const umgRuntimeSkillPack = getHermesUmgRuntimeSkillPack();
+  const geometryTraceMappingIds = collectGeometryTraceMappingIds(compiledRuntimeManifest);
+  const routePlanIds = compiledRuntimeManifest.executionPlan.length
+    ? compiledRuntimeManifest.executionPlan.map((step) => step.id)
+    : compiledRuntimeManifest.sourceBlocks.map((block) => block.id);
+  const routeTargetIds = compiledRuntimeManifest.executionPlan.length
+    ? compiledRuntimeManifest.executionPlan.map((step) => step.targetId)
+    : compiledRuntimeManifest.sourceBlocks.map((block) => block.id);
+  const currentExecutionRoute = {
+    executionPlanIds: routePlanIds,
+    targetIds: routeTargetIds,
+    nextTargetId: routeTargetIds[0],
+    dynamicRoutingPrepared: compiledRuntimeManifest.traceMetadata.dynamicRoutingPrepared === true
+  };
 
   return {
     compiledSleeveManifest: compiledRuntimeManifest,
@@ -87,6 +104,12 @@ export function createHermesRuntimeRequestFromManifest(args: {
       .map((step) => ({ stepId: step.id, label: step.label, requiredGateIds: step.requiredGateIds, requiredToolIds: step.requiredToolIds })),
     runtimeInstructions: compiledRuntimeManifest.runtimeInstructions,
     sourceBlocks: compiledRuntimeManifest.sourceBlocks,
+    umgRuntimeSkillPack,
+    umgRuntimeSkillInstructions: umgRuntimeSkillPack.instructions,
+    toolCapabilityRegistry,
+    geometryTraceMappingIds,
+    currentExecutionRoute,
+    approvalRuntimeMode: approvalMode,
     expectedTraceContract: {
       traceId,
       status: 'ok | blocked | needsApproval | error',
@@ -95,7 +118,9 @@ export function createHermesRuntimeRequestFromManifest(args: {
       mappingRule: 'Events must carry local IDs, source IDs, gate IDs, metadata aliases, or compiler/runtime manifest IDs. Unmapped events stay in the timeline only and must not activate visual nodes.'
     },
     metadata: {
-      source: 'umg_studio_phase10_real_hermes_runtime_contract',
+      source: 'umg_studio_phase13e_hermes_umg_runtime_skill_request',
+      previousRequestSource: 'umg_studio_phase10_real_hermes_runtime_contract',
+      umgRuntimeSkillPacket: buildHermesUmgRuntimeSkillPacket({ manifest: compiledRuntimeManifest, toolCapabilityRegistry }),
       businessName: businessInput?.businessName,
       requestedAgentType: businessInput?.requestedAgentType,
       createdFromCompiledManifest: true,

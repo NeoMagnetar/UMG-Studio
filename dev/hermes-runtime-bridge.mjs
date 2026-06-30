@@ -158,6 +158,12 @@ export function buildHermesRuntimePrompt(request) {
     approvedCapabilities: request.approvedCapabilities || [],
     deniedCapabilities: request.deniedCapabilities || [],
     pendingToolCapability: request.pendingToolCapability,
+    umgRuntimeSkillPack: request.umgRuntimeSkillPack,
+    umgRuntimeSkillInstructions: request.umgRuntimeSkillInstructions,
+    toolCapabilityRegistry: Array.isArray(request.toolCapabilityRegistry) ? request.toolCapabilityRegistry : [],
+    geometryTraceMappingIds: request.geometryTraceMappingIds,
+    currentExecutionRoute: request.currentExecutionRoute,
+    approvalRuntimeMode: request.approvalRuntimeMode,
     previousTrace: Array.isArray(request.previousTrace) ? request.previousTrace.slice(-12) : [],
     runtimeInstructions: (request.runtimeInstructions || manifest.runtimeInstructions || []).slice(0, 12),
     structure: summarizeStructure(manifest),
@@ -175,8 +181,9 @@ export function buildHermesRuntimePrompt(request) {
   };
 
   return [
-    'You are the real local Hermes cognition runtime for a UMG Studio dry-run proof.',
-    'Reason through the supplied compiled UMG runtime manifest. Do not execute tools. Do not request shell, browser, network, or filesystem tools.',
+    'You are the real local Hermes cognition runtime for a UMG Studio proof.',
+    'UMG Runtime Skill Pack is app-local request knowledge, not a global Hermes skill install. Follow its instructions when present in the packet.',
+    'Reason through the supplied compiled UMG runtime manifest. Do not request shell, browser, network, or filesystem tools. Use only the supplied toolCapabilityRegistry for capability availability.',
     'Return ONLY compact JSON with this shape. The events array should prove a real dry-run reasoning walk over supplied IDs when present:',
     '{"traceId":"...","status":"ok|blocked|needsApproval|error","finalOutput":"...","events":[{"eventId":"evt_run_started","timestamp":0,"eventType":"run_started","message":"Hermes dry-run started","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"active"},{"eventId":"evt_neostack_started","timestamp":1,"eventType":"neostack_started","message":"NeoStack considered","scopeKind":"neostack","neoStackId":"<real supplied NeoStack id>","status":"active"},{"eventId":"evt_neoblock_started","timestamp":2,"eventType":"neoblock_started","message":"NeoBlock considered","scopeKind":"neoblock","neoBlockId":"<real supplied NeoBlock id>","status":"active"},{"eventId":"evt_gate_evaluated","timestamp":3,"eventType":"gate_evaluated","message":"Gate evaluated as dry-run/control metadata only","scopeKind":"gate","gateId":"<real supplied Gate id>","status":"complete"},{"eventId":"evt_molt_role_used","timestamp":4,"eventType":"molt_role_used","message":"MOLT role used for reasoning","scopeKind":"molt","moltBlockId":"<real supplied MOLT id>","status":"processing"},{"eventId":"evt_neoblock_completed","timestamp":5,"eventType":"neoblock_completed","message":"NeoBlock dry-run reasoning completed","scopeKind":"neoblock","neoBlockId":"<same real NeoBlock id>","status":"complete"},{"eventId":"evt_run_completed","timestamp":6,"eventType":"run_completed","message":"Hermes dry-run completed","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"complete"}],"toolCalls":[],"blockedCalls":[],"approvalRequests":[],"errors":[],"artifacts":[],"unmappedEvents":[]}',
     'Events may use only real IDs from the request. Prefer structure.firstMappableIds and sourceBlocks entries. Emit neostack_started, neoblock_started, gate_evaluated, molt_role_used, and neoblock_completed only when a real supplied ID exists. If a target cannot be mapped to a supplied ID, put that attempted event in unmappedEvents with no fabricated ID instead of lighting a node.',
@@ -431,7 +438,7 @@ export function buildContinuationTraceEnvelope(request) {
       eventId: `${eventBase}.tool.result`,
       timestamp: base + 3,
       eventType: 'tool_result_received',
-      message: `${target.capabilityId} returned local non-destructive continuation result`,
+      message: `${target.capabilityId} returned local_dev_proof non-destructive continuation result`,
       scopeKind: 'tool',
       toolId: target.capabilityId,
       status: 'processing'
@@ -474,7 +481,7 @@ export function buildContinuationTraceEnvelope(request) {
     toolName: target.capabilityId,
     status: approved ? 'executed' : 'blocked',
     input: { continuationMode: request.continuationMode, approvalDecision: request.approvalDecision },
-    output: approved ? { safeProof: true, destructiveAction: false, result: `${target.capabilityId} local continuation proof completed.` } : undefined
+    output: approved ? { proofType: 'local_dev_proof', nonDestructive: true, notExternalTool: true, safeProof: true, destructiveAction: false, result: `${target.capabilityId} local_dev_proof continuation completed.` } : undefined
   };
   return {
     traceId: request.traceId,
@@ -486,7 +493,7 @@ export function buildContinuationTraceEnvelope(request) {
     blockedCalls: approved ? [] : [toolCall],
     approvalRequests: [],
     errors: [],
-    artifacts: approved ? [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: `${target.capabilityId} local proof`, kind: 'local_runtime_proof', content: { safe: true, destructiveAction: false } }] : [],
+    artifacts: approved ? [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: `${target.capabilityId} local_dev_proof`, kind: 'local_dev_proof', content: { proofType: 'local_dev_proof', nonDestructive: true, notExternalTool: true, safe: true, destructiveAction: false } }] : [],
     unmappedEvents: [],
     nextSuggestedActions: []
   };

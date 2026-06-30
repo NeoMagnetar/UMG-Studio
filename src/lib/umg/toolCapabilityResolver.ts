@@ -1,4 +1,5 @@
 import type { HermesCognitiveRuntimeRequest, HermesCognitiveRuntimeResult, UMGApprovalRequest, UMGCompiledRuntimeManifest, UMGTraceEvent } from './cognitiveRuntimeTypes';
+import { buildHermesToolCapabilityRegistry, getRegistryEntry } from './hermesToolCapabilityRegistry';
 
 export type ToolCapabilityRiskLevel = 'low' | 'medium' | 'high' | 'irreversible';
 export type ToolCapabilityAvailability = 'yes' | 'no' | 'unknown';
@@ -110,22 +111,26 @@ export function resolveToolCapabilities(args: {
   ]);
   const configured = new Set(args.configuredCapabilities?.length ? args.configuredCapabilities : manifest.toolPolicy.registry.filter((entry) => entry.availableInHermes && entry.status === 'available').map((entry) => entry.toolId));
   const unavailable = new Set(args.unavailableCapabilities ?? []);
+  const capabilityRegistry = buildHermesToolCapabilityRegistry({ manifest, declaredCapabilities: declared });
   return declared.map((capabilityId) => {
     const registryEntry = manifest.toolPolicy.registry.find((entry) => entry.toolId === capabilityId || entry.toolName === capabilityId);
+    const appRegistryEntry = getRegistryEntry(capabilityRegistry, capabilityId);
     const available: ToolCapabilityAvailability = unavailable.has(capabilityId)
       ? 'no'
-      : configured.has(capabilityId) || registryEntry?.availableInHermes
+      : configured.has(capabilityId) || registryEntry?.availableInHermes || appRegistryEntry?.available === 'yes'
         ? 'yes'
-        : 'unknown';
-    const executionPolicy = policyForCapability(capabilityId, available);
+        : appRegistryEntry?.available === 'no'
+          ? 'no'
+          : 'unknown';
+    const executionPolicy = appRegistryEntry?.executionPolicy ?? policyForCapability(capabilityId, available);
     return {
       capabilityId,
       ...relatedFromManifest(manifest, capabilityId),
-      riskLevel: riskForCapability(capabilityId),
+      riskLevel: appRegistryEntry?.riskLevel ?? riskForCapability(capabilityId),
       available,
-      mappedHermesToolName: registryEntry?.toolName ?? (available === 'yes' ? capabilityId : undefined),
+      mappedHermesToolName: appRegistryEntry?.mappedHermesToolName ?? registryEntry?.toolName ?? (available === 'yes' ? capabilityId : undefined),
       executionPolicy,
-      reason: reasonFor(capabilityId, available, executionPolicy)
+      reason: appRegistryEntry?.unavailableReason ?? reasonFor(capabilityId, available, executionPolicy)
     };
   });
 }

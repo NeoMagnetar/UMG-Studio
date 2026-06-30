@@ -99,4 +99,42 @@ describe('Hermes runtime bridge helpers', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ traceId: 'trace_phase10_test', status: 'ok', finalOutput: 'ok', events: [], unmappedEvents: [] });
   });
+
+  it('injects the app-local UMG runtime skill pack and capability registry into the Hermes prompt', async () => {
+    const { buildHermesRuntimePrompt } = await getRuntimeBridgeModule();
+    const request = {
+      ...safeRuntimeRequest,
+      toolCapabilityRegistry: [{ capabilityId: 'customer_message_draft', available: 'yes', safeForLiveExecution: true }],
+      umgRuntimeSkillPack: { id: 'umg_runtime_skill_pack.v1', instructions: 'UMG Runtime Skill Pack: use supplied UMG IDs only.' },
+      currentExecutionRoute: { route: ['block_strategy'], activeNeoBlockId: 'block_strategy' }
+    };
+    const prompt = buildHermesRuntimePrompt(request);
+    expect(prompt).toContain('UMG Runtime Skill Pack');
+    expect(prompt).toContain('toolCapabilityRegistry');
+    expect(prompt).toContain('customer_message_draft');
+    expect(prompt).toContain('currentExecutionRoute');
+    expect(prompt).toContain('run_started');
+    expect(prompt).toContain('tool_call_blocked');
+  });
+
+  it('labels local continuation fallback as local_dev_proof and non external', async () => {
+    const { buildContinuationTraceEnvelope } = await getRuntimeBridgeModule();
+    const envelope = buildContinuationTraceEnvelope({
+      ...safeRuntimeRequest,
+      traceId: 'trace.phase13e.local_fallback',
+      continuationMode: 'continue_after_approval',
+      previousTraceId: 'trace.phase13e.start',
+      approvalDecision: 'approve',
+      approvedCapabilities: ['order_lookup'],
+      deniedCapabilities: [],
+      pendingToolCapability: { capabilityId: 'order_lookup', executionPolicy: 'approvalRequired', available: 'unknown', riskLevel: 'medium' },
+      previousTrace: [],
+      preserveUMGTrace: true
+    });
+    expect(envelope.toolCalls[0].output.proofType).toBe('local_dev_proof');
+    expect(envelope.toolCalls[0].output.notExternalTool).toBe(true);
+    expect(envelope.artifacts[0].kind).toBe('local_dev_proof');
+  });
+
 });
+
