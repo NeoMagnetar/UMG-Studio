@@ -136,7 +136,39 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
   request: HermesCustomSleeveGenerationRequest
 ): NormalizedTemplateSleeve {
   const now = new Date().toISOString();
+  const promptText = `${request.userPrompt} ${plan.title} ${plan.summary}`.toLowerCase();
+  const isGreekDesktopNote = promptText.includes('desktop') && promptText.includes('note') && (promptText.includes('greek') || promptText.includes('philosophy'));
   const firstNeoBlockId = plan.neoBlocks[0]?.id ?? plan.sleeve?.id ?? `runtime.${plan.requestId}.sleeve`;
+  let normalizedCapabilities = plan.capabilities.map((capability) => {
+    const rawId = capability.capabilityId;
+    const lower = rawId.toLowerCase();
+    const capabilityId = lower.includes('local_text') || lower.includes('text_composition') || lower.includes('compose_note') || lower.includes('note_generation') || lower.includes('note_drafting') || lower.includes('note_composition') || lower.includes('philosophy_context')
+      ? 'umg.capability.local_text_composition'
+      : lower.includes('desktop_note') || lower.includes('note_file') || lower.includes('file_write') || lower.includes('note_delivery') || lower.includes('template_rendering') || lower.includes('governance_gate') || lower.includes('persistence') || lower.includes('export')
+        ? 'umg.capability.local_note_file_write'
+        : rawId;
+    return capabilityId === rawId ? capability : { ...capability, capabilityId };
+  });
+  if (isGreekDesktopNote) {
+    const textCapability = normalizedCapabilities.find((capability) => capability.capabilityId === 'umg.capability.local_text_composition') ?? {
+      capabilityId: 'umg.capability.local_text_composition',
+      label: 'Local text composition',
+      reason: 'Compose the desktop note body and Greek philosophy framing inside the app-local runtime session.',
+      riskLevel: 'low',
+      requiresConnector: false,
+      safeForAppLocalExecution: true
+    };
+    const noteArtifactCapability = normalizedCapabilities.find((capability) => capability.capabilityId === 'umg.capability.local_note_file_write') ?? {
+      capabilityId: 'umg.capability.local_note_file_write',
+      label: 'Prepare desktop note artifact',
+      reason: 'Prepare a reviewable local note artifact without writing an actual desktop file.',
+      riskLevel: 'medium',
+      requiresConnector: false,
+      safeForAppLocalExecution: false
+    };
+    normalizedCapabilities = [textCapability, noteArtifactCapability];
+  }
+  const normalizedTitle = isGreekDesktopNote ? 'Greek-Infused Desktop Note Creator' : (plan.sleeve?.title ?? plan.title);
   const normalizedGates = plan.gates.map((gate) => ({
     ...gate,
     attachesTo: gate.attachesTo ?? { kind: 'neoblock' as const, id: firstNeoBlockId },
@@ -149,7 +181,7 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
   }));
   return {
     id: plan.sleeve?.id ?? `runtime.${plan.requestId}.sleeve`,
-    title: plan.sleeve?.title ?? plan.title,
+    title: normalizedTitle,
     version: plan.sleeve?.version ?? 'runtime-session-v1',
     description: plan.sleeve?.description ?? plan.summary,
     isTemplate: true,
@@ -173,7 +205,7 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
       noGlobalHermesSkillInstall: true,
       appLocalSkillBundleId: request.appLocalSkillBundle.id,
       decompositionSummary: plan.decompositionSummary,
-      capabilities: plan.capabilities,
+      capabilities: normalizedCapabilities,
       reuseDecisions: plan.reuseDecisions,
       generatedDecisions: plan.generatedDecisions,
       createdAt: now

@@ -261,5 +261,52 @@ describe('Hermes runtime bridge helpers', () => {
     expect(envelope.artifacts[0].kind).toBe('local_dev_proof');
   });
 
+  it('continues approved local note file write as safe app-local artifact without desktop write', async () => {
+    const { buildRuntimeBridgeResponse, buildContinuationTraceEnvelope } = await getRuntimeBridgeModule();
+    const request = {
+      ...safeRuntimeRequest,
+      traceId: 'trace.phase13i_e.local_note.start',
+      executionMode: 'approvalRequired',
+      userGoal: 'write a note on my desktop about apples',
+      compiledSleeveManifest: {
+        ...safeRuntimeRequest.compiledSleeveManifest,
+        sleeveId: 'sleeve.greek.desktop.note',
+        sleeveTitle: 'Greek-Infused Desktop Note Creator',
+        executionPlan: [{ id: 'step.note', label: 'Prepare desktop note', scopeKind: 'neoblock', targetId: 'nb.desktop.note.compose', requiredGateIds: ['gate.note.approval'], requiredToolIds: ['umg.capability.local_text_composition', 'umg.capability.local_note_file_write'], orderIndex: 0 }],
+        sourceBlocks: [
+          { id: 'nb.desktop.note.compose', title: 'Compose Greek Desktop Note', scopeKind: 'neoblock' },
+          { id: 'molt.note.philosophy', title: 'Greek Philosophy Note Guidance', scopeKind: 'molt', role: 'philosophy', metadata: { parentNeoBlockId: 'nb.desktop.note.compose' } }
+        ],
+        toolPolicy: { ...safeRuntimeRequest.compiledSleeveManifest.toolPolicy, allowedTools: ['umg.capability.local_text_composition', 'umg.capability.local_note_file_write'], registry: [] }
+      },
+      toolCapabilityRegistry: [
+        { capabilityId: 'umg.capability.local_text_composition', available: 'yes', executionPolicy: 'autoAllowed', safeForLiveExecution: true, mappedHermesToolName: 'app_local_umg_local_text_composition', relatedNeoBlockId: 'nb.desktop.note.compose', relatedMoltId: 'molt.note.philosophy' },
+        { capabilityId: 'umg.capability.local_note_file_write', available: 'yes', executionPolicy: 'approvalRequired', requiredApproval: true, safeForLiveExecution: false, mappedHermesToolName: 'app_local_umg_local_note_artifact_prepare', relatedNeoBlockId: 'nb.desktop.note.compose', relatedGateId: 'gate.note.approval', relatedMoltId: 'molt.note.philosophy' }
+      ]
+    };
+    const first = await buildRuntimeBridgeResponse(request, {}, async () => { throw new Error('approval-required request should not invoke CLI'); });
+    expect(first.body.status).toBe('needsApproval');
+    expect(first.body.approvalRequests[0].raw.capabilityId).toBe('umg.capability.local_note_file_write');
+    const continuation = buildContinuationTraceEnvelope({
+      ...request,
+      traceId: 'trace.phase13i_e.local_note.continue',
+      continuationMode: 'continue_after_approval',
+      previousTraceId: request.traceId,
+      linkedTraceId: 'trace.phase13i_e.local_note.continue',
+      approvalDecision: 'approve',
+      approvedCapabilities: ['umg.capability.local_note_file_write'],
+      deniedCapabilities: [],
+      pendingToolCapability: { capabilityId: 'umg.capability.local_note_file_write', executionPolicy: 'approvalRequired', available: 'yes', riskLevel: 'medium', requestedByNeoBlockId: 'nb.desktop.note.compose', requestedByGateId: 'gate.note.approval', requestedByMoltId: 'molt.note.philosophy' },
+      previousTrace: first.body.trace,
+      preserveUMGTrace: true
+    });
+    expect(continuation.status).toBe('ok');
+    expect(continuation.events.map((event) => event.eventType)).toEqual(expect.arrayContaining(['approval_granted', 'tool_call_prepared', 'tool_call_executed', 'tool_result_received', 'neoblock_completed', 'run_completed']));
+    expect(continuation.artifacts[0]).toMatchObject({ label: 'Greek-Infused Desktop Note', kind: 'local_note_safe_artifact' });
+    expect(continuation.artifacts[0].content).toMatchObject({ title: 'Greek-Infused Desktop Note', externalActionTaken: false, destructiveAction: false, fileWritePerformed: false });
+    expect(continuation.artifacts[0].content.body).toContain('Apples');
+    expect(continuation.artifacts[0].content.body).toContain('Greek philosophy');
+  });
+
 });
 

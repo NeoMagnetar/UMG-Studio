@@ -1,4 +1,5 @@
 import type { SleeveArchitectPlan } from './sleeveArchitectTypes';
+import type { NormalizedTemplateSleeve } from './templateSleeveStructures';
 import type { ToolCapabilityResolution } from './toolCapabilityResolver';
 
 export type StudioMode = 'basic' | 'advanced';
@@ -110,15 +111,38 @@ function statusFromResolution(capabilityId: string, resolutions: ToolCapabilityR
   return 'needs connector' as const;
 }
 
-export function buildBasicCapabilityPalette(args: { plan?: SleeveArchitectPlan; resolutions?: ToolCapabilityResolution[]; content?: BasicContentClassification[] }): BasicCapabilityCard[] {
+export function buildBasicCapabilityPalette(args: { plan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; resolutions?: ToolCapabilityResolution[]; content?: BasicContentClassification[] }): BasicCapabilityCard[] {
   const plan = args.plan;
   const resolutions = args.resolutions ?? [];
-  const text = plan?.sourcePrompt.toLowerCase() ?? '';
+  const text = `${plan?.sourcePrompt.toLowerCase() ?? ''} ${args.activeSessionSleeve?.title.toLowerCase() ?? ''} ${args.activeSessionSleeve?.description.toLowerCase() ?? ''}`;
   const cards: BasicCapabilityCard[] = [];
   const add = (card: Omit<BasicCapabilityCard, 'externalActionTaken' | 'safeAction'>) => {
     if (cards.some((existing) => existing.capabilityId === card.capabilityId)) return;
     cards.push({ ...card, externalActionTaken: false, safeAction: card.status === 'available' && card.riskLevel === 'low' });
   };
+  const activeCapabilities = Array.isArray(args.activeSessionSleeve?.metadata?.capabilities)
+    ? args.activeSessionSleeve?.metadata?.capabilities as Array<{ capabilityId?: string; label?: string; reason?: string; riskLevel?: string; safeForAppLocalExecution?: boolean; requiresConnector?: boolean }>
+    : [];
+  for (const capability of activeCapabilities) {
+    const capabilityId = capability.capabilityId;
+    if (!capabilityId) continue;
+    const lowerId = capabilityId.toLowerCase();
+    const sourceBlock = args.activeSessionSleeve?.neoBlocks.find((block) => {
+      const haystack = `${block.title} ${block.description}`.toLowerCase();
+      return lowerId.includes('text_composition') ? /compose|text|note|draft|write/.test(haystack)
+        : lowerId.includes('note_file_write') ? /desktop|file|write|note|artifact|review/.test(haystack)
+          : haystack.includes(lowerId.split(/[._-]+/).slice(-1)[0] ?? lowerId);
+    });
+    const resolvedStatus = statusFromResolution(capabilityId, resolutions);
+    const status = resolvedStatus ?? (capability.requiresConnector ? 'needs connector' : capability.safeForAppLocalExecution ? 'available' : 'needs approval');
+    const riskLevel = capability.riskLevel === 'high' ? 'high' : capability.riskLevel === 'low' || status === 'available' ? 'low' : 'medium';
+    const label = capability.label
+      ?? (capabilityId === 'umg.capability.local_text_composition' ? 'Compose local note text'
+        : capabilityId === 'umg.capability.local_note_file_write' ? 'Prepare desktop note artifact'
+          : capabilityId.replace(/[._-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()));
+    add({ label, capabilityId, description: capability.reason ?? 'Declared by the active runtime-session Sleeve.', sourceNeoBlock: sourceBlock?.title, sourceNeoStack: args.activeSessionSleeve?.neoStacks.find((stack) => stack.id === sourceBlock?.neoStackId)?.title, status, riskLevel });
+  }
+  if (activeCapabilities.length) return cards.slice(0, 10);
   for (const tool of plan?.toolCapabilityNeeds ?? []) {
     const block = plan?.proposedNeoBlocks.find((candidate) => candidate.title.toLowerCase().includes(tool.capability.split('_')[0]));
     const status = statusFromResolution(tool.capability, resolutions) ?? (tool.capability.includes('send') || tool.capability.includes('refund') || tool.capability.includes('inventory') ? 'needs approval' : 'needs connector');

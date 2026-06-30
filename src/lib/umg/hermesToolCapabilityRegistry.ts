@@ -100,6 +100,32 @@ const knownCapabilities: Record<string, KnownCapability> = {
     executionPolicy: 'autoAllowed',
     requiredApproval: false,
     safeForLiveExecution: true
+  },
+  'umg.capability.local_text_composition': {
+    capabilityId: 'umg.capability.local_text_composition',
+    displayName: 'Local Text Composition',
+    description: 'Compose a reviewable local text/note artifact inside the app session without writing files or calling external tools.',
+    riskLevel: 'low',
+    available: 'yes',
+    mappedHermesToolName: 'app_local_umg_local_text_composition',
+    mappedHermesSkillId: 'app-local:umg_local_text_composition',
+    source: 'configured',
+    executionPolicy: 'autoAllowed',
+    requiredApproval: false,
+    safeForLiveExecution: true
+  },
+  'umg.capability.local_note_file_write': {
+    capabilityId: 'umg.capability.local_note_file_write',
+    displayName: 'Local Note File Write',
+    description: 'Approval-required local note-file boundary. Phase 13I-E returns a safe in-memory artifact only; no desktop file is written.',
+    riskLevel: 'medium',
+    available: 'yes',
+    mappedHermesToolName: 'app_local_umg_local_note_artifact_prepare',
+    mappedHermesSkillId: 'app-local:umg_local_note_file_write_safe_artifact',
+    source: 'configured',
+    executionPolicy: 'approvalRequired',
+    requiredApproval: true,
+    safeForLiveExecution: false
   }
 };
 
@@ -115,6 +141,8 @@ function preferredTermsForCapability(capabilityId: string) {
   if (capabilityId === 'customer_message_draft') return ['draft customer', 'customer return instructions', 'customer communication', 'reply'];
   if (capabilityId === 'report_generate') return ['generate return metrics', 'reporting', 'metrics'];
   if (capabilityId === 'order_lookup') return ['validate order', 'purchase record', 'order'];
+  if (capabilityId === 'umg.capability.local_text_composition') return ['note', 'compose', 'composition', 'text', 'greek', 'apples', 'philosophy'];
+  if (capabilityId === 'umg.capability.local_note_file_write') return ['desktop', 'note', 'file', 'write', 'artifact', 'review'];
   return capabilityId.split(/[_-]+/);
 }
 

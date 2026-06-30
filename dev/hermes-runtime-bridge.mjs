@@ -223,20 +223,29 @@ function firstApprovalTarget(request) {
   const manifest = request.compiledSleeveManifest || {};
   const executionPlan = Array.isArray(manifest.executionPlan) ? manifest.executionPlan : [];
   const registry = Array.isArray(manifest.toolPolicy?.registry) ? manifest.toolPolicy.registry : [];
+  const capabilityRegistry = Array.isArray(request.toolCapabilityRegistry) ? request.toolCapabilityRegistry : [];
   const allowedTools = Array.isArray(request.allowedTools) ? request.allowedTools : Array.isArray(manifest.toolPolicy?.allowedTools) ? manifest.toolPolicy.allowedTools : [];
-  const step = executionPlan.find((entry) => Array.isArray(entry.requiredToolIds) && entry.requiredToolIds.length)
+  const approvalEntry = capabilityRegistry.find((entry) => entry?.executionPolicy === 'approvalRequired' && entry?.capabilityId)
+    || capabilityRegistry.find((entry) => entry?.requiredApproval === true && entry?.capabilityId);
+  const stepForApproval = approvalEntry
+    ? executionPlan.find((entry) => Array.isArray(entry.requiredToolIds) && entry.requiredToolIds.includes(approvalEntry.capabilityId))
+    : undefined;
+  const step = stepForApproval
+    || executionPlan.find((entry) => Array.isArray(entry.requiredToolIds) && entry.requiredToolIds.length)
     || executionPlan.find((entry) => Array.isArray(entry.requiredGateIds) && entry.requiredGateIds.length)
     || executionPlan[0];
-  const capabilityId = step?.requiredToolIds?.[0]
+  const capabilityId = approvalEntry?.capabilityId
+    || step?.requiredToolIds?.[0]
     || allowedTools.find((tool) => typeof tool === 'string' && tool.trim())
     || registry.find((entry) => entry?.toolId)?.toolId
     || 'runtime_capability';
   const registryEntry = registry.find((entry) => entry?.toolId === capabilityId || entry?.toolName === capabilityId);
   return {
     capabilityId,
-    toolName: registryEntry?.toolName || capabilityId,
-    neoBlockId: step?.scopeKind === 'neoblock' ? step.targetId : undefined,
-    gateId: step?.requiredGateIds?.[0],
+    toolName: approvalEntry?.mappedHermesToolName || registryEntry?.toolName || capabilityId,
+    neoBlockId: approvalEntry?.relatedNeoBlockId || (step?.scopeKind === 'neoblock' ? step.targetId : undefined),
+    gateId: approvalEntry?.relatedGateId || step?.requiredGateIds?.[0],
+    moltBlockId: approvalEntry?.relatedMoltId,
     sleeveId: manifest.sleeveId
   };
 }
@@ -394,6 +403,7 @@ function firstContinuationTarget(request) {
     capabilityId: capability.capabilityId || request.approvedCapabilities?.[0] || request.deniedCapabilities?.[0] || firstStep?.requiredToolIds?.[0] || 'runtime_capability',
     neoBlockId: capability.requestedByNeoBlockId || (firstStep?.scopeKind === 'neoblock' ? firstStep.targetId : undefined),
     gateId: capability.requestedByGateId || firstStep?.requiredGateIds?.[0],
+    moltBlockId: capability.requestedByMoltId,
     sleeveId: manifest.sleeveId
   };
 }
@@ -421,7 +431,7 @@ function capabilityTargetFromEntry(request, entry) {
 }
 
 function firstSafeCapabilityTarget(request) {
-  const entry = safeCapabilityEntry(request, 'customer_message_draft') || safeCapabilityEntry(request, 'report_generate');
+  const entry = safeCapabilityEntry(request, 'customer_message_draft') || safeCapabilityEntry(request, 'report_generate') || safeCapabilityEntry(request, 'umg.capability.local_text_composition');
   return entry ? capabilityTargetFromEntry(request, entry) : undefined;
 }
 
@@ -504,6 +514,37 @@ function buildReportGenerateContent(request, target, previousArtifact) {
   };
 }
 
+function buildLocalNoteArtifactContent(request, target) {
+  const userGoal = String(request.userGoal || '').toLowerCase();
+  const mentionsApples = userGoal.includes('apple');
+  const mentionsGreek = /greek|philosophy|stoic|aristotle|plato|socrates/.test(userGoal);
+  return {
+    artifactType: 'local_note_safe_artifact',
+    title: 'Greek-Infused Desktop Note',
+    body: [
+      'Greek-Infused Desktop Note',
+      '',
+      mentionsApples
+        ? 'Apples invite a simple meditation: like Aristotle’s idea of telos, each apple carries purpose from seed to fruit, nourishing the person who chooses it with care.'
+        : 'This note is prepared as a Greek philosophy reflection for the requested desktop note topic.',
+      mentionsGreek
+        ? 'A Stoic lens adds: value the apple in front of you, act with moderation, and let wisdom shape the appetite before action.'
+        : 'Greek philosophy can still guide the note through moderation, purpose, and practical wisdom.',
+      '',
+      'Prepared as a reviewable app-local artifact only. No desktop file was written.'
+    ].join('\n'),
+    sourceCapability: target.capabilityId,
+    nonDestructive: true,
+    externalActionTaken: false,
+    destructiveAction: false,
+    fileWritePerformed: false,
+    safeAppLocalArtifact: true,
+    relatedNeoBlockId: target.neoBlockId,
+    relatedGateId: target.gateId,
+    relatedMoltId: target.moltBlockId
+  };
+}
+
 function buildCapabilityEvents(request, target, eventBase, base, offset) {
   return [
     ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.${target.capabilityId}.neoblock.started`, timestamp: base + offset, eventType: 'neoblock_started', message: `${target.capabilityId} NeoBlock started`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'active' }] : []),
@@ -564,6 +605,11 @@ export function buildContinuationTraceEnvelope(request) {
   const approved = request.approvalDecision === 'approve';
   const base = Date.now();
   const eventBase = String(request.traceId || 'continuation_trace').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const localNoteArtifact = approved && target.capabilityId === 'umg.capability.local_note_file_write'
+    ? buildLocalNoteArtifactContent(request, target)
+    : undefined;
+  const genericProof = approved ? { proofType: 'local_dev_proof', nonDestructive: true, notExternalTool: true, safeProof: true, destructiveAction: false, result: `${target.capabilityId} local_dev_proof continuation completed.` } : undefined;
+  const toolOutput = localNoteArtifact ?? genericProof;
   const events = [
     {
       traceId: request.traceId,
@@ -580,9 +626,12 @@ export function buildContinuationTraceEnvelope(request) {
       eventId: `${eventBase}.tool.prepared`,
       timestamp: base + 1,
       eventType: 'tool_call_prepared',
-      message: `${target.capabilityId} continuation boundary prepared`,
+      message: localNoteArtifact ? `${target.capabilityId} prepared as safe app-local note artifact; no desktop write will be performed` : `${target.capabilityId} continuation boundary prepared`,
       scopeKind: 'tool',
       toolId: target.capabilityId,
+      neoBlockId: target.neoBlockId,
+      gateId: target.gateId,
+      moltBlockId: target.moltBlockId,
       status: 'attention'
     },
     {
@@ -593,6 +642,9 @@ export function buildContinuationTraceEnvelope(request) {
       message: approved ? `${target.capabilityId} safe continuation completed without irreversible external side effects` : `${target.capabilityId} was blocked by denial/skip`,
       scopeKind: 'tool',
       toolId: target.capabilityId,
+      neoBlockId: target.neoBlockId,
+      gateId: target.gateId,
+      moltBlockId: target.moltBlockId,
       status: approved ? 'complete' : 'blocked'
     },
     ...(approved ? [{
@@ -600,9 +652,12 @@ export function buildContinuationTraceEnvelope(request) {
       eventId: `${eventBase}.tool.result`,
       timestamp: base + 3,
       eventType: 'tool_result_received',
-      message: `${target.capabilityId} returned local_dev_proof non-destructive continuation result`,
+      message: localNoteArtifact ? 'Safe app-local desktop note artifact returned; fileWritePerformed false' : `${target.capabilityId} returned local_dev_proof non-destructive continuation result`,
       scopeKind: 'tool',
       toolId: target.capabilityId,
+      neoBlockId: target.neoBlockId,
+      gateId: target.gateId,
+      moltBlockId: target.moltBlockId,
       status: 'processing'
     }] : []),
     ...(target.gateId ? [{
@@ -642,20 +697,20 @@ export function buildContinuationTraceEnvelope(request) {
     toolId: target.capabilityId,
     toolName: target.capabilityId,
     status: approved ? 'executed' : 'blocked',
-    input: { continuationMode: request.continuationMode, approvalDecision: request.approvalDecision },
-    output: approved ? { proofType: 'local_dev_proof', nonDestructive: true, notExternalTool: true, safeProof: true, destructiveAction: false, result: `${target.capabilityId} local_dev_proof continuation completed.` } : undefined
+    input: { continuationMode: request.continuationMode, approvalDecision: request.approvalDecision, relatedNeoBlockId: target.neoBlockId, relatedGateId: target.gateId, relatedMoltId: target.moltBlockId },
+    output: toolOutput
   };
   return {
     traceId: request.traceId,
     status: approved ? 'ok' : 'blocked',
-    finalOutput: approved ? `Continuation completed after approval for ${target.capabilityId}; no irreversible external action was executed.` : `Continuation skipped ${target.capabilityId}; route blocked/rerouted without executing the tool.`,
+    finalOutput: approved ? `Continuation completed after approval for ${target.capabilityId}; safe app-local artifact path used and no irreversible external action was executed.` : `Continuation skipped ${target.capabilityId}; route blocked/rerouted without executing the tool.`,
     events,
     trace: events,
     toolCalls: approved ? [toolCall] : [],
     blockedCalls: approved ? [] : [toolCall],
     approvalRequests: [],
     errors: [],
-    artifacts: approved ? [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: `${target.capabilityId} local_dev_proof`, kind: 'local_dev_proof', content: { proofType: 'local_dev_proof', nonDestructive: true, notExternalTool: true, safe: true, destructiveAction: false } }] : [],
+    artifacts: approved ? [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: localNoteArtifact?.title ?? `${target.capabilityId} local_dev_proof`, kind: localNoteArtifact?.artifactType ?? 'local_dev_proof', content: toolOutput, metadata: { sourceCapability: target.capabilityId, realSafeAppLocalCapability: Boolean(localNoteArtifact), externalActionTaken: false, destructiveAction: false, fileWritePerformed: false } }] : [],
     unmappedEvents: [],
     nextSuggestedActions: []
   };
@@ -756,6 +811,9 @@ export async function buildRuntimeBridgeResponse(request, env = process.env, run
   }
 
   if (request.executionMode === 'approvalRequired') {
+    const registry = Array.isArray(request.toolCapabilityRegistry) ? request.toolCapabilityRegistry : [];
+    const hasApprovalRequiredCapability = registry.some((entry) => entry?.executionPolicy === 'approvalRequired' || entry?.requiredApproval === true);
+    if (hasApprovalRequiredCapability) return jsonResponse(200, buildNeedsApprovalTraceEnvelope(request), undefined);
     const safeCapabilityEnvelope = buildSafeCapabilityTraceEnvelope(request);
     if (safeCapabilityEnvelope) return jsonResponse(200, safeCapabilityEnvelope, undefined);
     return jsonResponse(200, buildNeedsApprovalTraceEnvelope(request), undefined);

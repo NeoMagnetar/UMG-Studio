@@ -45,8 +45,8 @@ export type HermesContinuationRequest = HermesCognitiveRuntimeRequest & {
   pendingToolCapability?: ToolCapabilityResolution;
 };
 
-const safeDraftCapabilities = new Set(['customer_message_draft', 'report_generate']);
-const mediumApprovalCapabilities = new Set(['order_lookup', 'inventory_update_request', 'audit_log_write']);
+const safeDraftCapabilities = new Set(['customer_message_draft', 'report_generate', 'umg.capability.local_text_composition']);
+const mediumApprovalCapabilities = new Set(['order_lookup', 'inventory_update_request', 'audit_log_write', 'umg.capability.local_note_file_write']);
 const irreversibleCapabilities = new Set(['refund_prepare_or_request']);
 
 function unique(values: string[]) {
@@ -82,7 +82,7 @@ function reasonFor(capabilityId: string, available: ToolCapabilityAvailability, 
 function inferCapabilityFromApproval(approval?: UMGApprovalRequest, fallback?: string) {
   const raw = isRecord(approval?.raw) ? approval.raw : {};
   const label = `${approval?.label ?? ''} ${approval?.reason ?? ''} ${raw.capabilityId ?? ''} ${raw.toolId ?? ''}`.toLowerCase();
-  const candidates = ['order_lookup', 'customer_message_draft', 'refund_prepare_or_request', 'inventory_update_request', 'audit_log_write', 'report_generate'];
+  const candidates = ['umg.capability.local_note_file_write', 'umg.capability.local_text_composition', 'order_lookup', 'customer_message_draft', 'refund_prepare_or_request', 'inventory_update_request', 'audit_log_write', 'report_generate'];
   return candidates.find((candidate) => label.includes(candidate)) ?? fallback;
 }
 

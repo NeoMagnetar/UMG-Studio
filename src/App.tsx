@@ -52,6 +52,7 @@ import { buildArchitectRuntimeExecution, buildRuntimeSleeveExecutionArtifacts } 
 import { SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, StudioMode } from './lib/umg/basicModeScaffolds';
 import { adaptHermesCustomSleevePlanToRuntimeSessionSleeve, buildHermesCustomSleeveGenerationRequest, requestHermesCustomSleevePlan } from './lib/umg/hermesCustomSleeveGeneration';
+import type { HermesCustomSleevePlanCapability } from './lib/umg/hermesCustomSleeveGeneration';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -1911,7 +1912,8 @@ export default function App() {
           return;
         }
         const runtimeSleeve = adaptHermesCustomSleevePlanToRuntimeSessionSleeve(generation.plan, generationRequest);
-        const requiredTools = generation.plan.capabilities.map((capability) => capability.capabilityId).filter(Boolean);
+        const runtimeCapabilities = Array.isArray(runtimeSleeve.metadata.capabilities) ? runtimeSleeve.metadata.capabilities as HermesCustomSleevePlanCapability[] : generation.plan.capabilities;
+        const requiredTools = runtimeCapabilities.map((capability) => capability.capabilityId).filter(Boolean);
         const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools, approvalPoints: generation.plan.gates.map((gate) => gate.title), sourceLabel: 'live_hermes_custom_workflow_generation' });
         setActiveSessionSleeve(runtimeSleeve);
         setHermesCustomGenerationStatus(`ok: ${generation.plan.generationSource ?? 'live_hermes_cli'}`);
@@ -2686,7 +2688,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
 function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, compilerResult, compiledRuntimeManifest, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void }) {
   const quality = evaluateBasicSleeveQuality(sleeveArchitectPlan);
   const classifications = classifyBasicContent({ text: [businessInput.text, ...businessInput.documents.map((doc) => doc.text)].join('\n'), filenames: businessInput.documents.map((doc) => doc.filename ?? '').filter(Boolean) });
-  const palette = buildBasicCapabilityPalette({ plan: sleeveArchitectPlan, resolutions: toolCapabilityResolutions, content: classifications });
+  const palette = buildBasicCapabilityPalette({ plan: sleeveArchitectPlan, activeSessionSleeve, resolutions: toolCapabilityResolutions, content: classifications });
   const geometryManifest = useMemo(() => {
     if (!compiledRuntimeManifest) return undefined;
     try {
@@ -2746,11 +2748,11 @@ function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSl
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicRuntimeObserver">
       <div className="publicSectionTitle"><span>05</span><div><b>Runtime Observer</b><small>{runtimeStatus}</small></div></div>
-      <SummaryRows rows={[["active Sleeve", sleeveArchitectPlan.proposedSleeveTitle], ["compiled", compiledRuntimeManifest ? 'yes' : 'no'], ["Hermes runtime", runtimeStatus], ["trace events", String(hermesRuntimeVisualState?.timeline.length ?? 0)]]} />
+      <SummaryRows rows={[["active Sleeve", activeSessionSleeve?.title ?? sleeveArchitectPlan.proposedSleeveTitle], ["compiled", compiledRuntimeManifest ? 'yes' : 'no'], ["Hermes runtime", runtimeStatus], ["trace events", String(hermesRuntimeVisualState?.timeline.length ?? 0)]]} />
       <button type="button" className="publicSecondaryCta" onClick={() => onRuntimeObserverOpenChange(!runtimeObserverOpen)}>{runtimeObserverOpen ? 'Hide Runtime Observer' : 'Open Runtime Observer'}</button>
       {runtimeObserverOpen && <div className="runtimeObserverBox"><label className="hackathonField"><span>Ask Hermes to perform a task inside this Sleeve…</span><textarea value={runtimeObserverPrompt} onChange={(event) => onRuntimeObserverPromptChange(event.target.value)} placeholder="Generate the executive summary. Run the next reporting step. Draft a customer email." /></label><div className="templateActionRow"><button type="button" className="publicPrimaryCta" disabled={!compiledRuntimeManifest || isHermesRunning} onClick={onRunHermesRuntime}>{isHermesRunning ? 'Hermes Running…' : 'Run Hermes in Active Sleeve'}</button></div><div className="basicSuggestedActions">{palette.slice(0, 5).map((card) => <span key={card.capabilityId} className="capabilityStatusChip">{card.label}</span>)}</div></div>}
       {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
-      {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content.slice(0, 240) : JSON.stringify(artifact.content).slice(0, 240)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}
+      {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}
       {hermesRuntimeVisualState?.timeline.length ? <ol className="basicTraceList">{hermesRuntimeVisualState.timeline.map((event) => <li key={`${event.traceId}:${event.timestamp}`}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol> : <small>No runtime trace yet. Basic mode does not fabricate activation.</small>}
       {geometryManifest && <RuntimeGeometryPreview manifest={geometryManifest} />}
       {hermesRuntimeWarnings.length > 0 && <div className="analysisWarnings"><b>Runtime warnings</b>{hermesRuntimeWarnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
