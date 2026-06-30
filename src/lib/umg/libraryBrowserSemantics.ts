@@ -1,18 +1,9 @@
 import type { ShelfAsset } from './libraryAssets';
 import type { UMGBlock } from './types';
 import type { UmgLibraryCandidateBase } from './umgLibraryCandidateRetrieval';
-
-export type UploadedIntakeContext = {
-  name: string;
-  size: number;
-  lastModified: number;
-  mimeType?: string;
-  status: 'parsed_text' | 'unsupported_type' | 'read_error';
-  text?: string;
-  summary?: string;
-  keywords: string[];
-  error?: string;
-};
+import { buildUploadedContextNarrative, extractIntakeKeywords, summarizeIntakeText } from './intakeSemanticExtraction';
+import type { UploadedIntakeContext } from './intakeSemanticExtraction';
+export type { UploadedIntakeContext } from './intakeSemanticExtraction';
 
 export function normalizeLibraryText(value: unknown) {
   return String(value ?? '').toLowerCase().trim().replace(/[\s_-]+/g, ' ').replace(/\s+/g, ' ');
@@ -129,17 +120,13 @@ export function createMetadataMoltBlock(candidate: UmgLibraryCandidateBase): UMG
 }
 
 export function summarizeUploadedText(name: string, text: string) {
-  const compact = text.replace(/\s+/g, ' ').trim();
-  return `${name}: ${compact.slice(0, 700)}${compact.length > 700 ? '…' : ''}`;
+  return summarizeIntakeText(name, text);
 }
 
 export function extractKeywordsFromText(text: string, limit = 24) {
-  const stop = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'your', 'you', 'are', 'will', 'can', 'should', 'have', 'has', 'was', 'were', 'file', 'content']);
-  const counts = new Map<string, number>();
-  for (const token of normalizeLibraryText(text).split(/\s+/).filter((token) => token.length > 3 && !stop.has(token))) counts.set(token, (counts.get(token) ?? 0) + 1);
-  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([token]) => token);
+  return extractIntakeKeywords(text).slice(0, limit);
 }
 
 export function buildUploadedContextText(contexts: UploadedIntakeContext[]) {
-  return contexts.filter((context) => context.status === 'parsed_text' && context.summary).map((context) => context.summary).join('\n');
+  return buildUploadedContextNarrative(contexts.filter((context) => context.status === 'parsed_text' && context.summary));
 }

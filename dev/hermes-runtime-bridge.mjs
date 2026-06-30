@@ -355,6 +355,21 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
     const model = env.HERMES_INFERENCE_MODEL || HERMES_DEFAULT_MODEL;
     const toolsets = env.HERMES_RUNTIME_TOOLSETS || SAFE_TOOLSETS;
     const args = ['-z', prompt, '--provider', provider, '--model', model, '--toolsets', toolsets];
+    const childEnv = {
+      PATH: env.PATH,
+      HOME: env.HOME,
+      USER: env.USER,
+      LANG: env.LANG || 'C.UTF-8',
+      HERMES_HOME: env.HERMES_HOME,
+      HERMES_PROFILE: env.HERMES_PROFILE,
+      HERMES_INFERENCE_PROVIDER: provider,
+      HERMES_INFERENCE_MODEL: model,
+      HERMES_RUNTIME_TOOLSETS: toolsets
+    };
+    for (const [key, value] of Object.entries(env)) {
+      if (/^(OPENAI|ANTHROPIC|XAI|OPENROUTER|NOUS|HERMES_API|HERMES_PROVIDER|HERMES_MODEL)/.test(key) && value != null) childEnv[key] = value;
+    }
+    for (const key of Object.keys(childEnv)) if (childEnv[key] == null) delete childEnv[key];
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -368,7 +383,7 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
       }
     }, timeoutMs);
 
-    child = spawnFn(cliPath, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawnFn(cliPath, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     if (!child || typeof child.on !== 'function') {
       clearTimeout(timer);
       reject(new Error('Hermes runtime CLI spawn returned no process.'));
@@ -734,12 +749,16 @@ export function buildCustomSleeveGenerationPrompt(request) {
     'Use the app-local UMG skill bundle supplied below. Do not assume global Hermes skills are installed.',
     'Do not provide hidden reasoning. Include only a concise decompositionSummary.',
     'Do not perform external actions. Do not write source libraries. Do not import Website Builder.',
+    'You are not merely producing a workflow outline. You are composing a UMG hierarchy: Sleeve → NeoStacks → NeoBlocks → MOLT roles → Gates → Capabilities.',
+    'Analyze userPrompt + userContext + uploadedIntakeContexts. Uploaded content must influence block selection and block generation; if uploaded content is unsupported or unreadable, say so and do not invent file contents.',
+    'Use libraryCandidates first. Reuse relevant source-library blocks when they fit. Create only missing runtime-session draft blocks; do not emit lazy generic Process Task-style filler.',
     'Gates are control/routing/approval records, not prompt MOLT blocks.',
     'Return ONLY JSON matching schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1.',
     'Required top-level fields: schemaVersion, source, mode, generationSource, requestId, title, summary, decompositionSummary, reuseDecisions, generatedDecisions, neoStacks, neoBlocks, moltBlocks, gates, capabilities, warnings.',
     'Exact required constants: source must equal hermes_custom_workflow_generation; mode must equal runtime_session_draft.',
-    'Exact object field contract: neoStacks use id, title, description, stackOrder; neoBlocks use id, title, description, neoStackId, moltBlockIds, gateIds, blockOrder; moltBlocks use id, title, role, summary; gates use id, title, kind; capabilities use capabilityId, label, riskLevel, safeForAppLocalExecution, requiresConnector; generatedDecisions use id, reason, runtimeSessionOnly, sourceLibraryWrite.',
-    'Do not use alternate keys such as name, stackId, type, content, id-only capability objects, or source objects.',
+    'Exact object field contract: every generated MOLT draft uses id, title, role, content, description, tags, sourceKind, stackOrder, optional jsonSchema, and nlCard {title, role, category, tags, description, content}; every NeoBlock uses id, title, description/purpose, neoStackId or parentNeoStackId, stackOrder/blockOrder, moltBlockIds or moltBlocks, gates, capabilities, sourceKind, nlCard, and jsonSchema; every NeoStack uses id, title, description/purpose, stackOrder, neoBlockIds or neoBlocks, sourceKind, nlCard, and jsonSchema.',
+    'Every NeoBlock must contain meaningful MOLT layers. Every NeoStack must contain meaningful NeoBlocks. Every Sleeve must explain why each NeoStack exists.',
+    'Do not use alternate keys such as name, stackId, type-only blocks, id-only capability objects, or source objects without the required fields above.',
     'Use only prompt MOLT roles: directive, instruction, subject, primary, philosophy, blueprint.',
     'Every generatedDecision must set runtimeSessionOnly true and sourceLibraryWrite false.',
     'Capability declarations are declarations only; externalActionTaken must remain false.',
@@ -759,6 +778,29 @@ function parseJsonObjectFromText(text) {
   throw new Error('Hermes output did not contain a JSON object.');
 }
 
+function hasObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateNlCard(card, label, errors) {
+  if (!hasObject(card)) {
+    errors.push(`${label} requires nlCard.`);
+    return;
+  }
+  for (const field of ['title', 'role', 'category', 'description', 'content']) {
+    if (!String(card[field] || '').trim()) errors.push(`${label} nlCard requires ${field}.`);
+  }
+  if (!Array.isArray(card.tags)) errors.push(`${label} nlCard requires tags array.`);
+}
+
+function validateJsonSchema(schema, label, errors) {
+  if (!hasObject(schema)) errors.push(`${label} requires jsonSchema.`);
+}
+
+function hasChildren(value, idsField, embeddedField) {
+  return (Array.isArray(value?.[idsField]) && value[idsField].length > 0) || (Array.isArray(value?.[embeddedField]) && value[embeddedField].length > 0);
+}
+
 export function validateCustomSleevePlan(plan) {
   const errors = [];
   const supported = new Set(['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint']);
@@ -772,8 +814,37 @@ export function validateCustomSleevePlan(plan) {
   if (!Array.isArray(plan.neoStacks) || !plan.neoStacks.length) errors.push('neoStacks must be non-empty.');
   if (!Array.isArray(plan.neoBlocks) || !plan.neoBlocks.length) errors.push('neoBlocks must be non-empty.');
   if (!Array.isArray(plan.moltBlocks) || !plan.moltBlocks.length) errors.push('moltBlocks must be non-empty.');
+  for (const stack of plan.neoStacks || []) {
+    const label = `NeoStack ${stack?.id || '(unknown)'}`;
+    if (!String(stack?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
+    if (!Number.isFinite(Number(stack?.stackOrder))) errors.push(`${label} requires stackOrder.`);
+    if (!hasChildren(stack, 'neoBlockIds', 'neoBlocks')) errors.push(`${label} requires meaningful NeoBlock children.`);
+    validateNlCard(stack?.nlCard, label, errors);
+    validateJsonSchema(stack?.jsonSchema, label, errors);
+  }
+  for (const block of plan.neoBlocks || []) {
+    const label = `NeoBlock ${block?.id || '(unknown)'}`;
+    if (!String(block?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
+    if (!String(block?.neoStackId || block?.parentNeoStackId || '').trim()) errors.push(`${label} requires neoStackId or parentNeoStackId.`);
+    if (!Number.isFinite(Number(block?.stackOrder ?? block?.blockOrder))) errors.push(`${label} requires stackOrder or blockOrder.`);
+    if (!hasChildren(block, 'moltBlockIds', 'moltBlocks')) errors.push(`${label} requires meaningful MOLT children.`);
+    if (!Array.isArray(block?.gates)) errors.push(`${label} requires gates array.`);
+    if (!Array.isArray(block?.capabilities)) errors.push(`${label} requires capabilities array.`);
+    validateNlCard(block?.nlCard, label, errors);
+    validateJsonSchema(block?.jsonSchema, label, errors);
+  }
   for (const block of plan.moltBlocks || []) {
+    const label = `MOLT ${block?.id || '(unknown)'}`;
     if (!supported.has(block?.role)) errors.push(`Unsupported prompt MOLT role: ${block?.role}`);
+    if (!String(block?.content || '').trim()) errors.push(`${label} requires content.`);
+    if (!String(block?.description || '').trim()) errors.push(`${label} requires description.`);
+    if (!Array.isArray(block?.tags)) errors.push(`${label} requires tags array.`);
+    if (!String(block?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
+    if (!Number.isFinite(Number(block?.stackOrder))) errors.push(`${label} requires stackOrder.`);
+    if (!/source-library/i.test(String(block?.sourceKind || ''))) {
+      validateNlCard(block?.nlCard, label, errors);
+      validateJsonSchema(block?.jsonSchema, label, errors);
+    }
   }
   for (const decision of plan.generatedDecisions || []) {
     if (decision?.runtimeSessionOnly !== true) errors.push(`Generated decision ${decision?.id || '(unknown)'} must be runtimeSessionOnly.`);

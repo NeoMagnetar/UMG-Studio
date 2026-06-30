@@ -3,6 +3,7 @@ import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock, Normalize
 import { getHermesUmgAppLocalSkillBundle, UMG_SUPPORTED_PROMPT_MOLT_ROLES, type HermesUmgAppLocalSkillBundle, type UmgSupportedPromptMoltRole } from './hermesUmgSkillBundle';
 import { retrieveUmgLibraryCandidates, summarizeUmgLibraryCandidates, type UmgLibraryCandidate } from './umgLibraryCandidateRetrieval';
 import { validateHermesCustomSleevePlanScaffold } from './hermesSleevePlanSchema';
+import { buildExpandedRetrievalQuery, buildIntakeDiagnostics, buildUploadedContextNarrative, type UploadedIntakeContext } from './intakeSemanticExtraction';
 
 export type HermesCustomSleeveGenerationRequest = {
   requestId: string;
@@ -17,6 +18,9 @@ export type HermesCustomSleeveGenerationRequest = {
   gatePolicy: string;
   sourceLibraryPolicy: string;
   capabilityPolicy: string;
+  uploadedIntakeContexts: UploadedIntakeContext[];
+  expandedRetrievalQuery: string;
+  intakeDiagnostics: ReturnType<typeof buildIntakeDiagnostics>;
   libraryCandidates: UmgLibraryCandidate[];
   libraryCandidateSummary: ReturnType<typeof summarizeUmgLibraryCandidates>;
   outputContract: string;
@@ -24,6 +28,8 @@ export type HermesCustomSleeveGenerationRequest = {
 
 export type HermesCustomSleevePlanCapability = {
   capabilityId: string;
+  id?: string;
+  capability?: string;
   label: string;
   riskLevel?: 'low' | 'medium' | 'high' | 'irreversible' | 'unknown';
   riskHint?: 'low' | 'medium' | 'high' | 'irreversible' | 'unknown';
@@ -81,15 +87,28 @@ function makeRequestId() {
 export function buildHermesCustomSleeveGenerationRequest(args: {
   userPrompt: string;
   userContext?: string;
+  uploadedContexts?: UploadedIntakeContext[];
   requestId?: string;
 }): HermesCustomSleeveGenerationRequest {
   const appLocalSkillBundle = getHermesUmgAppLocalSkillBundle();
-  const libraryCandidates = retrieveUmgLibraryCandidates(`${args.userPrompt}\n${args.userContext ?? ''}`, { limit: 24 });
+  const uploadedIntakeContexts = args.uploadedContexts ?? [];
+  const uploadedNarrative = uploadedIntakeContexts.length ? buildUploadedContextNarrative(uploadedIntakeContexts) : '';
+  const userContext = [args.userContext ?? '', uploadedNarrative].filter(Boolean).join('\n\n');
+  const expandedRetrievalQuery = buildExpandedRetrievalQuery({ prompt: args.userPrompt, pastedContext: args.userContext, uploadedContexts: uploadedIntakeContexts });
+  const libraryCandidates = retrieveUmgLibraryCandidates(expandedRetrievalQuery, { limit: 24 });
   const libraryCandidateSummary = summarizeUmgLibraryCandidates(libraryCandidates);
+  const intakeDiagnostics = buildIntakeDiagnostics({
+    prompt: args.userPrompt,
+    pastedContext: args.userContext,
+    uploadedContexts: uploadedIntakeContexts,
+    expandedRetrievalQuery,
+    candidateCount: libraryCandidates.length,
+    topCandidates: libraryCandidates.slice(0, 8).map((candidate) => ({ id: candidate.id, title: candidate.title, role: candidate.role, domain: candidate.domain, blockType: candidate.blockType, matchReasons: candidate.matchReasons }))
+  });
   return {
     requestId: args.requestId ?? makeRequestId(),
     userPrompt: args.userPrompt,
-    userContext: args.userContext ?? '',
+    userContext,
     selectedMode: 'custom_workflow',
     appLocalSkillBundle,
     decompositionSkillText: appLocalSkillBundle.sleeveDecompositionSkill,
@@ -99,9 +118,12 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
     gatePolicy: 'Gates are control/routing/approval records, not prompt MOLT blocks. Reject plans that put gates in moltBlocks.',
     sourceLibraryPolicy: 'No source-library mutation. Use prompt + pasted context + uploaded content together. Reuse relevant existing library blocks first from libraryCandidates; retrieve and match existing blocks before creating anything new. Preserve candidate id/sourcePath/sourceKind and source/reuse/generated status when reused. Generated records are runtime-session drafts only and sourceLibraryWrite must remain false; never emit lazy generic filler blocks.',
     capabilityPolicy: appLocalSkillBundle.capabilityBoundaryRules,
+    uploadedIntakeContexts,
+    expandedRetrievalQuery,
+    intakeDiagnostics,
     libraryCandidates,
     libraryCandidateSummary,
-    outputContract: 'Return only structured JSON for schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1 with concise decompositionSummary; do not include chain-of-thought. Compose a real UMG Sleeve from userPrompt + userContext + uploaded file intake context. Produce both NL card fields (title, summary/description, rationale/content) and JSON schema fields for Sleeve, NeoStacks, NeoBlocks, MOLT blocks, gates, capabilities, reuseDecisions, and generatedDecisions. Use libraryCandidates before inventing blocks: preserve reusedBlockId, sourcePath, sourceKind="source-library reused" when a candidate is reused; generate only missing runtime-session draft MOLT/NeoBlock/NeoStack glue; attach NeoStacks under Sleeve, NeoBlocks under NeoStacks, MOLT blocks under NeoBlocks, and set parentNeoStackId, parentNeoBlockId, stackOrder, role, tags, blockType, source status, reuse/generated status. Gates must stay control records, not fake prompt MOLT blocks. Reject lazy generic blocks that do not reflect prompt, context, and uploaded content.'
+    outputContract: 'You are not merely producing a workflow outline. You are composing a UMG hierarchy: Sleeve → NeoStacks → NeoBlocks → MOLT roles → Gates → Capabilities. Return only structured JSON for schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1 with concise decompositionSummary; do not include chain-of-thought. Compose a real UMG Sleeve from userPrompt + userContext + uploadedIntakeContexts. Uploaded content must influence block selection and block generation; if uploaded content is unsupported or unreadable, say so and do not invent file contents. Use source-library candidates first from the supplied libraryCandidates array and reuse relevant source blocks when they fit; create only missing runtime-session draft blocks. Every generated MOLT draft must include id, title, role, content, description, tags, sourceKind="runtime-session draft" or "generated glue", stackOrder, optional jsonSchema, and nlCard {title, role, category, tags, description, content}. Every NeoBlock must contain meaningful MOLT layers and include id, title, purpose/description, parentNeoStackId or neoStackId, stackOrder/blockOrder, moltBlocks or moltBlockIds, gates, capabilities, sourceKind, nlCard, and jsonSchema. Every NeoStack must contain meaningful NeoBlocks and include id, title, purpose/description, stackOrder, neoBlocks or neoBlockIds, sourceKind, nlCard, and jsonSchema. Every Sleeve must explain why each NeoStack exists. Produce both NL card fields and JSON schema fields. Preserve reusedBlockId, sourcePath, sourceKind="source-library reused" when a candidate is reused. Gates must stay control records, not fake prompt MOLT blocks. Do not claim source-library mutation. Do not write files. Do not emit lazy generic blocks such as Process Task unless the prompt truly only supports that.'
   };
 }
 
@@ -133,7 +155,7 @@ export function validateHermesCustomSleevePlan(plan: unknown): { valid: boolean;
     if (!(gate as Record<string, unknown>).id || !(gate as Record<string, unknown>).title) errors.push('Each gate requires id and title.');
   });
   (candidate.capabilities ?? []).forEach((capability) => {
-    if (!capability.capabilityId) errors.push('Each capability declaration requires capabilityId.');
+    if (!String(capability.capabilityId ?? capability.id ?? capability.capability ?? capability.label ?? '').trim()) errors.push('Each capability declaration requires capabilityId.');
   });
   return { valid: errors.length === 0, errors, warnings };
 }
@@ -171,14 +193,15 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
   const isGreekDesktopNote = promptText.includes('desktop') && promptText.includes('note') && (promptText.includes('greek') || promptText.includes('philosophy'));
   const firstNeoBlockId = plan.neoBlocks[0]?.id ?? plan.sleeve?.id ?? `runtime.${plan.requestId}.sleeve`;
   let normalizedCapabilities = plan.capabilities.map((capability) => {
-    const rawId = capability.capabilityId;
+    const rawId = String(capability.capabilityId ?? capability.id ?? capability.capability ?? capability.label ?? 'umg.capability.local_workflow_draft').trim() || 'umg.capability.local_workflow_draft';
     const lower = rawId.toLowerCase();
     const capabilityId = lower.includes('local_text') || lower.includes('text_composition') || lower.includes('compose_note') || lower.includes('note_generation') || lower.includes('note_drafting') || lower.includes('note_composition') || lower.includes('philosophy_context')
       ? 'umg.capability.local_text_composition'
       : lower.includes('desktop_note') || lower.includes('note_file') || lower.includes('file_write') || lower.includes('note_delivery') || lower.includes('template_rendering') || lower.includes('governance_gate') || lower.includes('persistence') || lower.includes('export')
         ? 'umg.capability.local_note_file_write'
         : rawId;
-    return capabilityId === rawId ? capability : { ...capability, capabilityId };
+    const label = capability.label ?? capability.capability ?? capability.id ?? capabilityId;
+    return { ...capability, capabilityId, label };
   });
   if (isGreekDesktopNote) {
     const textCapability = normalizedCapabilities.find((capability) => capability.capabilityId === 'umg.capability.local_text_composition') ?? {
@@ -268,10 +291,39 @@ export async function requestHermesCustomSleevePlan(args: {
     return { ok: false, validation: { valid: false, errors: ['Hermes custom Sleeve generation endpoint is not configured.'], warnings: [] }, externalActionTaken: false };
   }
   const fetcher = args.fetchImpl ?? fetch;
+  const bridgeRequest = {
+    ...args.request,
+    appLocalSkillBundle: {
+      id: args.request.appLocalSkillBundle.id,
+      title: args.request.appLocalSkillBundle.title,
+      version: args.request.appLocalSkillBundle.version,
+      supportedPromptMoltRoles: args.request.appLocalSkillBundle.supportedPromptMoltRoles,
+      sourceLibraryBoundaryRules: args.request.appLocalSkillBundle.sourceLibraryBoundaryRules,
+      capabilityBoundaryRules: args.request.appLocalSkillBundle.capabilityBoundaryRules
+    },
+    decompositionSkillText: 'Decompose Custom Workflow prompt + pasted/uploaded context into Sleeve → NeoStacks → NeoBlocks → MOLT. Use library candidates first. Generate only missing runtime-session draft blocks. Keep Gates as control records and never mutate source libraries.',
+    hierarchyBlockCardSkillText: 'UMG hierarchy: Sleeve contains NeoStacks; NeoStacks contain NeoBlocks; NeoBlocks contain MOLT role cards plus Gates/Capabilities. Generated stacks, blocks, and MOLT cards must include NL card fields and JSON schema fields.',
+    compilerAlignmentRules: 'Current compiler-supported prompt MOLT roles: directive, instruction, subject, primary, philosophy, blueprint. Gates are UMGGateRecord/control records, not prompt MOLT records.',
+    libraryCandidates: args.request.libraryCandidates.slice(0, 8).map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      blockType: candidate.blockType,
+      role: candidate.role,
+      tags: candidate.tags,
+      description: candidate.description,
+      domain: candidate.domain,
+      category: candidate.category,
+      sourcePath: candidate.sourcePath,
+      sourceKind: candidate.sourceKind,
+      compatibility: candidate.compatibility,
+      score: candidate.score,
+      matchReasons: candidate.matchReasons
+    }))
+  };
   const response = await fetcher(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(args.request)
+    body: JSON.stringify(bridgeRequest)
   });
   const raw = await response.json().catch(() => undefined);
   if (!response.ok) {

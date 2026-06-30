@@ -133,6 +133,12 @@ describe('Hermes runtime bridge helpers', () => {
     const prompt = buildCustomSleeveGenerationPrompt(request);
     expect(prompt).toContain('UMG Sleeve Decomposition Skill');
     expect(prompt).toContain('Return ONLY JSON');
+    expect(prompt).toContain('You are not merely producing a workflow outline');
+    expect(prompt).toContain('Sleeve → NeoStacks → NeoBlocks → MOLT roles → Gates → Capabilities');
+    expect(prompt).toContain('Uploaded content must influence block selection and block generation');
+    expect(prompt).toContain('nlCard');
+    expect(prompt).toContain('jsonSchema');
+    expect(prompt).toContain('Every NeoBlock must contain meaningful MOLT layers');
     expect(prompt).toContain('custom_workflow');
     expect(prompt).not.toContain('chain-of-thought');
     const hermesPlan = {
@@ -146,9 +152,9 @@ describe('Hermes runtime bridge helpers', () => {
       decompositionSummary: 'Concise visible summary only.',
       reuseDecisions: [],
       generatedDecisions: [{ id: 'generated.safe', title: 'Safe generated block', runtimeSessionOnly: true, sourceLibraryWrite: false, reason: 'Needed for test.' }],
-      neoStacks: [{ id: 'stack.bridge', title: 'Bridge Stack', description: 'Bridge generated stack.', neoBlockIds: ['block.bridge'] }],
-      neoBlocks: [{ id: 'block.bridge', title: 'Bridge Block', description: 'Bridge generated block.', neoStackId: 'stack.bridge', moltBlockIds: ['molt.bridge.primary'] }],
-      moltBlocks: [{ id: 'molt.bridge.primary', title: 'Bridge Primary', role: 'primary', content: 'Primary content.', parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge' }],
+      neoStacks: [{ id: 'stack.bridge', title: 'Bridge Stack', description: 'Bridge generated stack.', stackOrder: 1, neoBlockIds: ['block.bridge'], sourceKind: 'runtime-session draft', nlCard: { title: 'Bridge Stack', role: 'neostack', category: 'test', tags: ['bridge'], description: 'Bridge generated stack.', content: 'Bridge stack exists for test synthesis.' }, jsonSchema: { type: 'object', properties: { purpose: { type: 'string' } } } }],
+      neoBlocks: [{ id: 'block.bridge', title: 'Bridge Block', description: 'Bridge generated block.', neoStackId: 'stack.bridge', stackOrder: 1, blockOrder: 1, moltBlockIds: ['molt.bridge.primary'], gates: [], capabilities: [], sourceKind: 'runtime-session draft', nlCard: { title: 'Bridge Block', role: 'neoblock', category: 'test', tags: ['bridge'], description: 'Bridge generated block.', content: 'Bridge block contains the test primary MOLT.' }, jsonSchema: { type: 'object', properties: { purpose: { type: 'string' } } } }],
+      moltBlocks: [{ id: 'molt.bridge.primary', title: 'Bridge Primary', role: 'primary', content: 'Primary content.', description: 'Primary content for bridge validation.', tags: ['bridge'], sourceKind: 'runtime-session draft', stackOrder: 1, parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge', nlCard: { title: 'Bridge Primary', role: 'primary', category: 'test', tags: ['bridge'], description: 'Primary content for bridge validation.', content: 'Primary content.' }, jsonSchema: { type: 'object', properties: { content: { type: 'string' } } } }],
       gates: [],
       capabilities: [],
       warnings: []
@@ -159,6 +165,10 @@ describe('Hermes runtime bridge helpers', () => {
     expect(response.body.plan.generationSource).toBe('live_hermes_cli');
     expect(response.body.validation.valid).toBe(true);
     expect(response.body.externalActionTaken).toBe(false);
+    const invalidMissingCards = { ...hermesPlan, moltBlocks: [{ id: 'molt.bad', title: 'Bad Primary', role: 'primary', content: 'Missing required card/schema/source fields.', parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge' }] };
+    const invalidResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(invalidMissingCards) }));
+    expect(invalidResponse.status).toBe(422);
+    expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/nlCard|jsonSchema|sourceKind|tags/);
   });
 
   it('executes customer_message_draft as real safe app-local capability with artifact and trace events', async () => {

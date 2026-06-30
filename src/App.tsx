@@ -56,6 +56,7 @@ import { adaptHermesCustomSleevePlanToRuntimeSessionSleeve, buildHermesCustomSle
 import type { HermesCustomSleevePlanCapability } from './lib/umg/hermesCustomSleeveGeneration';
 import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './lib/umg/generated/umgLibraryMetadataIndex';
 import { buildUploadedContextText, createMetadataMoltBlock, extractKeywordsFromText, itemMatchesLiveTagQuery, itemMatchesSelectedTags, matchesPrefixFirstBlockSearch, normalizeLibraryText, sortMatchingTags, sortPrefixFirstBlockSearchItems, summarizeUploadedText, UploadedIntakeContext } from './lib/umg/libraryBrowserSemantics';
+import { createReadErrorUploadedIntakeContext, createUnsupportedUploadedIntakeContext, createUploadedIntakeContext } from './lib/umg/intakeSemanticExtraction';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -118,9 +119,9 @@ type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
 type PlacementTargetChoice = { id: string; label: string; detail?: string; neostackId?: string; neoblockId?: string };
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
 const publicQuickChips = ['Business Automation', 'Chatbot / Support Agent', 'Website / Landing Page', 'Custom Workflow'];
-type PublicSelectedFile = { name: string; size: number; lastModified: number; type?: string; intakeStatus?: UploadedIntakeContext['status']; textPreview?: string; keywords?: string[] };
+type PublicSelectedFile = { name: string; size: number; lastModified: number; type?: string; intakeStatus?: UploadedIntakeContext['status']; textPreview?: string; keywords?: string[]; syntaxSignals?: string[]; semanticSignals?: string[]; domainSignals?: string[]; suggestedMoltRoles?: string[] };
 const supportedIntakeTextFile = (file: File) => /^(text\/|application\/(json|csv)$)/i.test(file.type) || /\.(md|markdown|txt|json|csv)$/i.test(file.name);
-const publicFileKey = (file: Pick<PublicSelectedFile, 'name' | 'size' | 'lastModified'>) => `${file.name}:${file.size}:${file.lastModified}`;
+const publicFileKey = (file: { name?: string; fileName?: string; size?: number; sizeBytes?: number; lastModified?: number }) => `${file.name ?? file.fileName ?? 'unknown'}:${file.size ?? file.sizeBytes ?? 0}:${file.lastModified ?? 0}`;
 const normalizePublicChipForAnalyzer = (chip?: string) => ({
   'Chatbot / Support Agent': 'Chatbot',
   'Website / Landing Page': 'Website Builder',
@@ -1873,6 +1874,7 @@ export default function App() {
             uploadedIntakeContextText ? `Uploaded file intake context:\n${uploadedIntakeContextText}` : '',
             uploadedIntakeKeywords.length ? `Uploaded file keywords: ${uploadedIntakeKeywords.join(', ')}` : ''
           ].filter(Boolean).join('\n\n'),
+          uploadedContexts: uploadedIntakeContexts,
           requestId: `phase13ic_${Date.now()}`
         });
         const hermesConfig = getHermesRuntimeAdapterConfigFromEnv();
@@ -1880,6 +1882,8 @@ export default function App() {
         const preflightDiagnostics = {
           generationRoute: generationEndpoint ? 'live Hermes custom-sleeve-generation endpoint' : hermesConfig.endpoint ? 'live Hermes derived custom-sleeve-generation endpoint' : 'not configured',
           viteHermesGenerateUrlPresent: Boolean(generationEndpoint),
+          expandedRetrievalQuery: generationRequest.expandedRetrievalQuery,
+          intakeDiagnostics: generationRequest.intakeDiagnostics,
           candidateRetrievalRan: true,
           candidateCount: generationRequest.libraryCandidates.length,
           uploadedContextCount: uploadedIntakeContexts.filter((context) => context.status === 'parsed_text').length,
@@ -1922,7 +1926,9 @@ export default function App() {
           unresolvedCount: normalizedSourceStatus.unresolvedCount,
           sourceBindingStatus: normalizedSourceStatus.sourceBindingStatus,
           sourceBindingWarning: normalizedSourceStatus.sourceBindingWarning,
-          bridgeDebug: (generation.raw as Record<string, unknown> | undefined)?.debug
+          bridgeDebug: (generation.raw as Record<string, unknown> | undefined)?.debug,
+          nlCardCount: [generation.plan.sleeve, ...generation.plan.neoStacks, ...generation.plan.neoBlocks, ...generation.plan.moltBlocks].filter((entry) => Boolean((entry as Record<string, unknown> | undefined)?.nlCard)).length,
+          jsonSchemaCount: [generation.plan.sleeve, ...generation.plan.neoStacks, ...generation.plan.neoBlocks, ...generation.plan.moltBlocks].filter((entry) => Boolean((entry as Record<string, unknown> | undefined)?.jsonSchema)).length
         });
         setHermesCustomGenerationStatus(`ok: live Hermes · candidates ${generationRequest.libraryCandidates.length} · title ${generation.plan.title}`);
         setBusinessAutomationCoreBuild(undefined);
@@ -2310,23 +2316,22 @@ export default function App() {
       onFilesAdd={(files) => {
         files.forEach(async (file) => {
           const base = { name: file.name, size: file.size, lastModified: file.lastModified, type: file.type };
+          const intakeBase = { fileName: file.name, mimeType: file.type, sizeBytes: file.size, lastModified: file.lastModified };
           if (!supportedIntakeTextFile(file)) {
-            const unsupported: UploadedIntakeContext = { ...base, mimeType: file.type, status: 'unsupported_type', keywords: [] };
+            const unsupported: UploadedIntakeContext = createUnsupportedUploadedIntakeContext(intakeBase);
             setUploadedIntakeContexts((current) => current.some((entry) => publicFileKey(entry) === publicFileKey(base)) ? current : [...current, unsupported]);
-            setPublicSelectedFiles((current) => current.some((entry) => publicFileKey(entry) === publicFileKey(base)) ? current : [...current, { ...base, intakeStatus: 'unsupported_type' }]);
+            setPublicSelectedFiles((current) => current.some((entry) => publicFileKey(entry) === publicFileKey(base)) ? current : [...current, { ...base, intakeStatus: 'unsupported_type', textPreview: unsupported.summary, keywords: [] }]);
             return;
           }
           try {
             const text = await file.text();
-            const keywords = extractKeywordsFromText(text);
-            const summary = summarizeUploadedText(file.name, text);
-            const parsed: UploadedIntakeContext = { ...base, mimeType: file.type, status: 'parsed_text', text, summary, keywords };
+            const parsed: UploadedIntakeContext = createUploadedIntakeContext({ ...intakeBase, text });
             setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), parsed]);
-            setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'parsed_text', textPreview: summary, keywords }]);
+            setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'parsed_text', textPreview: parsed.summary, keywords: parsed.keywords, syntaxSignals: parsed.syntaxSignals, semanticSignals: parsed.semanticSignals, domainSignals: parsed.domainSignals, suggestedMoltRoles: parsed.suggestedMoltRoles }]);
           } catch (error) {
-            const failed: UploadedIntakeContext = { ...base, mimeType: file.type, status: 'read_error', keywords: [], error: error instanceof Error ? error.message : String(error) };
+            const failed: UploadedIntakeContext = createReadErrorUploadedIntakeContext({ ...intakeBase, error: error instanceof Error ? error.message : String(error) });
             setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), failed]);
-            setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'read_error' }]);
+            setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'read_error', textPreview: failed.summary }]);
           }
         });
       }}
@@ -2797,7 +2802,7 @@ function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSl
       <p className="analysisSummary">{businessInput.text}</p>
       <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{activeSessionSleeve || sleeveArchitectPlan ? 'Regenerate Sleeve' : 'Build UMG Sleeve'}</button><button type="button" className="publicSecondaryCta" onClick={() => onStudioModeChange('advanced')}>Open Advanced Details</button></div>
       {hermesCustomGenerationStatus && <small>Hermes custom generation: {hermesCustomGenerationStatus}</small>}
-      {hermesCustomGenerationDiagnostics && <details className="analysisWarnings libraryCandidateEvidence" open><summary><b>Generation diagnostics</b><span>{String(hermesCustomGenerationDiagnostics.generationRoute ?? 'unknown route')}</span></summary><SummaryRows rows={[["library candidate count", String(hermesCustomGenerationDiagnostics.libraryCandidateCount ?? hermesCustomGenerationDiagnostics.candidateCount ?? 'unknown')], ["top candidate IDs/titles", Array.isArray(hermesCustomGenerationDiagnostics.topCandidates) ? (hermesCustomGenerationDiagnostics.topCandidates as Array<Record<string, unknown>>).slice(0, 5).map((candidate) => `${String(candidate.id ?? 'unknown')} ${String(candidate.title ?? '')}`).join(' · ') : 'not available'], ["libraryCandidates included", String(hermesCustomGenerationDiagnostics.libraryCandidatesIncludedInRequest ?? 'unknown')], ["bridge received candidates", String((hermesCustomGenerationDiagnostics.bridgeDebug as Record<string, unknown> | undefined)?.receivedLibraryCandidateCount ?? 'unknown')], ["reuse decisions", String(hermesCustomGenerationDiagnostics.reuseDecisionCount ?? 'unknown')], ["node-level reused count", String(hermesCustomGenerationDiagnostics.nodeLevelReusedCount ?? 'unknown')], ["generated glue count", String(hermesCustomGenerationDiagnostics.generatedGlueCount ?? 'unknown')], ["runtime draft count", String(hermesCustomGenerationDiagnostics.runtimeDraftCount ?? 'unknown')], ["unresolved count", String(hermesCustomGenerationDiagnostics.unresolvedCount ?? 'unknown')], ["source binding status", String(hermesCustomGenerationDiagnostics.sourceBindingStatus ?? 'unknown')]]} />{Boolean(hermesCustomGenerationDiagnostics.sourceBindingWarning) && <div className="sourceBindingWarning"><b>Source binding warning</b><span>{String(hermesCustomGenerationDiagnostics.sourceBindingWarning)}</span></div>}<pre>{JSON.stringify(hermesCustomGenerationDiagnostics, null, 2)}</pre></details>}
+      {hermesCustomGenerationDiagnostics && <details className="analysisWarnings libraryCandidateEvidence" open><summary><b>Intake Intelligence Diagnostics</b><span>{String(hermesCustomGenerationDiagnostics.generationRoute ?? 'unknown route')}</span></summary><SummaryRows rows={[["prompt analyzed", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.promptAnalyzed ?? 'unknown')], ["pasted context analyzed", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.pastedContextAnalyzed ?? 'unknown')], ["uploaded files analyzed", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.uploadedFilesAnalyzed ?? hermesCustomGenerationDiagnostics.uploadedContextCount ?? 0)], ["parsed uploaded files", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.parsedUploadedFiles ?? hermesCustomGenerationDiagnostics.uploadedContextCount ?? 0)], ["unsupported files", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.unsupportedFiles ?? 0)], ["extracted keywords", Array.isArray((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.extractedKeywords) ? ((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown>).extractedKeywords as string[]).slice(0, 16).join(', ') : String(hermesCustomGenerationDiagnostics.uploadedContextKeywords ?? '')], ["syntax signals", Array.isArray((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.syntaxSignals) ? ((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown>).syntaxSignals as string[]).join(', ') : 'none'], ["semantic signals", Array.isArray((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.semanticSignals) ? ((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown>).semanticSignals as string[]).join(', ') : 'none'], ["domain signals", Array.isArray((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.domainSignals) ? ((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown>).domainSignals as string[]).join(', ') : 'none'], ["MOLT role hints", Array.isArray((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.moltRoleHints) ? ((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown>).moltRoleHints as string[]).join(', ') : 'none'], ["included in retrieval query", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.includedInRetrievalQuery ?? 'unknown')], ["included in Hermes request", String((hermesCustomGenerationDiagnostics.intakeDiagnostics as Record<string, unknown> | undefined)?.includedInHermesRequest ?? 'unknown')], ["library candidate count", String(hermesCustomGenerationDiagnostics.libraryCandidateCount ?? hermesCustomGenerationDiagnostics.candidateCount ?? 'unknown')], ["top candidate IDs/titles", Array.isArray(hermesCustomGenerationDiagnostics.topCandidates) ? (hermesCustomGenerationDiagnostics.topCandidates as Array<Record<string, unknown>>).slice(0, 5).map((candidate) => `${String(candidate.id ?? 'unknown')} ${String(candidate.title ?? '')}`).join(' · ') : 'not available'], ["libraryCandidates included", String(hermesCustomGenerationDiagnostics.libraryCandidatesIncludedInRequest ?? 'unknown')], ["bridge received candidates", String((hermesCustomGenerationDiagnostics.bridgeDebug as Record<string, unknown> | undefined)?.receivedLibraryCandidateCount ?? 'unknown')], ["reuse decisions", String(hermesCustomGenerationDiagnostics.reuseDecisionCount ?? 'unknown')], ["generated draft counts", `runtime ${String(hermesCustomGenerationDiagnostics.runtimeDraftCount ?? 'unknown')} · glue ${String(hermesCustomGenerationDiagnostics.generatedGlueCount ?? 'unknown')}`], ["NL cards produced", String(hermesCustomGenerationDiagnostics.nlCardCount ?? 'pending Hermes response')], ["JSON schemas produced", String(hermesCustomGenerationDiagnostics.jsonSchemaCount ?? 'pending Hermes response')], ["source binding status", String(hermesCustomGenerationDiagnostics.sourceBindingStatus ?? 'unknown')]]} />{Boolean(hermesCustomGenerationDiagnostics.sourceBindingWarning) && <div className="sourceBindingWarning"><b>Source binding warning</b><span>{String(hermesCustomGenerationDiagnostics.sourceBindingWarning)}</span></div>}<pre>{JSON.stringify(hermesCustomGenerationDiagnostics, null, 2)}</pre></details>}
       {activeSessionSleeve?.metadata?.libraryCandidateSummary ? <div className="analysisWarnings libraryCandidateEvidence"><b>Library candidate retrieval ran</b><span>{JSON.stringify(activeSessionSleeve.metadata.libraryCandidateSummary)}</span></div> : null}
       {classifications.some((entry) => entry.sensitive) && <div className="analysisWarnings"><b>Sensitive material detected</b><span>It will not be shown in prompts, trace, or artifacts.</span></div>}
       <div className="basicClassificationChips">{classifications.map((entry) => <span key={entry.kind}>{entry.label}{entry.sensitive ? ' · protected' : ''}</span>)}</div>
