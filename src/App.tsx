@@ -2662,6 +2662,13 @@ function HermesRuntimePhase7Panel({ request, result, visualState, warnings, erro
       <div className="phase7ChipRow"><b>Tools</b>{result.toolCalls.length ? result.toolCalls.map((call, index) => <span key={call.id || `${call.toolId}:${index}`}>{call.toolName ?? call.toolId}: {call.status}</span>) : <span>none</span>}</div>
       <div className="phase7ChipRow"><b>Approvals</b>{result.approvalRequests.length ? result.approvalRequests.map((approval, index) => <span key={approval.id || approval.approvalId || `${approval.label}:${index}`}>{approval.label}: {approval.status}</span>) : <span>none</span>}</div>
       <div className="phase7ChipRow"><b>Artifacts</b>{result.artifacts.length ? result.artifacts.map((artifact, index) => <span key={artifact.id || `${artifact.label}:${index}`}>{artifact.label}</span>) : <span>none</span>}</div>
+      {result.artifacts.length > 0 && <div className="analysisWarnings runtimeArtifactDetails"><b>Runtime artifacts</b>{result.artifacts.map((artifact, index) => {
+        const content = artifact.content && typeof artifact.content === 'object' && !Array.isArray(artifact.content) ? artifact.content as Record<string, unknown> : {};
+        const body = typeof content.body === 'string' ? content.body : '';
+        return <span key={artifact.id || `runtime-artifact-${index}`}>
+          {String(content.artifactType ?? artifact.kind)} · {String(content.title ?? artifact.label)} · capability {String(content.sourceCapability ?? artifact.metadata?.sourceCapability ?? 'unknown')} · nonDestructive {String(content.nonDestructive ?? 'unknown')} · externalActionTaken {String(content.externalActionTaken ?? artifact.metadata?.externalActionTaken ?? 'unknown')} · NeoBlock {String(content.relatedNeoBlockId ?? 'not mapped')} · Gate {String(content.relatedGateId ?? 'not mapped')} · MOLT {String(content.relatedMoltId ?? 'not mapped')}{body ? ` · ${body.slice(0, 240)}${body.length > 240 ? '…' : ''}` : ''}
+        </span>;
+      })}</div>}
     </div>}
     <div className="analysisPanel phase7TraceIngestionPanel">
       <div className="publicSectionTitle"><span>17</span><div><b>Real Trace Ingestion</b><small>Only real Hermes UMGTraceEvent records.</small></div></div>

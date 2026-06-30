@@ -111,14 +111,31 @@ function titleFromCapability(capabilityId: string) {
   return capabilityId.split(/[_-]+/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
+function preferredTermsForCapability(capabilityId: string) {
+  if (capabilityId === 'customer_message_draft') return ['draft customer', 'customer return instructions', 'customer communication', 'reply'];
+  if (capabilityId === 'report_generate') return ['generate return metrics', 'reporting', 'metrics'];
+  if (capabilityId === 'order_lookup') return ['validate order', 'purchase record', 'order'];
+  return capabilityId.split(/[_-]+/);
+}
+
+function titleMatchesCapability(title: string | undefined, capabilityId: string) {
+  const normalized = (title ?? '').toLowerCase();
+  return preferredTermsForCapability(capabilityId).some((term) => normalized.includes(term));
+}
+
 function relatedFromManifest(manifest: UMGCompiledRuntimeManifest, capabilityId: string) {
-  const step = manifest.executionPlan.find((entry) => entry.requiredToolIds.includes(capabilityId))
+  const preferredBlock = manifest.sourceBlocks.find((block) => block.scopeKind === 'neoblock' && titleMatchesCapability(block.title, capabilityId));
+  const preferredMolt = manifest.sourceBlocks.find((block) => block.scopeKind === 'molt' && (block.metadata?.parentNeoBlockId === preferredBlock?.id || titleMatchesCapability(block.title, capabilityId)));
+  const step = manifest.executionPlan.find((entry) => entry.targetId === preferredBlock?.id)
+    ?? manifest.executionPlan.find((entry) => entry.requiredToolIds.includes(capabilityId))
     ?? manifest.executionPlan.find((entry) => entry.requiredToolIds.length);
-  const sourceBlock = manifest.sourceBlocks.find((block) => block.id === step?.targetId)
+  const sourceBlock = preferredMolt
+    ?? preferredBlock
+    ?? manifest.sourceBlocks.find((block) => block.id === step?.targetId)
     ?? manifest.sourceBlocks.find((block) => block.metadata?.parentNeoBlockId === step?.targetId)
     ?? manifest.sourceBlocks.find((block) => block.scopeKind === 'molt');
   return {
-    relatedNeoBlockId: step?.scopeKind === 'neoblock' ? step.targetId : typeof sourceBlock?.metadata?.parentNeoBlockId === 'string' ? sourceBlock.metadata.parentNeoBlockId : undefined,
+    relatedNeoBlockId: preferredBlock?.id ?? (step?.scopeKind === 'neoblock' ? step.targetId : typeof sourceBlock?.metadata?.parentNeoBlockId === 'string' ? sourceBlock.metadata.parentNeoBlockId : undefined),
     relatedGateId: step?.requiredGateIds[0],
     relatedMoltId: sourceBlock?.scopeKind === 'molt' ? sourceBlock.id : undefined
   };

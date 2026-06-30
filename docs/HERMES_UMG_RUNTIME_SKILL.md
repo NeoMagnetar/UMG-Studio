@@ -55,7 +55,8 @@ Hermes should emit structured runtime events when possible:
 - Resolve a capability to an available Hermes skill/tool if the request registry marks it available.
 - If unavailable or unknown, emit `tool_call_blocked` with a structured reason.
 - If approval is required, emit `tool_call_requires_approval` and stop until continuation.
-- If approved and safe/configured, continue and emit `tool_call_executed` and `tool_result_received`.
+- If approved or safe auto-allowed, continue and emit tool_call_executed / tool_result_received.
+- Safe configured customer_message_draft returns a local draft artifact only; it never sends email or contacts external systems.
 - Irreversible actions require explicit confirmation and must not be executed from this app-local proof path.
 - Local dev fallback must be labeled `local_dev_proof`, `non_destructive`, and `not_external_tool`.
 

@@ -117,6 +117,33 @@ describe('Hermes runtime bridge helpers', () => {
     expect(prompt).toContain('tool_call_blocked');
   });
 
+  it('executes customer_message_draft as real safe app-local capability with artifact and trace events', async () => {
+    const { buildSafeCapabilityTraceEnvelope, buildRuntimeBridgeResponse } = await getRuntimeBridgeModule();
+    const request = {
+      ...safeRuntimeRequest,
+      traceId: 'trace.phase13f.customer_message_draft',
+      executionMode: 'approvalRequired',
+      compiledSleeveManifest: {
+        ...safeRuntimeRequest.compiledSleeveManifest,
+        sleeveTitle: 'Customer Return & Refund Orchestration Sleeve',
+        sourceBlocks: [
+          { id: 'nb.customer.message', title: 'Draft Customer Return Instructions', scopeKind: 'neoblock' },
+          { id: 'molt.customer.primary', title: 'Draft Customer Return Instructions Primary', scopeKind: 'molt', role: 'primary', metadata: { parentNeoBlockId: 'nb.customer.message' } }
+        ]
+      },
+      toolCapabilityRegistry: [{ capabilityId: 'customer_message_draft', available: 'yes', executionPolicy: 'autoAllowed', safeForLiveExecution: true, mappedHermesToolName: 'app_local_customer_message_draft', relatedNeoBlockId: 'nb.customer.message', relatedGateId: 'gate.customer.safe', relatedMoltId: 'molt.customer.primary' }]
+    };
+    const envelope = buildSafeCapabilityTraceEnvelope(request);
+    expect(envelope.status).toBe('ok');
+    expect(envelope.toolCalls[0]).toMatchObject({ toolId: 'customer_message_draft', toolName: 'app_local_customer_message_draft', status: 'executed' });
+    expect(envelope.toolCalls[0].output).toMatchObject({ artifactType: 'customer_message_draft', nonDestructive: true, externalActionTaken: false, relatedNeoBlockId: 'nb.customer.message', relatedGateId: 'gate.customer.safe', relatedMoltId: 'molt.customer.primary' });
+    expect(envelope.artifacts[0]).toMatchObject({ kind: 'customer_message_draft', label: 'Return Request Customer Reply Draft' });
+    expect(envelope.events.map((event) => event.eventType)).toEqual(expect.arrayContaining(['tool_call_prepared', 'tool_call_executed', 'tool_result_received', 'neoblock_completed', 'run_completed']));
+    const response = await buildRuntimeBridgeResponse(request, {}, async () => { throw new Error('safe capability should not invoke external CLI'); });
+    expect(response.status).toBe(200);
+    expect(response.body.artifacts[0].content.externalActionTaken).toBe(false);
+  });
+
   it('labels local continuation fallback as local_dev_proof and non external', async () => {
     const { buildContinuationTraceEnvelope } = await getRuntimeBridgeModule();
     const envelope = buildContinuationTraceEnvelope({

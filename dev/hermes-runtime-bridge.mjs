@@ -397,6 +397,87 @@ function firstContinuationTarget(request) {
   };
 }
 
+function findRegistryEntry(request, capabilityId) {
+  const registry = Array.isArray(request.toolCapabilityRegistry) ? request.toolCapabilityRegistry : [];
+  return registry.find((entry) => entry?.capabilityId === capabilityId || entry?.mappedHermesToolName === capabilityId);
+}
+
+function firstSafeCapabilityTarget(request) {
+  const registry = Array.isArray(request.toolCapabilityRegistry) ? request.toolCapabilityRegistry : [];
+  const preferred = ['customer_message_draft', 'report_generate'];
+  const entry = preferred.map((capabilityId) => registry.find((candidate) => candidate?.capabilityId === capabilityId && candidate.available === 'yes' && candidate.executionPolicy === 'autoAllowed' && candidate.safeForLiveExecution === true)).find(Boolean);
+  if (!entry) return undefined;
+  const manifest = request.compiledSleeveManifest || {};
+  return {
+    capabilityId: entry.capabilityId,
+    toolName: entry.mappedHermesToolName || entry.capabilityId,
+    neoBlockId: entry.relatedNeoBlockId,
+    gateId: entry.relatedGateId,
+    moltBlockId: entry.relatedMoltId,
+    sleeveId: manifest.sleeveId
+  };
+}
+
+function buildCustomerMessageDraftContent(request, target) {
+  const manifest = request.compiledSleeveManifest || {};
+  const title = manifest.sleeveTitle || 'Return Request Workflow';
+  return {
+    artifactType: 'customer_message_draft',
+    title: 'Return Request Customer Reply Draft',
+    body: [
+      'Hello,',
+      '',
+      `Thanks for contacting us about your return request. We are reviewing the purchase record and eligibility details using the ${title} workflow.`,
+      'Please keep the item and order information available while the return window, item condition, and refund path are checked.',
+      'If the return is eligible, we will provide return instructions and prepare the appropriate refund or store-credit request for review. No refund or inventory action has been executed from this draft.',
+      '',
+      'Regards,',
+      'Customer Support'
+    ].join('\n'),
+    sourceCapability: 'customer_message_draft',
+    nonDestructive: true,
+    externalActionTaken: false,
+    relatedNeoBlockId: target.neoBlockId,
+    relatedGateId: target.gateId,
+    relatedMoltId: target.moltBlockId
+  };
+}
+
+export function buildSafeCapabilityTraceEnvelope(request) {
+  const target = firstSafeCapabilityTarget(request);
+  if (!target) return undefined;
+  const base = Date.now();
+  const eventBase = String(request.traceId || 'safe_capability_trace').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const artifactContent = target.capabilityId === 'customer_message_draft'
+    ? buildCustomerMessageDraftContent(request, target)
+    : { artifactType: 'report_generate', title: 'UMG Runtime Report', body: `Runtime report generated for ${request.compiledSleeveManifest?.sleeveTitle || 'compiled Sleeve'}.`, sourceCapability: target.capabilityId, nonDestructive: true, externalActionTaken: false, relatedNeoBlockId: target.neoBlockId, relatedGateId: target.gateId, relatedMoltId: target.moltBlockId };
+  const events = [
+    ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.neoblock.started`, timestamp: base, eventType: 'neoblock_started', message: `${target.capabilityId} NeoBlock started`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'active' }] : []),
+    ...(target.moltBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.molt.used`, timestamp: base + 1, eventType: 'molt_role_used', message: `${target.capabilityId} used MOLT guidance`, scopeKind: 'molt', moltBlockId: target.moltBlockId, status: 'processing' }] : []),
+    ...(target.gateId ? [{ traceId: request.traceId, eventId: `${eventBase}.gate.opened`, timestamp: base + 2, eventType: 'gate_opened', message: `${target.capabilityId} safe gate opened`, scopeKind: 'gate', gateId: target.gateId, status: 'active' }] : []),
+    { traceId: request.traceId, eventId: `${eventBase}.tool.prepared`, timestamp: base + 3, eventType: 'tool_call_prepared', message: `${target.capabilityId} prepared as configured safe app-local capability`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'attention' },
+    { traceId: request.traceId, eventId: `${eventBase}.tool.executed`, timestamp: base + 4, eventType: 'tool_call_executed', message: `${target.capabilityId} executed as real safe app-local Hermes capability without external side effects`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'complete' },
+    { traceId: request.traceId, eventId: `${eventBase}.tool.result`, timestamp: base + 5, eventType: 'tool_result_received', message: `${target.capabilityId} returned structured non-destructive artifact`, scopeKind: 'tool', toolId: target.capabilityId, neoBlockId: target.neoBlockId, gateId: target.gateId, moltBlockId: target.moltBlockId, status: 'processing' },
+    ...(target.neoBlockId ? [{ traceId: request.traceId, eventId: `${eventBase}.neoblock.completed`, timestamp: base + 6, eventType: 'neoblock_completed', message: `${target.capabilityId} NeoBlock completed after artifact generation`, scopeKind: 'neoblock', neoBlockId: target.neoBlockId, status: 'complete' }] : []),
+    { traceId: request.traceId, eventId: `${eventBase}.run.completed`, timestamp: base + 7, eventType: 'run_completed', message: 'Hermes bridge completed safe app-local capability execution', scopeKind: 'sleeve', sleeveId: target.sleeveId, status: 'complete' }
+  ];
+  const toolCall = { id: `tool.${eventBase}.${target.capabilityId}`, traceId: request.traceId, toolId: target.capabilityId, toolName: target.toolName, status: 'executed', input: { capabilityId: target.capabilityId, userGoal: request.userGoal, sleeveId: target.sleeveId, relatedNeoBlockId: target.neoBlockId, relatedGateId: target.gateId, relatedMoltId: target.moltBlockId }, output: artifactContent };
+  return {
+    traceId: request.traceId,
+    status: 'ok',
+    finalOutput: `${target.capabilityId} generated a structured non-destructive runtime artifact. No external email, refund, inventory, or production mutation occurred.`,
+    events,
+    trace: events,
+    toolCalls: [toolCall],
+    blockedCalls: [],
+    approvalRequests: [],
+    errors: [],
+    artifacts: [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: artifactContent.title, kind: artifactContent.artifactType, content: artifactContent, metadata: { sourceCapability: target.capabilityId, realSafeAppLocalCapability: true, externalActionTaken: false } }],
+    unmappedEvents: [],
+    nextSuggestedActions: []
+  };
+}
+
 export function buildContinuationTraceEnvelope(request) {
   const target = firstContinuationTarget(request);
   const approved = request.approvalDecision === 'approve';
@@ -508,6 +589,8 @@ export async function buildRuntimeBridgeResponse(request, env = process.env, run
   }
 
   if (request.executionMode === 'approvalRequired') {
+    const safeCapabilityEnvelope = buildSafeCapabilityTraceEnvelope(request);
+    if (safeCapabilityEnvelope) return jsonResponse(200, safeCapabilityEnvelope, undefined);
     return jsonResponse(200, buildNeedsApprovalTraceEnvelope(request), undefined);
   }
 

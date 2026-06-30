@@ -115,6 +115,7 @@ export function resolveToolCapabilities(args: {
   return declared.map((capabilityId) => {
     const registryEntry = manifest.toolPolicy.registry.find((entry) => entry.toolId === capabilityId || entry.toolName === capabilityId);
     const appRegistryEntry = getRegistryEntry(capabilityRegistry, capabilityId);
+    const localRelated = relatedFromManifest(manifest, capabilityId);
     const available: ToolCapabilityAvailability = unavailable.has(capabilityId)
       ? 'no'
       : configured.has(capabilityId) || registryEntry?.availableInHermes || appRegistryEntry?.available === 'yes'
@@ -125,7 +126,9 @@ export function resolveToolCapabilities(args: {
     const executionPolicy = appRegistryEntry?.executionPolicy ?? policyForCapability(capabilityId, available);
     return {
       capabilityId,
-      ...relatedFromManifest(manifest, capabilityId),
+      requestedByNeoBlockId: appRegistryEntry?.relatedNeoBlockId ?? localRelated.requestedByNeoBlockId,
+      requestedByGateId: appRegistryEntry?.relatedGateId ?? localRelated.requestedByGateId,
+      requestedByMoltId: appRegistryEntry?.relatedMoltId ?? localRelated.requestedByMoltId,
       riskLevel: appRegistryEntry?.riskLevel ?? riskForCapability(capabilityId),
       available,
       mappedHermesToolName: appRegistryEntry?.mappedHermesToolName ?? registryEntry?.toolName ?? (available === 'yes' ? capabilityId : undefined),
