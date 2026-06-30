@@ -3,6 +3,8 @@ import './style.css';
 import { HackathonLandingPage } from './components/HackathonLandingPage';
 import { HierarchicalRuntimeVisualizer } from './components/HierarchicalRuntimeVisualizer';
 import { RuntimeGeometryPreview } from './components/RuntimeGeometryPreview';
+import { SleeveArchitectReviewPanel } from './components/SleeveArchitectReviewPanel';
+import './components/HierarchicalRuntimeVisualizer.css';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
 import migrationReport from '../data/library/migration-report.json';
@@ -44,7 +46,7 @@ import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
 import { createHermesRuntimeRequestFromManifest, getHermesRuntimeAdapterConfigFromEnv, getHermesRuntimeConnectionSummary, runCompiledManifestThroughHermes, validateHermesRuntimeRequest } from './lib/umg/hermesRuntimeExecution';
 import { buildRuntimeGeometryManifest } from './lib/umg/runtimeGeometryProjection';
 import { buildSleeveArchitectPlan } from './lib/umg/sleeveArchitectPlanner';
-import { architectureModeDescriptions, architectureModeLabels, SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
+import { SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -2296,7 +2298,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, s
       </div>}
       <small>Alternate available templates: {alternateTitles.length ? alternateTitles.join(', ') : 'none'}</small>
     </div>
-    {sleeveArchitectPlan && <ArchitectModePanel plan={sleeveArchitectPlan} />}
+    {sleeveArchitectPlan && <SleeveArchitectReviewPanel plan={sleeveArchitectPlan} />}
     {(businessAutomationCoreBuild || sleeveAssemblyPlan || compiledRuntimeManifest) && <HierarchicalRuntimeVisualizer
       instantiatedSleeve={businessAutomationCoreBuild}
       assemblyPlan={sleeveAssemblyPlan}
@@ -2322,37 +2324,6 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, s
       <p>No fake Hermes runtime called. Block matching, missing block generation, compile, Hermes run, and trace visualization remain pending.</p>
     </div>
   </section>;
-}
-
-function ArchitectModePanel({ plan }: { plan: SleeveArchitectPlan }) {
-  return <div className="analysisPanel architectModePanel">
-    <div className="publicSectionTitle"><span>06A</span><div><b>{architectureModeLabels[plan.mode]}</b><small>{architectureModeDescriptions[plan.mode]}</small></div></div>
-    <div className="templateDefaultNotes"><span>{plan.mode === 'demo_template_mode' ? 'Seed/demo boundary visible' : 'Unique Sleeve plan'}</span><span>Draft-only generated blocks</span><span>No source library writes</span><span>No tool execution</span></div>
-    <h3>{plan.proposedSleeveTitle}</h3>
-    <p className="analysisSummary">{plan.domainSummary} · confidence {Math.round(plan.confidence * 100)}%. Templates are seeds, not final architecture unless explicitly chosen.</p>
-    <div className="templateCountGrid">
-      <div><b>{plan.proposedNeoStacks.length}</b><span>proposed NeoStacks</span></div>
-      <div><b>{plan.proposedNeoBlocks.length}</b><span>proposed NeoBlocks</span></div>
-      <div><b>{plan.proposedMoltBlocks.length}</b><span>proposed MOLT drafts</span></div>
-      <div><b>{plan.proposedGates.length}</b><span>proposed Gates</span></div>
-    </div>
-    <h4>Architect Mode plan</h4>
-    <div className="phase5CardGrid">
-      {plan.proposedNeoStacks.slice(0, 8).map((stack) => <div key={stack.id} className="matchCard"><b>{stack.title}</b><small>{stack.reason}</small><span className="needsDraftBadge">draftOnly: {String(stack.draftOnly)}</span></div>)}
-    </div>
-    <h4>Return/custom workflow NeoBlocks</h4>
-    <div className="phase5CardGrid">
-      {plan.proposedNeoBlocks.slice(0, 8).map((block) => <div key={block.id} className="matchCard"><b>{block.title}</b><small>{block.purpose}</small><SignalChips values={block.requiredMoltRoles} /></div>)}
-    </div>
-    <h4>Semantic block matches</h4>
-    <div className="phase5CardGrid">
-      {plan.matchedExistingBlocks.slice(0, 6).map((match) => <div key={match.blockId} className="matchCard"><b>{match.title}</b><small>{match.role} · score {Math.round(match.score * 100)}% · {match.reason}</small><SignalChips values={match.matchedTags.slice(0, 5)} /></div>)}
-      {!plan.matchedExistingBlocks.length && <small>Search is currently limited to loaded/local blocks; no strong local matches found.</small>}
-    </div>
-    <h4>Tool capability declarations only</h4>
-    <div className="phase7ChipRow">{plan.toolCapabilityNeeds.length ? plan.toolCapabilityNeeds.map((tool) => <span key={tool.id}><b>{tool.capability}</b> declaration only · no execution</span>) : <span>No tool capabilities declared yet.</span>}</div>
-    <div className="analysisWarnings"><b>Architecture boundary</b>{plan.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>
-  </div>;
 }
 
 function BusinessAutomationCoreBuiltPanel({ build }: { build: InstantiatedTemplateSleeve }) {

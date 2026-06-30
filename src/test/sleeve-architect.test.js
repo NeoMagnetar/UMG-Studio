@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createBusinessInputFromPublicIntake, analyzeBusinessInput } from '../lib/umg/businessAnalyzer';
+import { SleeveArchitectReviewPanel, summarizeArchitectReview } from '../components/SleeveArchitectReviewPanel';
 import { getBusinessAutomationCoreSleeve } from '../lib/umg/businessAutomationCoreSleeve';
 import { buildSleeveArchitectPlan } from '../lib/umg/sleeveArchitectPlanner';
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
@@ -83,5 +86,38 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(audit.neoBlocks.length).toBeGreaterThan(0);
     expect(audit.moltRecords.some((record) => record.role === 'TRG' && record.normalizedRole.target === 'gate')).toBe(true);
     expect(audit.outputSections.length).toBeGreaterThan(0);
+  });
+
+  it('renders the Architect Plan Review workspace without creating a CompileCandidate', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const html = renderToStaticMarkup(React.createElement(SleeveArchitectReviewPanel, { plan }));
+    expect(html).toContain('Architect Plan Review Workspace');
+    expect(html).toContain('Customer Return &amp; Refund Orchestration Sleeve');
+    expect(html).toContain('draftOnly: true');
+    expect(html).toContain('saveState: draft');
+    expect(html).toContain('needsUserReview: true');
+    expect(html).toContain('defaultState: off');
+    expect(html).toContain('declaration only');
+    expect(html).toContain('reusable existing block');
+    expect(html).toContain('Review required before any future Architect CompileCandidate action');
+    expect(html).not.toContain('Create CompileCandidate');
+  });
+
+  it('tracks review state locally without implying source-library writes', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const reviewed = summarizeArchitectReview(plan, {
+      [plan.generatedDrafts[0].id]: 'accept_for_this_sleeve',
+      [plan.generatedDrafts[1].id]: 'needs_edit'
+    });
+    expect(reviewed.generatedCount).toBe(plan.generatedDrafts.length);
+    expect(reviewed.reviewedCount).toBe(2);
+    expect(reviewed.acceptedForSleeveCount).toBe(1);
+    expect(reviewed.needsEditCount).toBe(1);
+    expect(reviewed.compileGateLabel).toMatch(/compile remains a separate/);
+    expect(plan.generatedDrafts.every((draft) => draft.metadata?.sourceLibraryWrite === false)).toBe(true);
   });
 });
