@@ -8,7 +8,7 @@ import { getRuntimeTargetId } from '../lib/umg/cognitiveRuntimeState';
 
 export type RuntimeGeometryObserverMode = 'structure' | 'runtime';
 
-type RuntimeGeometryNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'molt' | 'gate' | 'capability';
+type RuntimeGeometryNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'molt' | 'merge' | 'gate' | 'tool' | 'capability' | 'artifact';
 type RuntimeGeometryNodeStatus = 'idle' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error';
 
 type RuntimeGeometryNode = {
@@ -29,7 +29,10 @@ type RuntimeGeometryEdge = {
   id: string;
   from: string;
   to: string;
-  kind: 'contains' | 'routes' | 'uses' | 'guards';
+  kind: 'contains' | 'routes' | 'uses' | 'guards' | 'merge' | 'emits';
+  status?: RuntimeGeometryNodeStatus;
+  traceEvents?: UMGTraceEvent[];
+  aliases?: string[];
 };
 
 type UnmappedTrace = {
@@ -84,7 +87,7 @@ function eventId(event: UMGTraceEvent, index = 0) {
 }
 
 function eventTargetId(event: UMGTraceEvent) {
-  return getRuntimeTargetId(event) ?? event.sleeveId ?? event.neoStackId ?? event.neoBlockId ?? event.moltBlockId ?? event.gateId ?? event.toolId ?? event.approvalId ?? event.sourceId;
+  return event.targetId ?? getRuntimeTargetId(event) ?? event.sleeveId ?? event.neoStackId ?? event.neoBlockId ?? event.moltBlockId ?? event.gateId ?? event.toolId ?? event.approvalId ?? event.sourceId;
 }
 
 function approvalCapabilityAlias(approvalId: unknown) {
@@ -105,6 +108,7 @@ function eventAliases(event: UMGTraceEvent) {
     target ? `gate:${target}` : undefined,
     target ? `tool:${target}` : undefined,
     target ? `capability:${target}` : undefined,
+    event.targetType && target ? `${event.targetType}:${target}` : undefined,
     event.sleeveId,
     event.sleeveId ? `sleeve:${event.sleeveId}` : undefined,
     event.neoStackId,
@@ -123,7 +127,11 @@ function eventAliases(event: UMGTraceEvent) {
     approvalCapability ? `tool:${approvalCapability}` : undefined,
     event.sourceId,
     ...(event.metadataAliases ?? []),
-    ...(event.metadataAliases ?? []).map((alias) => `capability:${alias}`)
+    ...(event.metadataAliases ?? []).map((alias) => `capability:${alias}`),
+    toText(event.metadata?.capabilityId),
+    toText(event.metadata?.toolId),
+    toText(event.metadata?.filePath),
+    toText(event.metadata?.artifactId)
   ]);
 }
 
@@ -140,6 +148,21 @@ function statusFromEvent(event: UMGTraceEvent): RuntimeGeometryNodeStatus {
     case 'tool_call_requires_approval':
     case 'approval_required':
       return 'approval';
+    case 'route_edge_activated':
+      return 'active';
+    case 'merge_started':
+      return 'processing';
+    case 'merge_completed':
+      return 'complete';
+    case 'molt_layer_used':
+      return 'processing';
+    case 'tool_block_resolved':
+      return 'processing';
+    case 'action_request_created':
+    case 'action_executed':
+    case 'file_created':
+    case 'artifact_created':
+      return event.eventType === 'action_request_created' ? 'processing' : 'complete';
     case 'tool_call_prepared':
     case 'tool_requested':
     case 'tool_call_executed':
@@ -149,6 +172,7 @@ function statusFromEvent(event: UMGTraceEvent): RuntimeGeometryNodeStatus {
     case 'block_processing':
       return event.eventType === 'tool_result_received' ? 'complete' : 'processing';
     case 'neoblock_started':
+    case 'neostack_entered':
     case 'neostack_started':
     case 'run_started':
     case 'route_started':
@@ -195,6 +219,58 @@ function projectNodeStatus(state: ProjectRuntimeGeometryNode['state']): RuntimeG
   return 'idle';
 }
 
+function prefixedNodeId(type: string, id: string) {
+  return type === 'tool' ? `capability:${id}` : `${type}:${id}`;
+}
+
+function structuralArray(sleeve: NormalizedTemplateSleeve, field: string): Record<string, unknown>[] {
+  const ir = sleeve.metadata?.structuralIR;
+  if (!isRecord(ir) || !Array.isArray(ir[field])) return [];
+  return ir[field].filter(isRecord);
+}
+
+function structuralId(record: Record<string, unknown>) {
+  return toText(record.id) ?? toText(record.sourceId) ?? toText(record.toolId) ?? toText(record.capabilityId);
+}
+
+function addStructuralRuntimeNodes(sleeve: NormalizedTemplateSleeve, nodes: RuntimeGeometryNode[], register: (alias: string | undefined, node: RuntimeGeometryNode) => void) {
+  const upsert = (node: RuntimeGeometryNode) => {
+    const existing = nodes.find((entry) => entry.id === node.id);
+    if (existing) {
+      existing.aliases = unique([...(existing.aliases ?? []), ...(node.aliases ?? [])]);
+      existing.metadata = { ...(existing.metadata ?? {}), ...(node.metadata ?? {}) };
+      existing.aliases.forEach((alias) => register(alias, existing));
+      return existing;
+    }
+    nodes.push(node);
+    node.aliases.forEach((alias) => register(alias, node));
+    return node;
+  };
+  structuralArray(sleeve, 'mergeOps').forEach((merge, index) => {
+    const id = structuralId(merge);
+    if (!id) return;
+    upsert({ id: `merge:${id}`, kind: 'merge', label: toText(merge.title) ?? id, subtitle: toText(merge.mergeType) ?? 'Merge operation', parentId: `sleeve:${sleeve.id}`, sourceId: id, status: 'idle', traceEvents: [], artifacts: [], metadata: { ...merge, stackOrder: index + 1 }, aliases: unique([id, `merge:${id}`]) });
+  });
+  structuralArray(sleeve, 'toolBlocks').forEach((tool, index) => {
+    const id = structuralId(tool);
+    if (!id) return;
+    const parent = toText(tool.parentNeoBlockId) ?? toText(tool.neoBlockId);
+    upsert({ id: `capability:${id}`, kind: 'capability', label: toText(tool.title) ?? id, subtitle: 'MetaMOLT Tool Block', parentId: parent ? `neoblock:${parent}` : `sleeve:${sleeve.id}`, sourceId: id, status: 'idle', traceEvents: [], artifacts: [], metadata: { ...tool, stackOrder: index + 1, metaMoltToolBlock: true }, aliases: unique([id, `tool:${id}`, `capability:${id}`]) });
+  });
+}
+
+function structuralRouteEdges(sleeve: NormalizedTemplateSleeve): RuntimeGeometryEdge[] {
+  return structuralArray(sleeve, 'routes').map((route, index) => {
+    const id = structuralId(route) ?? `route.edge.${index + 1}`;
+    const fromId = toText(route.fromId) ?? toText(route.from) ?? toText(route.sourceId);
+    const toId = toText(route.toId) ?? toText(route.to) ?? toText(route.targetId);
+    const fromType = toText(route.fromType) ?? 'neoblock';
+    const toType = toText(route.toType) ?? 'neoblock';
+    if (!fromId || !toId) return undefined;
+    return { id, from: prefixedNodeId(fromType, fromId), to: prefixedNodeId(toType, toId), kind: 'routes' as const, status: 'idle' as const, traceEvents: [], aliases: unique([id, `route:${id}`]) };
+  }).filter(Boolean) as RuntimeGeometryEdge[];
+}
+
 function projectManifestNode(node: ProjectRuntimeGeometryNode): RuntimeGeometryNode {
   const parentId = node.kind === 'neostack'
     ? `sleeve:${node.sleeveId}`
@@ -230,7 +306,9 @@ function artifactAliases(artifact: UMGRuntimeArtifact) {
     toText(metadata.relatedMoltId),
     toText(metadata.moltBlockId),
     toText(metadata.gateId),
-    toText(metadata.targetId)
+    toText(metadata.targetId),
+    artifact.uri,
+    typeof artifact.content === 'string' ? artifact.content : undefined
   ]).flatMap((id) => [id, `capability:${id}`, `tool:${id}`, `neoblock:${id}`, `molt:${id}`, `gate:${id}`]);
 }
 
@@ -257,6 +335,8 @@ export function buildRuntimeGeometryObserverGraph(args: {
   };
   nodes.forEach((node) => node.aliases.forEach((alias) => register(alias, node)));
 
+  addStructuralRuntimeNodes(args.activeSessionSleeve, nodes, register);
+
   capabilityRecords(args.activeSessionSleeve).forEach((capability) => {
     const capabilityId = toText(capability.capabilityId) ?? toText(capability.id);
     if (!capabilityId || nodeByAlias.has(capabilityId) || nodeByAlias.has(`capability:${capabilityId}`)) return;
@@ -279,7 +359,40 @@ export function buildRuntimeGeometryObserverGraph(args: {
   });
 
   const unmappedEvents: UnmappedTrace[] = [];
+  (args.hermesRuntimeResult?.artifacts ?? []).forEach((artifact) => {
+    const artifactNode: RuntimeGeometryNode = {
+      id: `artifact:${artifact.id}`,
+      kind: 'artifact',
+      label: artifact.label,
+      subtitle: artifact.kind,
+      sourceId: artifact.id,
+      status: 'idle',
+      traceEvents: [],
+      artifacts: [artifact],
+      metadata: { artifact },
+      aliases: unique([artifact.id, `artifact:${artifact.id}`, ...artifactAliases(artifact)])
+    };
+    nodes.push(artifactNode);
+    artifactNode.aliases.forEach((alias) => register(alias, artifactNode));
+  });
+  const routeEdges = structuralRouteEdges(args.activeSessionSleeve);
+  const edgeByAlias = new Map<string, RuntimeGeometryEdge[]>();
+  const registerEdge = (alias: string | undefined, edge: RuntimeGeometryEdge) => {
+    if (!alias) return;
+    edgeByAlias.set(alias, [...(edgeByAlias.get(alias) ?? []), edge]);
+  };
+  routeEdges.forEach((edge) => (edge.aliases ?? [edge.id]).forEach((alias) => registerEdge(alias, edge)));
+
   traceEvents.forEach((event, index) => {
+    const routeMatches = unique([event.routeEdgeId, event.routeEdgeId ? `route:${event.routeEdgeId}` : undefined].flatMap((alias) => edgeByAlias.get(alias ?? '')?.map((edge) => edge.id) ?? []));
+    if (routeMatches.length) {
+      routeMatches.forEach((edgeId) => {
+        const edge = routeEdges.find((entry) => entry.id === edgeId);
+        if (!edge) return;
+        edge.status = statusFromEvent(event);
+        edge.traceEvents = [...(edge.traceEvents ?? []), event];
+      });
+    }
     const aliases = eventAliases(event);
     if (!aliases.length) {
       unmappedEvents.push({ event, reason: 'missing_target_id' });
@@ -307,14 +420,18 @@ export function buildRuntimeGeometryObserverGraph(args: {
     });
   });
 
-  const edges: RuntimeGeometryEdge[] = baseManifest.connections.map((connection) => ({
-    id: connection.id,
-    from: connection.sourceNodeId.startsWith('tool:') ? connection.sourceNodeId.replace(/^tool:/, 'capability:') : connection.sourceNodeId,
-    to: connection.targetNodeId.startsWith('tool:') ? connection.targetNodeId.replace(/^tool:/, 'capability:') : connection.targetNodeId,
-    kind: connection.type === 'gate_control' ? 'guards' : connection.type === 'tool_capability' ? 'uses' : connection.type === 'execution_next' ? 'routes' : 'contains'
-  }));
+  const edges: RuntimeGeometryEdge[] = [...routeEdges, ...baseManifest.connections.map((connection) => {
+    const kind: RuntimeGeometryEdge['kind'] = connection.type === 'gate_control' ? 'guards' : connection.type === 'tool_capability' ? 'uses' : connection.type === 'execution_next' ? 'routes' : 'contains';
+    return {
+      id: connection.id,
+      from: connection.sourceNodeId.startsWith('tool:') ? connection.sourceNodeId.replace(/^tool:/, 'capability:') : connection.sourceNodeId,
+      to: connection.targetNodeId.startsWith('tool:') ? connection.targetNodeId.replace(/^tool:/, 'capability:') : connection.targetNodeId,
+      kind,
+      aliases: [connection.id]
+    };
+  })];
   nodes.filter((node) => node.kind === 'capability' && node.parentId).forEach((node) => {
-    edges.push({ id: `uses:${node.parentId}:${node.id}`, from: node.parentId!, to: node.id, kind: 'uses' });
+    edges.push({ id: `uses:${node.parentId}:${node.id}`, from: node.parentId!, to: node.id, kind: 'uses', aliases: [`uses:${node.parentId}:${node.id}`] });
   });
 
   return { nodes, edges: Array.from(new Map(edges.map((edge) => [edge.id, edge])).values()), unmappedEvents };
@@ -322,7 +439,7 @@ export function buildRuntimeGeometryObserverGraph(args: {
 
 
 export type RuntimeVisualViewMode = 'system_sleeve' | 'neostack' | 'neoblock' | 'runtime_path';
-export type RuntimeVisualNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'gate' | 'capability' | 'resource' | 'artifact' | 'context' | 'molt_layer';
+export type RuntimeVisualNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'merge' | 'gate' | 'tool' | 'capability' | 'resource' | 'artifact' | 'context' | 'molt_layer';
 export type RuntimeVisualNodeStatus = 'idle' | 'available' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error' | 'off';
 export type RuntimeVisualSourceStatus = 'source-library-reused' | 'reuse-decision' | 'runtime-draft' | 'generated-glue' | 'unresolved';
 
@@ -387,7 +504,7 @@ function graphNodeToVisualNode(node: RuntimeGeometryNode): RuntimeVisualNode {
     kind,
     label: node.label,
     shortLabel: kind === 'capability' ? node.label : node.label.length > 28 ? `${node.label.slice(0, 25)}…` : node.label,
-    icon: kind === 'neostack' ? '▦' : kind === 'neoblock' ? '◈' : kind === 'molt_layer' ? '▤' : kind === 'gate' ? '◇' : kind === 'capability' ? '⚙' : kind === 'sleeve' ? '⬢' : '•',
+    icon: kind === 'neostack' ? '▦' : kind === 'neoblock' ? '◈' : kind === 'molt_layer' ? '▤' : kind === 'gate' ? '◇' : kind === 'capability' ? '⚙' : kind === 'sleeve' ? '⬢' : kind === 'artifact' ? '✦' : '◆',
     status: visualStatusFromGeometry(node.status),
     sourceStatus: sourceStatusFromNode(node),
     parentId: node.parentId,
@@ -447,8 +564,8 @@ export function buildRuntimeVisualViewModel(args: {
     from: edge.from,
     to: edge.to,
     kind: edge.kind === 'uses' ? 'uses' : edge.kind === 'guards' ? 'guards' : edge.kind === 'routes' ? 'routes' : 'contains',
-    status: mergeStatus(byId.get(edge.from)?.status as RuntimeGeometryNodeStatus ?? 'idle', byId.get(edge.to)?.status as RuntimeGeometryNodeStatus ?? 'idle') as RuntimeVisualNodeStatus,
-    traceEventIds: [...(byId.get(edge.from)?.traceEventIds ?? []), ...(byId.get(edge.to)?.traceEventIds ?? [])]
+    status: (edge.status ?? mergeStatus(byId.get(edge.from)?.status as RuntimeGeometryNodeStatus ?? 'idle', byId.get(edge.to)?.status as RuntimeGeometryNodeStatus ?? 'idle')) as RuntimeVisualNodeStatus,
+    traceEventIds: [...(edge.traceEvents ?? []).map((event, index) => eventId(event, index)), ...(byId.get(edge.from)?.traceEventIds ?? []), ...(byId.get(edge.to)?.traceEventIds ?? [])]
   }));
   const neoStacks = orderedNodes(nodes.filter((node) => node.kind === 'neostack'));
   const neoBlocks = orderedNodes(nodes.filter((node) => node.kind === 'neoblock'));
@@ -461,6 +578,7 @@ export function buildRuntimeVisualViewModel(args: {
   });
   const pathNodes = orderedNodes([
     ...neoBlocks,
+    ...nodes.filter((node) => node.kind === 'merge'),
     ...gates,
     ...capabilities,
     ...artifactNodes

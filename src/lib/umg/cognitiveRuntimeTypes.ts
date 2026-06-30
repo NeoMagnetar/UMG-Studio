@@ -1,11 +1,15 @@
-export type UMGRuntimeScopeKind =
+export type UMGRuntimeTraceTargetType =
   | 'sleeve'
   | 'neostack'
   | 'neoblock'
   | 'molt'
+  | 'merge'
   | 'gate'
   | 'tool'
-  | 'approval';
+  | 'capability'
+  | 'artifact';
+
+export type UMGRuntimeScopeKind = UMGRuntimeTraceTargetType | 'approval';
 
 export type UMGRuntimeState =
   | 'idle'
@@ -13,22 +17,29 @@ export type UMGRuntimeState =
   | 'active'
   | 'processing'
   | 'attention'
+  | 'approval'
   | 'complete'
   | 'skipped'
   | 'blocked'
   | 'error';
 
 export type UMGTraceEventType =
+  | 'route_started'
+  | 'route_edge_activated'
   | 'run_started'
   | 'sleeve_loaded'
   | 'gate_evaluated'
   | 'gate_blocked'
+  | 'neostack_entered'
   | 'neostack_started'
   | 'neostack_completed'
   | 'neoblock_started'
   | 'neoblock_completed'
   | 'neoblock_rerouted'
   | 'molt_role_used'
+  | 'molt_layer_used'
+  | 'merge_started'
+  | 'merge_completed'
   | 'tool_call_prepared'
   | 'tool_call_requires_approval'
   | 'approval_granted'
@@ -38,7 +49,6 @@ export type UMGTraceEventType =
   | 'tool_result_received'
   | 'run_completed'
   | 'run_error'
-  | 'route_started'
   | 'gate_opened'
   | 'gate_closed'
   | 'block_queued'
@@ -62,7 +72,38 @@ export type UMGTraceEventType =
   | 'action_blocked'
   | 'error';
 
+export type UMGRouteEdge = {
+  id: string;
+  fromId: string;
+  toId: string;
+  fromType: Exclude<UMGRuntimeTraceTargetType, 'artifact'>;
+  toType: Exclude<UMGRuntimeTraceTargetType, 'artifact'>;
+  label?: string;
+  condition?: string;
+  status?: 'idle' | 'active' | 'complete' | 'blocked' | 'error';
+};
+
+export type UMGRuntimeTraceEvent = {
+  id: string;
+  type: UMGTraceEventType | string;
+  timestamp: string;
+  targetId?: string;
+  targetType?: UMGRuntimeTraceTargetType;
+  routeEdgeId?: string;
+  status?: 'idle' | 'active' | 'processing' | 'complete' | 'blocked' | 'error' | 'approval';
+  message?: string;
+  metadata?: Record<string, unknown>;
+};
+
 export type UMGTraceEvent = {
+  id?: string;
+  type?: string;
+  targetId?: string;
+  targetType?: UMGRuntimeTraceTargetType;
+  routeEdgeId?: string;
+  status?: 'idle' | 'active' | 'processing' | 'complete' | 'blocked' | 'error' | 'approval';
+  message?: string;
+  metadata?: Record<string, unknown>;
   traceId: string;
   timestamp: number;
   scopeKind: UMGRuntimeScopeKind;
@@ -176,6 +217,8 @@ export type UMGCompiledRuntimeManifest = {
   gates: UMGGateRecord[];
   toolPolicy: UMGToolPolicy;
   sourceBlocks: UMGSourceBlockRef[];
+  routeEdges?: UMGRouteEdge[];
+  structuralIR?: unknown;
   traceMetadata: Record<string, unknown>;
 };
 
@@ -189,6 +232,8 @@ export type HermesCognitiveRuntimeRequest = {
   userProvidedContext?: string;
   sleeve?: { id: string; name: string };
   structure?: unknown;
+  routeEdges?: UMGRouteEdge[];
+  structuralIR?: unknown;
   allowedTools?: string[];
   blockedTools?: string[];
   requiredTools?: string[];

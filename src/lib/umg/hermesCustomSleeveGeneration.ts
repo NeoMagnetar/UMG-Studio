@@ -471,6 +471,9 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
       capabilities: normalizedCapabilities,
       reuseDecisions: plan.reuseDecisions,
       generatedDecisions: plan.generatedDecisions,
+      structuralIR: plan.structuralIR,
+      auditResult: plan.auditResult,
+      routeEdges: plan.structuralIR?.routes,
       libraryCandidateSummary: request.libraryCandidateSummary,
       libraryCandidates: request.libraryCandidates.slice(0, 12),
       sourceStatusSummary: {

@@ -7,6 +7,7 @@ export type RuntimeGeometryState =
   | 'active'
   | 'processing'
   | 'attention'
+  | 'approval'
   | 'waiting_approval'
   | 'tool_calling'
   | 'blocked'

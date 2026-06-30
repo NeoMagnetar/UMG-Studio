@@ -27,6 +27,17 @@ function makeSleeve() {
     gates: [{ id: 'gate.approval', title: 'Local note approval gate', sourceId: 'gate.approval', attachesTo: { kind: 'neoblock', id: 'block.capture' }, triggerType: 'user_intent', conditionText: 'Require approval before note file capability.', action: 'activate', targetIds: ['block.capture'], defaultState: 'closed', runtimeState: 'inactive', tags: [] }],
     metadata: {
       runtimeSessionOnly: true,
+      structuralIR: {
+        sleeve: { id: 'sleeve.greek_note' },
+        neoStacks: [{ id: 'stack.compose', title: 'Note Composition Stack' }],
+        neoBlocks: [{ id: 'block.capture', title: 'Capture and Draft Note' }],
+        moltLayers: [{ id: 'molt.philosophy', parentNeoBlockId: 'block.capture' }],
+        mergeOps: [{ id: 'merge.greek_semantic_frame', title: 'Merge Greek Philosophy' }],
+        gates: [{ id: 'gate.approval' }],
+        toolBlocks: [{ id: 'TOOL.HERMES.NOTE_CREATE.v0.1', title: 'Hermes note create', parentNeoBlockId: 'block.capture' }],
+        routes: [{ id: 'edge.capture.to.merge', fromId: 'block.capture', fromType: 'neoblock', toId: 'merge.greek_semantic_frame', toType: 'merge', label: 'semantic merge' }]
+      },
+      routeEdges: [{ id: 'edge.capture.to.merge', fromId: 'block.capture', fromType: 'neoblock', toId: 'merge.greek_semantic_frame', toType: 'merge' }],
       capabilities: [
         { capabilityId: 'umg.capability.local_text_composition', label: 'Local text composition', sourceNeoBlock: 'block.capture' },
         { capabilityId: 'umg.capability.local_note_file_write', label: 'Local note safe artifact', sourceNeoBlock: 'block.capture' }
@@ -105,5 +116,40 @@ describe('RuntimeGeometryObserver', () => {
     const graph = buildRuntimeGeometryObserverGraph({ activeSessionSleeve: makeSleeve(), hermesRuntimeResult: result, mode: 'runtime' });
     expect(graph.nodes.find((node) => node.kind === 'sleeve')?.status).toBe('error');
     expect(graph.unmappedEvents[0].reason).toBe('target_not_found');
+  });
+
+  it('binds dynamic runtime trace events to structuralIR nodes, route edges, MOLT layers, tools, artifacts, and unmapped rail only by real IDs', () => {
+    const dynamicTrace = [
+      { traceId: 'trace.dynamic', eventId: 'evt.route', timestamp: 10, eventType: 'route_started', state: 'active', label: 'Route started', targetId: 'sleeve.greek_note', targetType: 'sleeve' },
+      { traceId: 'trace.dynamic', eventId: 'evt.edge', timestamp: 11, eventType: 'route_edge_activated', state: 'active', label: 'Route edge active', routeEdgeId: 'edge.capture.to.merge' },
+      { traceId: 'trace.dynamic', eventId: 'evt.block', timestamp: 12, eventType: 'neoblock_started', state: 'active', label: 'Block active', targetId: 'block.capture', targetType: 'neoblock' },
+      { traceId: 'trace.dynamic', eventId: 'evt.molt', timestamp: 13, eventType: 'molt_layer_used', state: 'processing', label: 'MOLT used', targetId: 'molt.philosophy', targetType: 'molt' },
+      { traceId: 'trace.dynamic', eventId: 'evt.merge', timestamp: 14, eventType: 'merge_started', state: 'processing', label: 'Merge active', targetId: 'merge.greek_semantic_frame', targetType: 'merge' },
+      { traceId: 'trace.dynamic', eventId: 'evt.gate', timestamp: 15, eventType: 'gate_opened', state: 'active', label: 'Gate opened', targetId: 'gate.approval', targetType: 'gate' },
+      { traceId: 'trace.dynamic', eventId: 'evt.tool', timestamp: 16, eventType: 'tool_block_resolved', state: 'processing', label: 'Tool resolved', targetId: 'TOOL.HERMES.NOTE_CREATE.v0.1', targetType: 'tool' },
+      { traceId: 'trace.dynamic', eventId: 'evt.file', timestamp: 17, eventType: 'file_created', state: 'complete', label: 'File created', targetId: '/home/neomagnetar/Desktop/apple-haiku.txt', targetType: 'artifact', metadata: { filePath: '/home/neomagnetar/Desktop/apple-haiku.txt' } },
+      { traceId: 'trace.dynamic', eventId: 'evt.unknown', timestamp: 18, eventType: 'neoblock_started', state: 'active', label: 'Unknown block', targetId: 'block.unknown', targetType: 'neoblock' }
+    ];
+    const result = {
+      status: 'ok',
+      finalOutput: 'done',
+      trace: dynamicTrace,
+      toolCalls: [],
+      blockedCalls: [],
+      approvalRequests: [],
+      errors: [],
+      artifacts: [{ id: 'artifact.apple_haiku', uri: '/home/neomagnetar/Desktop/apple-haiku.txt', label: 'apple-haiku.txt', kind: 'file', content: 'Apples rest in gold', metadata: { filePath: '/home/neomagnetar/Desktop/apple-haiku.txt' } }],
+      nextSuggestedActions: []
+    };
+    const graph = buildRuntimeGeometryObserverGraph({ activeSessionSleeve: makeSleeve(), hermesRuntimeResult: result, mode: 'runtime' });
+    expect(graph.nodes.find((node) => node.id === 'sleeve:sleeve.greek_note')?.status).toBe('active');
+    expect(graph.nodes.find((node) => node.id === 'neoblock:block.capture')?.status).toBe('active');
+    expect(graph.nodes.find((node) => node.sourceId === 'molt.philosophy')?.status).toBe('processing');
+    expect(graph.nodes.find((node) => node.id === 'merge:merge.greek_semantic_frame')?.status).toBe('processing');
+    expect(['active', 'complete']).toContain(graph.nodes.find((node) => node.id === 'gate:gate.approval')?.status);
+    expect(graph.nodes.find((node) => node.id === 'capability:TOOL.HERMES.NOTE_CREATE.v0.1')?.status).toBe('processing');
+    expect(graph.edges.find((edge) => edge.id === 'edge.capture.to.merge')?.status).toBe('active');
+    expect(graph.nodes.find((node) => node.id === 'artifact:artifact.apple_haiku')?.status).toBe('complete');
+    expect(graph.unmappedEvents.map((entry) => entry.event.eventId)).toContain('evt.unknown');
   });
 });

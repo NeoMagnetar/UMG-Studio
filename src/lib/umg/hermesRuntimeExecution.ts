@@ -109,6 +109,8 @@ export function createHermesRuntimeRequestFromManifest(args: {
     traceId,
     sleeve: { id: compiledRuntimeManifest.sleeveId, name: compiledRuntimeManifest.sleeveTitle },
     structure: compiledRuntimeManifest.compiledStructure,
+    routeEdges: compiledRuntimeManifest.routeEdges,
+    structuralIR: compiledRuntimeManifest.structuralIR,
     allowedTools: compiledRuntimeManifest.toolPolicy.allowedTools,
     blockedTools: compiledRuntimeManifest.toolPolicy.blockedTools,
     requiredTools: compiledRuntimeManifest.executionPlan.flatMap((step) => step.requiredToolIds),
@@ -126,9 +128,9 @@ export function createHermesRuntimeRequestFromManifest(args: {
     expectedTraceContract: {
       traceId,
       status: 'ok | blocked | needsApproval | error',
-      minimumMappedEvents: ['run_started', 'neostack_started', 'neoblock_started', 'gate_evaluated', 'molt_role_used', 'neoblock_completed', 'run_completed'],
-      eventFields: ['eventId', 'timestamp', 'eventType', 'message', 'scopeKind', 'sleeveId', 'neoStackId', 'neoBlockId', 'moltBlockId', 'gateId', 'sourceId', 'metadataAliases', 'status'],
-      mappingRule: 'Events must carry local IDs, source IDs, gate IDs, metadata aliases, or compiler/runtime manifest IDs. Unmapped events stay in the timeline only and must not activate visual nodes.'
+      minimumMappedEvents: ['route_started', 'route_edge_activated', 'neostack_entered', 'neoblock_started', 'molt_layer_used', 'merge_started', 'gate_opened', 'tool_block_resolved', 'action_request_created', 'action_executed', 'file_created', 'artifact_created', 'run_completed'],
+      eventFields: ['id', 'type', 'timestamp', 'targetId', 'targetType', 'routeEdgeId', 'status', 'message', 'metadata', 'eventId', 'eventType', 'scopeKind', 'sleeveId', 'neoStackId', 'neoBlockId', 'moltBlockId', 'gateId', 'toolId', 'sourceId', 'metadataAliases'],
+      mappingRule: 'Emit runtime trace events using structuralIR IDs. Use targetId and targetType. Do not invent IDs; unmapped events stay in the timeline only and must not activate visual nodes.'
     },
     metadata: {
       source: 'umg_studio_phase13e_hermes_umg_runtime_skill_request',

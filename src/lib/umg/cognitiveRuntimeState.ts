@@ -14,16 +14,22 @@ const stateListKeys = [
 type RuntimeStateListKey = typeof stateListKeys[number];
 
 const eventTypes: UMGTraceEventType[] = [
+  'route_started',
+  'route_edge_activated',
   'run_started',
   'sleeve_loaded',
   'gate_evaluated',
   'gate_blocked',
+  'neostack_entered',
   'neostack_started',
   'neostack_completed',
   'neoblock_started',
   'neoblock_completed',
   'neoblock_rerouted',
   'molt_role_used',
+  'molt_layer_used',
+  'merge_started',
+  'merge_completed',
   'tool_call_prepared',
   'tool_call_requires_approval',
   'approval_granted',
@@ -58,20 +64,26 @@ const eventTypes: UMGTraceEventType[] = [
   'error'
 ];
 
-const runtimeStates: UMGRuntimeState[] = ['idle', 'queued', 'active', 'processing', 'attention', 'complete', 'skipped', 'blocked', 'error'];
-const scopeKinds: UMGRuntimeScopeKind[] = ['sleeve', 'neostack', 'neoblock', 'molt', 'gate', 'tool', 'approval'];
+const runtimeStates: UMGRuntimeState[] = ['idle', 'queued', 'active', 'processing', 'attention', 'approval', 'complete', 'skipped', 'blocked', 'error'];
+const scopeKinds: UMGRuntimeScopeKind[] = ['sleeve', 'neostack', 'neoblock', 'molt', 'merge', 'gate', 'tool', 'capability', 'artifact', 'approval'];
 
 const eventStateDefaults: Record<UMGTraceEventType, UMGRuntimeState> = {
+  route_started: 'active',
+  route_edge_activated: 'active',
   run_started: 'active',
   sleeve_loaded: 'active',
   gate_evaluated: 'attention',
   gate_blocked: 'blocked',
+  neostack_entered: 'active',
   neostack_started: 'active',
   neostack_completed: 'complete',
   neoblock_started: 'active',
   neoblock_completed: 'complete',
   neoblock_rerouted: 'attention',
   molt_role_used: 'active',
+  molt_layer_used: 'active',
+  merge_started: 'processing',
+  merge_completed: 'complete',
   tool_call_prepared: 'attention',
   tool_call_requires_approval: 'attention',
   approval_granted: 'complete',
@@ -81,7 +93,6 @@ const eventStateDefaults: Record<UMGTraceEventType, UMGRuntimeState> = {
   tool_result_received: 'processing',
   run_completed: 'complete',
   run_error: 'error',
-  route_started: 'active',
   gate_opened: 'active',
   gate_closed: 'complete',
   block_queued: 'queued',
@@ -124,7 +135,8 @@ export function createEmptyRuntimeVisualState(traceId: string): UMGRuntimeVisual
 }
 
 export function getRuntimeTargetId(event: UMGTraceEvent): string | undefined {
-  return event.moltBlockId
+  return event.targetId
+    ?? event.moltBlockId
     ?? event.neoBlockId
     ?? event.neoStackId
     ?? event.sleeveId
@@ -249,12 +261,15 @@ function asTimestamp(value: unknown): number | undefined {
 
 function parseScopeKind(value: unknown, event: Record<string, unknown>): UMGRuntimeScopeKind | undefined {
   if (typeof value === 'string' && scopeKinds.includes(value as UMGRuntimeScopeKind)) return value as UMGRuntimeScopeKind;
+  if (typeof event.targetType === 'string' && scopeKinds.includes(event.targetType as UMGRuntimeScopeKind)) return event.targetType as UMGRuntimeScopeKind;
   if (event.moltBlockId || event.blockId || event.nodeId || event.relatedBlockIds) return 'molt';
   if (event.neoBlockId || event.neoblockId) return 'neoblock';
   if (event.neoStackId || event.stackId || event.neoStackID) return 'neostack';
   if (event.sleeveId) return 'sleeve';
   if (event.gateId) return 'gate';
   if (event.toolId) return 'tool';
+  if (event.targetId && event.routeEdgeId) return 'neoblock';
+  if (event.targetId) return 'neoblock';
   if (event.approvalId) return 'approval';
   return undefined;
 }
@@ -263,16 +278,21 @@ function parseEventType(value: unknown, event: Record<string, unknown>): UMGTrac
   if (typeof value === 'string' && eventTypes.includes(value as UMGTraceEventType)) return value as UMGTraceEventType;
   const text = String(value ?? event.type ?? event.kind ?? event.code ?? '').toLowerCase();
   if (!text) return undefined;
+  if (text.includes('route') && text.includes('edge') && (text.includes('activ') || text.includes('start'))) return 'route_edge_activated';
   if (text.includes('run') && text.includes('start')) return 'run_started';
   if (text.includes('sleeve') && text.includes('load')) return 'sleeve_loaded';
   if (text.includes('gate') && text.includes('evaluat')) return 'gate_evaluated';
   if (text.includes('gate') && text.includes('block')) return 'gate_blocked';
+  if (text.includes('neostack') && (text.includes('entered') || text.includes('enter'))) return 'neostack_entered';
   if (text.includes('neostack') && text.includes('start')) return 'neostack_started';
   if (text.includes('neostack') && (text.includes('complete') || text.includes('finish'))) return 'neostack_completed';
   if (text.includes('neoblock') && text.includes('start')) return 'neoblock_started';
   if (text.includes('neoblock') && (text.includes('complete') || text.includes('finish'))) return 'neoblock_completed';
   if (text.includes('neoblock') && (text.includes('reroute') || text.includes('route'))) return 'neoblock_rerouted';
+  if (text.includes('molt') && text.includes('layer')) return 'molt_layer_used';
   if (text.includes('molt') && (text.includes('role') || text.includes('used'))) return 'molt_role_used';
+  if (text.includes('merge') && text.includes('start')) return 'merge_started';
+  if (text.includes('merge') && (text.includes('complete') || text.includes('finish'))) return 'merge_completed';
   if (text.includes('tool') && text.includes('prepared')) return 'tool_call_prepared';
   if (text.includes('tool') && text.includes('approval')) return 'tool_call_requires_approval';
   if (text.includes('approval') && (text.includes('grant') || text.includes('approv'))) return 'approval_granted';
@@ -284,6 +304,11 @@ function parseEventType(value: unknown, event: Record<string, unknown>): UMGTrac
   if (text.includes('route') && (text.includes('complete') || text.includes('finish'))) return 'route_completed';
   if (text.includes('gate') && text.includes('open')) return 'gate_opened';
   if (text.includes('gate') && text.includes('close')) return 'gate_closed';
+  if (text.includes('action') && text.includes('request')) return 'action_request_created';
+  if (text.includes('action') && text.includes('approval')) return 'action_approval_required';
+  if (text.includes('action') && text.includes('execut')) return 'action_executed';
+  if (text.includes('file') && text.includes('created')) return 'file_created';
+  if (text.includes('artifact') && text.includes('created')) return 'artifact_created';
   if (text.includes('approval') && (text.includes('required') || text.includes('request'))) return 'approval_required';
   if (text.includes('tool') && text.includes('block')) return 'tool_blocked';
   if (text.includes('tool') && (text.includes('execut') || text.includes('complete'))) return 'tool_executed';
@@ -319,17 +344,28 @@ function normalizeTraceEntry(entry: unknown, index: number, fallbackTraceId: str
   const scopeKind = parseScopeKind(entry.scopeKind, entry);
   if (!scopeKind) return undefined;
 
-  const moltBlockId = asString(entry.moltBlockId) ?? asString(entry.blockId) ?? firstStringArrayValue(entry.relatedBlockIds);
-  const neoBlockId = asString(entry.neoBlockId) ?? asString(entry.neoblockId);
-  const neoStackId = asString(entry.neoStackId) ?? asString(entry.stackId);
-  const sleeveId = asString(entry.sleeveId);
-  const gateId = asString(entry.gateId);
+  const targetId = asString(entry.targetId);
+  const targetType = asString(entry.targetType);
+  const routeEdgeId = asString(entry.routeEdgeId);
+  const moltBlockId = asString(entry.moltBlockId) ?? (targetType === 'molt' ? targetId : undefined) ?? asString(entry.blockId) ?? firstStringArrayValue(entry.relatedBlockIds);
+  const neoBlockId = asString(entry.neoBlockId) ?? asString(entry.neoblockId) ?? (targetType === 'neoblock' ? targetId : undefined);
+  const neoStackId = asString(entry.neoStackId) ?? asString(entry.stackId) ?? (targetType === 'neostack' ? targetId : undefined);
+  const sleeveId = asString(entry.sleeveId) ?? (targetType === 'sleeve' ? targetId : undefined);
+  const gateId = asString(entry.gateId) ?? (targetType === 'gate' ? targetId : undefined);
   const sourceId = asString(entry.sourceId);
   const metadataAliases = stringArrayValue(entry.metadataAliases ?? entry.aliases);
-  const toolId = asString(entry.toolId);
+  const toolId = asString(entry.toolId) ?? (targetType === 'tool' || targetType === 'capability' ? targetId : undefined);
   const approvalId = asString(entry.approvalId);
 
   return {
+    id: asString(entry.id) ?? asString(entry.eventId),
+    type: asString(entry.type) ?? asString(entry.eventType),
+    targetId,
+    targetType: scopeKinds.includes(targetType as UMGRuntimeScopeKind) ? targetType as UMGTraceEvent['targetType'] : undefined,
+    routeEdgeId,
+    status: asString(entry.status) as UMGTraceEvent['status'],
+    message: asString(entry.message),
+    metadata: isRecord(entry.metadata) ? entry.metadata : undefined,
     traceId: asString(entry.traceId) ?? fallbackTraceId,
     timestamp: asTimestamp(entry.timestamp ?? entry.time ?? entry.createdAt) ?? Date.now() + index,
     scopeKind,

@@ -178,9 +178,12 @@ export function buildHermesRuntimePrompt(request) {
       scopeKind: block.scopeKind,
       sourcePath: block.sourcePath
     })),
+    structuralIR: request.structuralIR || manifest.structuralIR || request.structure?.structuralIR,
+    routeEdges: request.routeEdges || manifest.routeEdges || request.structure?.routeEdges || request.structure?.structuralIR?.routes || [],
     expectedTraceContract: request.expectedTraceContract || {
-      eventFields: ['eventId', 'timestamp', 'eventType', 'message', 'sleeveId', 'neoStackId', 'neoBlockId', 'moltBlockId', 'gateId', 'sourceId', 'metadataAliases', 'status', 'rawHermesPayload'],
-      rule: 'Only emit IDs that are present in the supplied manifest/source structure. If unsure, omit IDs and explain in unmappedEvents.'
+      eventFields: ['id', 'type', 'timestamp', 'targetId', 'targetType', 'routeEdgeId', 'status', 'message', 'metadata', 'eventId', 'eventType', 'sleeveId', 'neoStackId', 'neoBlockId', 'moltBlockId', 'gateId', 'toolId', 'sourceId', 'metadataAliases'],
+      requiredEventTypes: ['route_started', 'route_edge_activated', 'neostack_entered', 'neostack_completed', 'neoblock_started', 'neoblock_completed', 'molt_layer_used', 'merge_started', 'merge_completed', 'gate_evaluated', 'gate_opened', 'gate_blocked', 'tool_block_resolved', 'action_request_created', 'action_approval_required', 'action_executed', 'file_created', 'artifact_created', 'run_completed', 'run_error'],
+      rule: 'Emit runtime trace events using the structuralIR IDs provided. Use targetId and targetType. Do not invent IDs. If unsure, emit an unmapped event.'
     }
   };
 
@@ -190,7 +193,10 @@ export function buildHermesRuntimePrompt(request) {
     'Reason through the supplied compiled UMG runtime manifest. Do not request shell, browser, network, or filesystem tools. Use only the supplied toolCapabilityRegistry for capability availability.',
     'Return ONLY compact JSON with this shape. The events array should prove a real dry-run reasoning walk over supplied IDs when present:',
     '{"traceId":"...","status":"ok|blocked|needsApproval|error","finalOutput":"...","events":[{"eventId":"evt_run_started","timestamp":0,"eventType":"run_started","message":"Hermes dry-run started","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"active"},{"eventId":"evt_neostack_started","timestamp":1,"eventType":"neostack_started","message":"NeoStack considered","scopeKind":"neostack","neoStackId":"<real supplied NeoStack id>","status":"active"},{"eventId":"evt_neoblock_started","timestamp":2,"eventType":"neoblock_started","message":"NeoBlock considered","scopeKind":"neoblock","neoBlockId":"<real supplied NeoBlock id>","status":"active"},{"eventId":"evt_gate_evaluated","timestamp":3,"eventType":"gate_evaluated","message":"Gate evaluated as dry-run/control metadata only","scopeKind":"gate","gateId":"<real supplied Gate id>","status":"complete"},{"eventId":"evt_molt_role_used","timestamp":4,"eventType":"molt_role_used","message":"MOLT role used for reasoning","scopeKind":"molt","moltBlockId":"<real supplied MOLT id>","status":"processing"},{"eventId":"evt_neoblock_completed","timestamp":5,"eventType":"neoblock_completed","message":"NeoBlock dry-run reasoning completed","scopeKind":"neoblock","neoBlockId":"<same real NeoBlock id>","status":"complete"},{"eventId":"evt_run_completed","timestamp":6,"eventType":"run_completed","message":"Hermes dry-run completed","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"complete"}],"toolCalls":[],"blockedCalls":[],"approvalRequests":[],"errors":[],"artifacts":[],"unmappedEvents":[]}',
-    'Events may use only real IDs from the request. Prefer structure.firstMappableIds and sourceBlocks entries. Emit neostack_started, neoblock_started, gate_evaluated, molt_role_used, and neoblock_completed only when a real supplied ID exists. If a target cannot be mapped to a supplied ID, put that attempted event in unmappedEvents with no fabricated ID instead of lighting a node.',
+    'Emit runtime trace events using the structuralIR IDs provided. Use targetId and targetType. Do not invent IDs. If unsure, emit an unmapped event.',
+    'Every runtime event should target a real structuralIR node or route edge when possible. Use route_started for the Sleeve, route_edge_activated for routeEdges, neostack_entered/neostack_completed for NeoStacks, neoblock_started/neoblock_completed for NeoBlocks, molt_layer_used for internal MOLT layers, merge_started/merge_completed for Merge ops, gate_evaluated/gate_opened/gate_blocked for Gates, tool_block_resolved/action_request_created/action_executed for MetaMOLT Tool Blocks/capabilities, file_created/artifact_created for artifacts, and run_completed/run_error for finish state.',
+    'MOLT events must use targetType=molt so the app highlights the internal NeoBlock layer, not as default Runtime Path clutter. Route-edge events must include routeEdgeId. Unknown IDs go to unmappedEvents only.',
+    'Events may use only real IDs from the request. Prefer structuralIR, routeEdges, structure.firstMappableIds, and sourceBlocks entries. If a target cannot be mapped to a supplied ID, put that attempted event in unmappedEvents with no fabricated ID instead of lighting a node.',
     'For dryRun, toolCalls must be empty. If a tool would be needed, put it in blockedCalls or approvalRequests without execution.',
     'If continuationMode is continue_after_approval, this is a second-call continuation linked to previousTraceId. Use only approvedCapabilities, emit approval_granted or approval_denied, tool_call_prepared, tool_call_executed or tool_call_blocked, tool_result_received for safe draft/report/order lookup behavior when applicable, then gate_opened/gate_blocked, neoblock_completed, neoblock_rerouted if skipped, next neoblock_started, or run_completed. Do not perform real external side effects; safe proof artifacts may be local/in-memory draft/report content only.',
     'Compiler trace is not Hermes runtime trace; use only this Hermes reasoning run for events.',
@@ -307,22 +313,37 @@ function normalizeEvent(entry, index, fallbackTraceId, rawHermesPayload) {
   const eventType = typeof entry.eventType === 'string' ? entry.eventType : typeof entry.type === 'string' ? entry.type : undefined;
   const status = typeof entry.status === 'string' ? entry.status : typeof entry.state === 'string' ? entry.state : undefined;
   if (!eventType || !status) return undefined;
+  const targetId = typeof entry.targetId === 'string' ? entry.targetId : undefined;
+  const targetType = typeof entry.targetType === 'string' ? entry.targetType : undefined;
+  const sleeveId = typeof entry.sleeveId === 'string' ? entry.sleeveId : targetType === 'sleeve' ? targetId : undefined;
+  const neoStackId = typeof entry.neoStackId === 'string' ? entry.neoStackId : targetType === 'neostack' ? targetId : undefined;
+  const neoBlockId = typeof entry.neoBlockId === 'string' ? entry.neoBlockId : targetType === 'neoblock' ? targetId : undefined;
+  const moltBlockId = typeof entry.moltBlockId === 'string' ? entry.moltBlockId : targetType === 'molt' ? targetId : undefined;
+  const gateId = typeof entry.gateId === 'string' ? entry.gateId : targetType === 'gate' ? targetId : undefined;
+  const toolId = typeof entry.toolId === 'string' ? entry.toolId : targetType === 'tool' || targetType === 'capability' ? targetId : undefined;
   return {
+    id: typeof entry.id === 'string' ? entry.id : typeof entry.eventId === 'string' ? entry.eventId : undefined,
+    type: typeof entry.type === 'string' ? entry.type : eventType,
+    targetId,
+    targetType,
+    routeEdgeId: typeof entry.routeEdgeId === 'string' ? entry.routeEdgeId : undefined,
     traceId: typeof entry.traceId === 'string' ? entry.traceId : fallbackTraceId,
-    eventId: typeof entry.eventId === 'string' ? entry.eventId : `hermes_event_${index + 1}`,
-    timestamp: typeof entry.timestamp === 'number' ? entry.timestamp : Date.now() + index,
+    eventId: typeof entry.eventId === 'string' ? entry.eventId : typeof entry.id === 'string' ? entry.id : `hermes_event_${index + 1}`,
+    timestamp: typeof entry.timestamp === 'number' ? entry.timestamp : typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) || Date.now() + index : Date.now() + index,
     eventType,
     message: typeof entry.message === 'string' ? entry.message : typeof entry.label === 'string' ? entry.label : eventType,
     label: typeof entry.label === 'string' ? entry.label : typeof entry.message === 'string' ? entry.message : eventType,
     details: typeof entry.details === 'string' ? entry.details : undefined,
-    scopeKind: typeof entry.scopeKind === 'string' ? entry.scopeKind : entry.gateId ? 'gate' : entry.moltBlockId ? 'molt' : entry.neoBlockId ? 'neoblock' : entry.neoStackId ? 'neostack' : entry.sleeveId ? 'sleeve' : 'sleeve',
-    sleeveId: typeof entry.sleeveId === 'string' ? entry.sleeveId : undefined,
-    neoStackId: typeof entry.neoStackId === 'string' ? entry.neoStackId : undefined,
-    neoBlockId: typeof entry.neoBlockId === 'string' ? entry.neoBlockId : undefined,
-    moltBlockId: typeof entry.moltBlockId === 'string' ? entry.moltBlockId : undefined,
-    gateId: typeof entry.gateId === 'string' ? entry.gateId : undefined,
+    scopeKind: typeof entry.scopeKind === 'string' ? entry.scopeKind : targetType || (gateId ? 'gate' : moltBlockId ? 'molt' : neoBlockId ? 'neoblock' : neoStackId ? 'neostack' : sleeveId ? 'sleeve' : toolId ? 'tool' : 'sleeve'),
+    sleeveId,
+    neoStackId,
+    neoBlockId,
+    moltBlockId,
+    gateId,
+    toolId,
     sourceId: typeof entry.sourceId === 'string' ? entry.sourceId : undefined,
-    metadataAliases: Array.isArray(entry.metadataAliases) ? uniqueStrings(entry.metadataAliases) : undefined,
+    metadataAliases: Array.isArray(entry.metadataAliases) ? uniqueStrings(entry.metadataAliases) : Array.isArray(entry.aliases) ? uniqueStrings(entry.aliases) : undefined,
+    metadata: isRecord(entry.metadata) ? entry.metadata : undefined,
     state: status,
     status,
     rawHermesPayload
