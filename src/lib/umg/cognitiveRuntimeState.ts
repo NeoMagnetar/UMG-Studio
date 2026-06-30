@@ -22,9 +22,12 @@ const eventTypes: UMGTraceEventType[] = [
   'neostack_completed',
   'neoblock_started',
   'neoblock_completed',
+  'neoblock_rerouted',
   'molt_role_used',
   'tool_call_prepared',
   'tool_call_requires_approval',
+  'approval_granted',
+  'approval_denied',
   'tool_call_executed',
   'tool_call_blocked',
   'tool_result_received',
@@ -58,9 +61,12 @@ const eventStateDefaults: Record<UMGTraceEventType, UMGRuntimeState> = {
   neostack_completed: 'complete',
   neoblock_started: 'active',
   neoblock_completed: 'complete',
+  neoblock_rerouted: 'attention',
   molt_role_used: 'active',
   tool_call_prepared: 'attention',
   tool_call_requires_approval: 'attention',
+  approval_granted: 'complete',
+  approval_denied: 'blocked',
   tool_call_executed: 'complete',
   tool_call_blocked: 'blocked',
   tool_result_received: 'processing',
@@ -247,9 +253,12 @@ function parseEventType(value: unknown, event: Record<string, unknown>): UMGTrac
   if (text.includes('neostack') && (text.includes('complete') || text.includes('finish'))) return 'neostack_completed';
   if (text.includes('neoblock') && text.includes('start')) return 'neoblock_started';
   if (text.includes('neoblock') && (text.includes('complete') || text.includes('finish'))) return 'neoblock_completed';
+  if (text.includes('neoblock') && (text.includes('reroute') || text.includes('route'))) return 'neoblock_rerouted';
   if (text.includes('molt') && (text.includes('role') || text.includes('used'))) return 'molt_role_used';
   if (text.includes('tool') && text.includes('prepared')) return 'tool_call_prepared';
   if (text.includes('tool') && text.includes('approval')) return 'tool_call_requires_approval';
+  if (text.includes('approval') && (text.includes('grant') || text.includes('approv'))) return 'approval_granted';
+  if (text.includes('approval') && (text.includes('den') || text.includes('reject'))) return 'approval_denied';
   if (text.includes('tool') && text.includes('result')) return 'tool_result_received';
   if (text.includes('run') && (text.includes('complete') || text.includes('finish'))) return 'run_completed';
   if (text.includes('run') && (text.includes('error') || text.includes('fail'))) return 'run_error';

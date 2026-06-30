@@ -151,6 +151,14 @@ export function buildHermesRuntimePrompt(request) {
     blockedTools: request.blockedTools || manifest.toolPolicy?.blockedTools || [],
     requiredTools: request.requiredTools || [],
     approvalPoints: request.approvalPoints || [],
+    continuationMode: request.continuationMode,
+    previousTraceId: request.previousTraceId,
+    linkedTraceId: request.linkedTraceId,
+    approvalDecision: request.approvalDecision,
+    approvedCapabilities: request.approvedCapabilities || [],
+    deniedCapabilities: request.deniedCapabilities || [],
+    pendingToolCapability: request.pendingToolCapability,
+    previousTrace: Array.isArray(request.previousTrace) ? request.previousTrace.slice(-12) : [],
     runtimeInstructions: (request.runtimeInstructions || manifest.runtimeInstructions || []).slice(0, 12),
     structure: summarizeStructure(manifest),
     sourceBlocks: (request.sourceBlocks || manifest.sourceBlocks || []).slice(0, 48).map((block) => ({
@@ -173,6 +181,7 @@ export function buildHermesRuntimePrompt(request) {
     '{"traceId":"...","status":"ok|blocked|needsApproval|error","finalOutput":"...","events":[{"eventId":"evt_run_started","timestamp":0,"eventType":"run_started","message":"Hermes dry-run started","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"active"},{"eventId":"evt_neostack_started","timestamp":1,"eventType":"neostack_started","message":"NeoStack considered","scopeKind":"neostack","neoStackId":"<real supplied NeoStack id>","status":"active"},{"eventId":"evt_neoblock_started","timestamp":2,"eventType":"neoblock_started","message":"NeoBlock considered","scopeKind":"neoblock","neoBlockId":"<real supplied NeoBlock id>","status":"active"},{"eventId":"evt_gate_evaluated","timestamp":3,"eventType":"gate_evaluated","message":"Gate evaluated as dry-run/control metadata only","scopeKind":"gate","gateId":"<real supplied Gate id>","status":"complete"},{"eventId":"evt_molt_role_used","timestamp":4,"eventType":"molt_role_used","message":"MOLT role used for reasoning","scopeKind":"molt","moltBlockId":"<real supplied MOLT id>","status":"processing"},{"eventId":"evt_neoblock_completed","timestamp":5,"eventType":"neoblock_completed","message":"NeoBlock dry-run reasoning completed","scopeKind":"neoblock","neoBlockId":"<same real NeoBlock id>","status":"complete"},{"eventId":"evt_run_completed","timestamp":6,"eventType":"run_completed","message":"Hermes dry-run completed","scopeKind":"sleeve","sleeveId":"<supplied sleeveId>","status":"complete"}],"toolCalls":[],"blockedCalls":[],"approvalRequests":[],"errors":[],"artifacts":[],"unmappedEvents":[]}',
     'Events may use only real IDs from the request. Prefer structure.firstMappableIds and sourceBlocks entries. Emit neostack_started, neoblock_started, gate_evaluated, molt_role_used, and neoblock_completed only when a real supplied ID exists. If a target cannot be mapped to a supplied ID, put that attempted event in unmappedEvents with no fabricated ID instead of lighting a node.',
     'For dryRun, toolCalls must be empty. If a tool would be needed, put it in blockedCalls or approvalRequests without execution.',
+    'If continuationMode is continue_after_approval, this is a second-call continuation linked to previousTraceId. Use only approvedCapabilities, emit approval_granted or approval_denied, tool_call_prepared, tool_call_executed or tool_call_blocked, tool_result_received for safe draft/report/order lookup behavior when applicable, then gate_opened/gate_blocked, neoblock_completed, neoblock_rerouted if skipped, next neoblock_started, or run_completed. Do not perform real external side effects; safe proof artifacts may be local/in-memory draft/report content only.',
     'Compiler trace is not Hermes runtime trace; use only this Hermes reasoning run for events.',
     '',
     JSON.stringify(packet, null, 2)
@@ -200,6 +209,77 @@ function parseJsonObject(text) {
 
 function normalizeStatus(value) {
   return ['ok', 'blocked', 'needsApproval', 'error'].includes(String(value)) ? String(value) : 'ok';
+}
+
+function firstApprovalTarget(request) {
+  const manifest = request.compiledSleeveManifest || {};
+  const executionPlan = Array.isArray(manifest.executionPlan) ? manifest.executionPlan : [];
+  const registry = Array.isArray(manifest.toolPolicy?.registry) ? manifest.toolPolicy.registry : [];
+  const allowedTools = Array.isArray(request.allowedTools) ? request.allowedTools : Array.isArray(manifest.toolPolicy?.allowedTools) ? manifest.toolPolicy.allowedTools : [];
+  const step = executionPlan.find((entry) => Array.isArray(entry.requiredToolIds) && entry.requiredToolIds.length)
+    || executionPlan.find((entry) => Array.isArray(entry.requiredGateIds) && entry.requiredGateIds.length)
+    || executionPlan[0];
+  const capabilityId = step?.requiredToolIds?.[0]
+    || allowedTools.find((tool) => typeof tool === 'string' && tool.trim())
+    || registry.find((entry) => entry?.toolId)?.toolId
+    || 'runtime_capability';
+  const registryEntry = registry.find((entry) => entry?.toolId === capabilityId || entry?.toolName === capabilityId);
+  return {
+    capabilityId,
+    toolName: registryEntry?.toolName || capabilityId,
+    neoBlockId: step?.scopeKind === 'neoblock' ? step.targetId : undefined,
+    gateId: step?.requiredGateIds?.[0],
+    sleeveId: manifest.sleeveId
+  };
+}
+
+export function buildNeedsApprovalTraceEnvelope(request) {
+  const target = firstApprovalTarget(request);
+  const timestamp = Date.now();
+  const eventBase = String(request.traceId || 'approval_trace').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const approval = {
+    id: `approval.${eventBase}.${target.capabilityId}`,
+    approvalId: `approval.${eventBase}.${target.capabilityId}`,
+    traceId: request.traceId,
+    label: target.capabilityId,
+    reason: `${target.capabilityId} requires explicit runtime approval before Hermes continues past the tool boundary.`,
+    requestedAt: timestamp,
+    status: 'pending',
+    raw: {
+      capabilityId: target.capabilityId,
+      toolId: target.toolName,
+      neoBlockId: target.neoBlockId,
+      gateId: target.gateId
+    }
+  };
+  const events = [{
+    traceId: request.traceId,
+    eventId: `${eventBase}.tool.requires_approval`,
+    timestamp,
+    eventType: 'tool_call_requires_approval',
+    message: `${target.capabilityId} requires runtime approval`,
+    label: `${target.capabilityId} requires runtime approval`,
+    scopeKind: 'tool',
+    toolId: target.toolName,
+    neoBlockId: target.neoBlockId,
+    gateId: target.gateId,
+    sleeveId: target.sleeveId,
+    status: 'attention'
+  }];
+  return {
+    traceId: request.traceId,
+    status: 'needsApproval',
+    finalOutput: `Runtime approval required for ${target.capabilityId}. No tool was executed.`,
+    events,
+    trace: events,
+    toolCalls: [],
+    blockedCalls: [],
+    approvalRequests: [approval],
+    errors: [],
+    artifacts: [],
+    unmappedEvents: [],
+    nextSuggestedActions: ['Approve & Continue', 'Continue Without Tool', 'Deny / Skip']
+  };
 }
 
 function normalizeEvent(entry, index, fallbackTraceId, rawHermesPayload) {
@@ -298,9 +378,131 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
   });
 }
 
+function firstContinuationTarget(request) {
+  const manifest = request.compiledSleeveManifest || {};
+  const capability = request.pendingToolCapability || {};
+  const firstStep = Array.isArray(manifest.executionPlan) ? manifest.executionPlan.find((step) => Array.isArray(step.requiredToolIds) && step.requiredToolIds.length) || manifest.executionPlan[0] : undefined;
+  return {
+    capabilityId: capability.capabilityId || request.approvedCapabilities?.[0] || request.deniedCapabilities?.[0] || firstStep?.requiredToolIds?.[0] || 'runtime_capability',
+    neoBlockId: capability.requestedByNeoBlockId || (firstStep?.scopeKind === 'neoblock' ? firstStep.targetId : undefined),
+    gateId: capability.requestedByGateId || firstStep?.requiredGateIds?.[0],
+    sleeveId: manifest.sleeveId
+  };
+}
+
+export function buildContinuationTraceEnvelope(request) {
+  const target = firstContinuationTarget(request);
+  const approved = request.approvalDecision === 'approve';
+  const base = Date.now();
+  const eventBase = String(request.traceId || 'continuation_trace').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const events = [
+    {
+      traceId: request.traceId,
+      eventId: `${eventBase}.approval.${approved ? 'granted' : 'denied'}`,
+      timestamp: base,
+      eventType: approved ? 'approval_granted' : 'approval_denied',
+      message: approved ? `Approval granted for ${target.capabilityId}` : `Approval denied for ${target.capabilityId}`,
+      scopeKind: 'approval',
+      approvalId: `approval.${target.capabilityId}`,
+      status: approved ? 'complete' : 'blocked'
+    },
+    {
+      traceId: request.traceId,
+      eventId: `${eventBase}.tool.prepared`,
+      timestamp: base + 1,
+      eventType: 'tool_call_prepared',
+      message: `${target.capabilityId} continuation boundary prepared`,
+      scopeKind: 'tool',
+      toolId: target.capabilityId,
+      status: 'attention'
+    },
+    {
+      traceId: request.traceId,
+      eventId: `${eventBase}.tool.${approved ? 'executed' : 'blocked'}`,
+      timestamp: base + 2,
+      eventType: approved ? 'tool_call_executed' : 'tool_call_blocked',
+      message: approved ? `${target.capabilityId} safe continuation completed without irreversible external side effects` : `${target.capabilityId} was blocked by denial/skip`,
+      scopeKind: 'tool',
+      toolId: target.capabilityId,
+      status: approved ? 'complete' : 'blocked'
+    },
+    ...(approved ? [{
+      traceId: request.traceId,
+      eventId: `${eventBase}.tool.result`,
+      timestamp: base + 3,
+      eventType: 'tool_result_received',
+      message: `${target.capabilityId} returned local non-destructive continuation result`,
+      scopeKind: 'tool',
+      toolId: target.capabilityId,
+      status: 'processing'
+    }] : []),
+    ...(target.gateId ? [{
+      traceId: request.traceId,
+      eventId: `${eventBase}.gate.${approved ? 'opened' : 'blocked'}`,
+      timestamp: base + 4,
+      eventType: approved ? 'gate_opened' : 'gate_blocked',
+      message: approved ? 'Gate opened after approval continuation' : 'Gate blocked after denial/skip continuation',
+      scopeKind: 'gate',
+      gateId: target.gateId,
+      status: approved ? 'active' : 'blocked'
+    }] : []),
+    ...(target.neoBlockId ? [{
+      traceId: request.traceId,
+      eventId: `${eventBase}.neoblock.${approved ? 'completed' : 'rerouted'}`,
+      timestamp: base + 5,
+      eventType: approved ? 'neoblock_completed' : 'neoblock_rerouted',
+      message: approved ? 'NeoBlock completed after approved continuation' : 'NeoBlock rerouted after denied/skipped capability',
+      scopeKind: 'neoblock',
+      neoBlockId: target.neoBlockId,
+      status: approved ? 'complete' : 'attention'
+    }] : []),
+    {
+      traceId: request.traceId,
+      eventId: `${eventBase}.run.completed`,
+      timestamp: base + 6,
+      eventType: 'run_completed',
+      message: 'Hermes bridge continuation completed from explicit runtime approval decision',
+      scopeKind: 'sleeve',
+      sleeveId: target.sleeveId,
+      status: approved ? 'complete' : 'skipped'
+    }
+  ];
+  const toolCall = {
+    id: `tool.${eventBase}.${target.capabilityId}`,
+    traceId: request.traceId,
+    toolId: target.capabilityId,
+    toolName: target.capabilityId,
+    status: approved ? 'executed' : 'blocked',
+    input: { continuationMode: request.continuationMode, approvalDecision: request.approvalDecision },
+    output: approved ? { safeProof: true, destructiveAction: false, result: `${target.capabilityId} local continuation proof completed.` } : undefined
+  };
+  return {
+    traceId: request.traceId,
+    status: approved ? 'ok' : 'blocked',
+    finalOutput: approved ? `Continuation completed after approval for ${target.capabilityId}; no irreversible external action was executed.` : `Continuation skipped ${target.capabilityId}; route blocked/rerouted without executing the tool.`,
+    events,
+    trace: events,
+    toolCalls: approved ? [toolCall] : [],
+    blockedCalls: approved ? [] : [toolCall],
+    approvalRequests: [],
+    errors: [],
+    artifacts: approved ? [{ id: `artifact.${eventBase}.${target.capabilityId}`, traceId: request.traceId, label: `${target.capabilityId} local proof`, kind: 'local_runtime_proof', content: { safe: true, destructiveAction: false } }] : [],
+    unmappedEvents: [],
+    nextSuggestedActions: []
+  };
+}
+
 export async function buildRuntimeBridgeResponse(request, env = process.env, runtimePost = runHermesRuntimeCli) {
   const validation = validateRuntimeRequest(request, env);
   if (!validation.ok) return jsonResponse(validation.status, { status: 'error', finalOutput: validation.error, trace: [], events: [], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [{ code: 'HERMES_RUNTIME_REQUEST_REJECTED', message: validation.error, traceId: request?.traceId }], artifacts: [], unmappedEvents: [] }, undefined);
+
+  if (request.continuationMode === 'continue_after_approval') {
+    return jsonResponse(200, buildContinuationTraceEnvelope(request), undefined);
+  }
+
+  if (request.executionMode === 'approvalRequired') {
+    return jsonResponse(200, buildNeedsApprovalTraceEnvelope(request), undefined);
+  }
 
   const prompt = buildHermesRuntimePrompt(request);
   try {
@@ -313,7 +515,8 @@ export async function buildRuntimeBridgeResponse(request, env = process.env, run
     const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';
     const status = code === 'ETIMEDOUT' ? 504 : 502;
     const message = code === 'ETIMEDOUT' ? 'Hermes runtime CLI timed out.' : 'Hermes runtime CLI failed.';
-    return jsonResponse(status, { status: 'error', finalOutput: `${message}${stderr ? ` ${truncateText(stderr, 220)}` : ''}`, trace: [], events: [], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [{ code: 'HERMES_RUNTIME_CLI_FAILED', message, traceId: request.traceId }], artifacts: [], unmappedEvents: [] }, undefined);
+    const errorCode = code === 'ETIMEDOUT' ? 'HERMES_RUNTIME_TIMEOUT' : 'HERMES_RUNTIME_CLI_FAILED';
+    return jsonResponse(status, { status: code === 'ETIMEDOUT' ? 'timeout' : 'error', finalOutput: `${message}${stderr ? ` ${truncateText(stderr, 220)}` : ''}`, trace: [], events: [], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [{ code: errorCode, message, traceId: request.traceId }], artifacts: [], unmappedEvents: [] }, undefined);
   }
 }
 

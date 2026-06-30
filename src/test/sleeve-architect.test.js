@@ -8,6 +8,8 @@ import { buildSleeveArchitectPlan } from '../lib/umg/sleeveArchitectPlanner';
 import { buildArchitectRuntimeExecution, defaultArchitectExecutionPolicy } from '../lib/umg/sleeveArchitectExecution';
 import { createCompilerInputFromCompileCandidate, createCompilerRequest, validateCompilerInput } from '../lib/umg/compileCandidateAdapter';
 import { createHermesRuntimeRequestFromManifest } from '../lib/umg/hermesRuntimeExecution';
+import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from '../lib/umg/cognitiveRuntimeState';
+import { createHermesContinuationRequest, createPendingRuntimeApproval, resolveToolCapabilities } from '../lib/umg/toolCapabilityResolver';
 import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapter';
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
@@ -166,4 +168,71 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(hermesRequest.executionMode).toBe('approvalRequired');
     expect(hermesRequest.approvalMode).toBe('manual');
   });
+
+  it('resolves declared tool capabilities and creates pending runtime approval state from needsApproval', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate: execution.compileCandidate, assemblyPlan: execution.assemblyPlan, blockMatchPlan: execution.blockMatchPlan, businessMap: map, businessInput: input });
+    const compilerRequest = createCompilerRequest(compilerInput);
+    const compilerResult = normalizeCompilerResponseToManifest({ ok: true, result: { runtime: { sleeveId: execution.runtimeSleeve.id, sleeveName: execution.runtimeSleeve.title, promptSpec: { neoBlockPrompts: [] } }, executionPlan: [], toolPolicy: undefined } }, compilerRequest);
+    const manifest = compilerResult.manifest;
+    const resolutions = resolveToolCapabilities({ manifest, configuredCapabilities: ['customer_message_draft', 'report_generate'] });
+    expect(resolutions.map((entry) => entry.capabilityId)).toEqual(expect.arrayContaining(['order_lookup', 'customer_message_draft', 'refund_prepare_or_request']));
+    expect(resolutions.find((entry) => entry.capabilityId === 'customer_message_draft')?.executionPolicy).toBe('autoAllowed');
+    expect(resolutions.find((entry) => entry.capabilityId === 'refund_prepare_or_request')?.executionPolicy).toBe('approvalRequired');
+    const hermesRequest = createHermesRuntimeRequestFromManifest({ compiledRuntimeManifest: manifest, userGoal: input.text, businessInput: input, executionMode: 'approvalRequired', approvalMode: 'manual', traceId: 'trace.phase13d.start' });
+    const pending = createPendingRuntimeApproval({
+      request: hermesRequest,
+      resolutions,
+      result: {
+        status: 'needsApproval',
+        finalOutput: 'Needs runtime approval before tool boundary.',
+        trace: [{ traceId: hermesRequest.traceId, eventId: 'evt_tool_boundary', timestamp: 1, eventType: 'tool_call_requires_approval', scopeKind: 'tool', toolId: 'refund_prepare_or_request', state: 'attention', label: 'refund capability requires approval' }],
+        toolCalls: [],
+        blockedCalls: [],
+        approvalRequests: [{ id: 'approval.1', traceId: hermesRequest.traceId, approvalId: 'approval.1', label: 'refund_prepare_or_request', reason: 'Refund preparation requires explicit approval.', requestedAt: 1, status: 'pending', raw: { capabilityId: 'refund_prepare_or_request' } }],
+        errors: [],
+        artifacts: [],
+        nextSuggestedActions: []
+      }
+    });
+    expect(pending?.pendingApprovalTraceId).toBe('trace.phase13d.start');
+    expect(pending?.pendingToolCapability.capabilityId).toBe('refund_prepare_or_request');
+    expect(pending?.continuationPayload.previousTraceId).toBe('trace.phase13d.start');
+    expect(pending?.continuationPayload.preserveUMGTrace).toBe(true);
+  });
+
+  it('builds approval continuation requests and denied approval does not approve tool execution', () => {
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const execution = buildArchitectRuntimeExecution({ plan, businessMap: map, businessInput: input });
+    const compilerInput = createCompilerInputFromCompileCandidate({ compileCandidate: execution.compileCandidate, assemblyPlan: execution.assemblyPlan, blockMatchPlan: execution.blockMatchPlan, businessMap: map, businessInput: input });
+    const compilerResult = normalizeCompilerResponseToManifest({ ok: true, result: { runtime: { sleeveId: execution.runtimeSleeve.id, sleeveName: execution.runtimeSleeve.title, promptSpec: { neoBlockPrompts: [] } }, executionPlan: [], toolPolicy: undefined } }, createCompilerRequest(compilerInput));
+    const hermesRequest = createHermesRuntimeRequestFromManifest({ compiledRuntimeManifest: compilerResult.manifest, userGoal: input.text, businessInput: input, traceId: 'trace.phase13d.denied' });
+    const resolutions = resolveToolCapabilities({ manifest: compilerResult.manifest });
+    const pending = createPendingRuntimeApproval({ request: hermesRequest, resolutions, result: { status: 'needsApproval', finalOutput: 'Need approval.', trace: [], toolCalls: [], blockedCalls: [], approvalRequests: [{ id: 'approval.2', traceId: hermesRequest.traceId, approvalId: 'approval.2', label: 'order_lookup', reason: 'lookup boundary', requestedAt: 1, status: 'pending', raw: { capabilityId: 'order_lookup' } }], errors: [], artifacts: [], nextSuggestedActions: [] } });
+    expect(pending).toBeDefined();
+    const denied = createHermesContinuationRequest({ pendingApproval: pending, decision: 'deny', userInstruction: 'Skip order lookup.' });
+    expect(denied.approvalDecision).toBe('deny');
+    expect(denied.approvedCapabilities).toEqual([]);
+    expect(denied.deniedCapabilities).toEqual(['order_lookup']);
+    expect(denied.previousTraceId).toBe('trace.phase13d.denied');
+    expect(denied.continuationMode).toBe('continue_after_approval');
+  });
+
+  it('maps approved continuation tool trace events into UMG runtime state without fabricated activation', () => {
+    const state = applyRuntimeTraceEvents(createEmptyRuntimeVisualState('trace.phase13d.continue'), [
+      { traceId: 'trace.phase13d.continue', eventId: 'approval_granted.1', timestamp: 1, eventType: 'approval_granted', scopeKind: 'approval', approvalId: 'approval.1', state: 'complete', label: 'approval granted' },
+      { traceId: 'trace.phase13d.continue', eventId: 'tool_call_executed.1', timestamp: 2, eventType: 'tool_call_executed', scopeKind: 'tool', toolId: 'customer_message_draft', state: 'complete', label: 'draft generated' },
+      { traceId: 'trace.phase13d.continue', eventId: 'gate_opened.1', timestamp: 3, eventType: 'gate_opened', scopeKind: 'gate', gateId: 'gate.refund.approval', state: 'active', label: 'gate opened' },
+      { traceId: 'trace.phase13d.continue', eventId: 'neoblock_completed.1', timestamp: 4, eventType: 'neoblock_completed', scopeKind: 'neoblock', neoBlockId: 'nb.refund.approval', state: 'complete', label: 'neoblock completed' }
+    ]);
+    expect(state.completeIds).toEqual(expect.arrayContaining(['approval.1', 'customer_message_draft', 'nb.refund.approval']));
+    expect(state.activeIds).toContain('gate.refund.approval');
+    expect(state.timeline).toHaveLength(4);
+  });
 });
+

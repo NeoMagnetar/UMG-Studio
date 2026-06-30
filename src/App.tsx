@@ -44,6 +44,7 @@ import { UMGCompilerRequest, UMGCompilerResult } from './lib/umg/compilerIntegra
 import { HermesCognitiveRuntimeRequest, HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeVisualState } from './lib/umg/cognitiveRuntimeTypes';
 import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
 import { createHermesRuntimeRequestFromManifest, getHermesRuntimeAdapterConfigFromEnv, getHermesRuntimeConnectionSummary, runCompiledManifestThroughHermes, validateHermesRuntimeRequest } from './lib/umg/hermesRuntimeExecution';
+import { createHermesContinuationRequest, createPendingRuntimeApproval, PendingRuntimeApproval, resolveToolCapabilities, ToolCapabilityResolution } from './lib/umg/toolCapabilityResolver';
 import { buildRuntimeGeometryManifest } from './lib/umg/runtimeGeometryProjection';
 import { buildSleeveArchitectPlan } from './lib/umg/sleeveArchitectPlanner';
 import { buildArchitectRuntimeExecution } from './lib/umg/sleeveArchitectExecution';
@@ -255,6 +256,8 @@ export default function App() {
   const [hermesRuntimeWarnings, setHermesRuntimeWarnings] = useState<string[]>([]);
   const [hermesRuntimeErrors, setHermesRuntimeErrors] = useState<string[]>([]);
   const [isHermesRunning, setIsHermesRunning] = useState(false);
+  const [toolCapabilityResolutions, setToolCapabilityResolutions] = useState<ToolCapabilityResolution[]>([]);
+  const [pendingRuntimeApproval, setPendingRuntimeApproval] = useState<PendingRuntimeApproval | undefined>();
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
@@ -1661,6 +1664,8 @@ export default function App() {
     setHermesRuntimeVisualState(undefined);
     setHermesRuntimeWarnings([]);
     setHermesRuntimeErrors([]);
+    setToolCapabilityResolutions([]);
+    setPendingRuntimeApproval(undefined);
     setIsHermesRunning(false);
   };
 
@@ -1835,12 +1840,22 @@ export default function App() {
       setIsHermesRunning(true);
       setHermesRuntimeErrors([]);
       setStatus('Sending Architect Mode compiled runtime manifest to configured Hermes runtime endpoint…');
+      const resolutions = resolveToolCapabilities({ manifest: mergedResult.manifest });
+      setToolCapabilityResolutions(resolutions);
       const hermesExecution = await runCompiledManifestThroughHermes({ request: hermesRequest, config: hermesConfig });
       setHermesRuntimeResult(hermesExecution.result);
       setHermesRuntimeVisualState(hermesExecution.visualState);
       setHermesRuntimeWarnings([...hermesValidation.warnings, ...hermesExecution.warnings]);
       setHermesRuntimeErrors(hermesExecution.result.errors.map((error) => `${error.code}: ${error.message}`));
-      setStatus(hermesExecution.result.trace.length ? 'Architect Mode Hermes returned real runtime trace events; trace ingested into visual state.' : 'Architect Mode Hermes returned a real response but no runtime trace events.');
+      const pendingApproval = createPendingRuntimeApproval({ request: hermesRequest, result: hermesExecution.result, resolutions, currentRuntimeState: hermesExecution.visualState });
+      setPendingRuntimeApproval(pendingApproval);
+      setStatus(hermesExecution.result.status === 'needsApproval' && !pendingApproval
+        ? 'needsApproval returned but no approval capability could be resolved.'
+        : pendingApproval
+          ? 'Architect Mode Hermes reached a runtime approval boundary. Approve or skip to continue execution.'
+          : hermesExecution.result.trace.length
+            ? 'Architect Mode Hermes returned real runtime trace events; trace ingested into visual state.'
+            : 'Architect Mode Hermes returned a real response but no runtime trace events.');
     } catch (error) {
       setCompilerResult({ status: 'error', errors: [{ code: 'ARCHITECT_EXECUTION_FAILED', message: error instanceof Error ? error.message : String(error), raw: error }], warnings: [] });
       setStatus('Architect Mode build/compile/run failed.');
@@ -1942,7 +1957,63 @@ export default function App() {
       setHermesRuntimeVisualState(execution.visualState);
       setHermesRuntimeWarnings([...validation.warnings, ...execution.warnings]);
       setHermesRuntimeErrors(execution.result.errors.map((error) => `${error.code}: ${error.message}`));
-      setStatus(execution.result.trace.length ? 'Hermes returned real runtime trace events; trace ingested into visual state.' : 'Hermes returned a real response but no runtime trace events.');
+      const resolutions = resolveToolCapabilities({ manifest: compiledRuntimeManifest });
+      const pendingApproval = createPendingRuntimeApproval({ request, result: execution.result, resolutions, currentRuntimeState: execution.visualState });
+      setToolCapabilityResolutions(resolutions);
+      setPendingRuntimeApproval(pendingApproval);
+      setStatus(execution.result.status === 'needsApproval' && !pendingApproval
+        ? 'needsApproval returned but no approval capability could be resolved.'
+        : pendingApproval
+          ? 'Hermes reached a runtime approval boundary. Approve or skip to continue execution.'
+          : execution.result.trace.length
+            ? 'Hermes returned real runtime trace events; trace ingested into visual state.'
+            : 'Hermes returned a real response but no runtime trace events.');
+    } finally {
+      setIsHermesRunning(false);
+    }
+  };
+
+  const continueHermesRuntimeAfterApproval = async (decision: 'approve' | 'deny' | 'skip') => {
+    if (!pendingRuntimeApproval) {
+      setStatus('No pending runtime approval is available.');
+      return;
+    }
+    const request = createHermesContinuationRequest({ pendingApproval: pendingRuntimeApproval, decision, userInstruction: decision === 'approve' ? 'Continue from the runtime approval boundary using only approved safe/non-destructive capability behavior.' : 'Continue without executing the pending capability; skip or route around it if possible.' });
+    setHermesRequestPreview(request);
+    const validation = validateHermesRuntimeRequest(request);
+    setHermesRuntimeWarnings(validation.warnings);
+    if (!validation.valid) {
+      setHermesRuntimeErrors(validation.errors);
+      setStatus('Hermes continuation request validation failed. No continuation call was made.');
+      return;
+    }
+    const hermesConfig = getHermesRuntimeAdapterConfigFromEnv();
+    if (!hermesConfig.enabled || !hermesConfig.endpoint) {
+      setHermesRuntimeErrors(['HERMES_ENDPOINT_NOT_CONFIGURED: Hermes runtime endpoint is not configured.']);
+      setStatus('Hermes runtime endpoint is not configured. No continuation call was made.');
+      return;
+    }
+    setIsHermesRunning(true);
+    setHermesRuntimeErrors([]);
+    setStatus(decision === 'approve' ? 'Sending approved runtime continuation to Hermes…' : 'Sending denied/skipped runtime continuation to Hermes…');
+    try {
+      const execution = await runCompiledManifestThroughHermes({ request, config: hermesConfig });
+      const combinedTrace = [...(hermesRuntimeResult?.trace ?? []), ...execution.result.trace];
+      const combinedResult: HermesCognitiveRuntimeResult = {
+        ...execution.result,
+        trace: combinedTrace,
+        unmappedEvents: [...(hermesRuntimeResult?.unmappedEvents ?? []), ...(execution.result.unmappedEvents ?? [])],
+        toolCalls: [...(hermesRuntimeResult?.toolCalls ?? []), ...execution.result.toolCalls],
+        blockedCalls: [...(hermesRuntimeResult?.blockedCalls ?? []), ...execution.result.blockedCalls],
+        approvalRequests: [...(hermesRuntimeResult?.approvalRequests ?? []), ...execution.result.approvalRequests],
+        artifacts: [...(hermesRuntimeResult?.artifacts ?? []), ...execution.result.artifacts]
+      };
+      setHermesRuntimeResult(combinedResult);
+      setHermesRuntimeVisualState(execution.visualState);
+      setHermesRuntimeWarnings([...validation.warnings, ...execution.warnings]);
+      setHermesRuntimeErrors(execution.result.errors.map((error) => `${error.code}: ${error.message}`));
+      setPendingRuntimeApproval(execution.result.status === 'needsApproval' ? createPendingRuntimeApproval({ request, result: execution.result, resolutions: toolCapabilityResolutions, currentRuntimeState: execution.visualState }) : undefined);
+      setStatus(execution.result.trace.length ? 'Hermes continuation returned real runtime trace events; dynamic route advanced from continuation trace.' : 'Hermes continuation returned a real response but no continuation trace events.');
     } finally {
       setIsHermesRunning(false);
     }
@@ -1973,6 +2044,8 @@ export default function App() {
       hermesRuntimeWarnings={hermesRuntimeWarnings}
       hermesRuntimeErrors={hermesRuntimeErrors}
       isHermesRunning={isHermesRunning}
+      toolCapabilityResolutions={toolCapabilityResolutions}
+      pendingRuntimeApproval={pendingRuntimeApproval}
       hermesEndpointConfigured={getHermesRuntimeAdapterConfigFromEnv().enabled}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
@@ -1993,6 +2066,7 @@ export default function App() {
       onRunArchitectExecution={buildAndRunArchitectMode}
       onCompileWithUMGCompiler={runActualUMGCompiler}
       onRunHermesRuntime={runHermesRuntimeFromManifest}
+      onContinueRuntimeApproval={continueHermesRuntimeAfterApproval}
       onOpenStudio={() => openStudioShell('canvas')}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
@@ -2214,6 +2288,8 @@ function PublicLandingShell({
   hermesRuntimeWarnings,
   hermesRuntimeErrors,
   isHermesRunning,
+  toolCapabilityResolutions,
+  pendingRuntimeApproval,
   hermesEndpointConfigured,
   onGoalChange,
   onContextChange,
@@ -2228,6 +2304,7 @@ function PublicLandingShell({
   onRunArchitectExecution,
   onCompileWithUMGCompiler,
   onRunHermesRuntime,
+  onContinueRuntimeApproval,
   onOpenStudio,
   onOpenRuntime,
   onOpenDebug
@@ -2255,6 +2332,8 @@ function PublicLandingShell({
   hermesRuntimeWarnings: string[];
   hermesRuntimeErrors: string[];
   isHermesRunning: boolean;
+  toolCapabilityResolutions: ToolCapabilityResolution[];
+  pendingRuntimeApproval?: PendingRuntimeApproval;
   hermesEndpointConfigured: boolean;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -2269,6 +2348,7 @@ function PublicLandingShell({
   onRunArchitectExecution: () => void;
   onCompileWithUMGCompiler: () => void;
   onRunHermesRuntime: () => void;
+  onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void;
   onOpenStudio: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
@@ -2301,7 +2381,7 @@ function PublicLandingShell({
     onOpenRuntime={onOpenRuntime}
     onOpenDebug={onOpenDebug}
   >
-    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onOpenStudio={onOpenStudio} />}
+    {intakeSubmitted && businessInput && businessMap && templateSelection && <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
   </HackathonLandingPage>;
 }
 
@@ -2336,7 +2416,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onOpenStudio: () => void }) {
+function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onOpenStudio: () => void }) {
   const selectedTemplate = getTemplateById(templateSelection.selectedTemplateId);
   const alternateTitles = templateSelection.alternateTemplateIds.map((id) => getTemplateById(id)?.title ?? id);
   const canBuildBusinessAutomationCore = templateSelection.selectedTemplateId === 'template.business_automation_consultant.v1';
@@ -2432,6 +2512,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, s
     {compileCandidate && <CompileCandidatePanel candidate={compileCandidate} onCompile={onCompileWithUMGCompiler} />}
     {(compileCandidate || compilerRequestPreview || compilerResult || compiledRuntimeManifest) && <CompilerPhase6Panel requestPreview={compilerRequestPreview} result={compilerResult} manifest={compiledRuntimeManifest} />}
     {compiledRuntimeManifest && <HermesRuntimePhase7Panel request={hermesRequestPreview} result={hermesRuntimeResult} visualState={hermesRuntimeVisualState} warnings={hermesRuntimeWarnings} errors={hermesRuntimeErrors} isRunning={isHermesRunning} onRun={onRunHermesRuntime} />}
+    {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
     <div className="analysisPanel nextStagePanel">
       <div className="publicSectionTitle"><span>07</span><div><b>Next Stage</b><small>Status: compile/runtime not connected.</small></div></div>
       <p><b>Next:</b> Block matching / Missing block generation / Compile-to-Hermes manifest</p>
@@ -2525,6 +2606,33 @@ function CompilerPhase6Panel({ requestPreview, result, manifest }: { requestPrev
     {requestPreview && <details className="compilerJsonPreview"><summary>Compiler Input Preview</summary><pre>{JSON.stringify(requestPreview.input, null, 2)}</pre></details>}
     {result && <div className="analysisWarnings"><b>Compiler Result</b>{result.errors.map((error) => <span key={`${error.code}:${error.message}`}>{error.code}: {error.message}</span>)}{result.warnings.map((warning) => <span key={`${warning.code}:${warning.message}`}>{warning.code}: {warning.message}</span>)}</div>}
     {manifest && <div className="compilerRuntimeSummary"><b>RuntimeSpec / Trace Summary</b><span>sleeveId: {manifest.sleeveId}</span><span>compiledAt: {manifest.compiledAt ?? 'compiler did not provide'}</span><span>executionPlan: {manifest.executionPlan.length}</span><span>sourceBlocks: {manifest.sourceBlocks.length}</span><span>selected stacks: {countScope('neostack')}</span><span>selected NeoBlocks: {countScope('neoblock')}</span><span>selected MOLT: {countScope('molt')}</span><span>gates: {manifest.gates.length}</span><span>required tools: {manifest.executionPlan.flatMap((step) => step.requiredToolIds).length}</span><span>approval points: {manifest.executionPlan.filter((step) => step.requiredGateIds.length || step.requiredToolIds.length).length}</span><span>compiler stacks: {Array.isArray(runtimeSpec?.stacks) ? runtimeSpec.stacks.length : 'unknown'}</span><span>compiler neoBlocks: {Array.isArray(runtimeSpec?.neoBlocks) ? runtimeSpec.neoBlocks.length : 'unknown'}</span><span>trace: preserved in traceMetadata.compilerTrace if compiler returned one; no execution trace fabricated.</span></div>}
+  </div>;
+}
+
+function RuntimeApprovalPanel({ resolutions, pendingApproval, isRunning, onContinue }: { resolutions: ToolCapabilityResolution[]; pendingApproval?: PendingRuntimeApproval; isRunning: boolean; onContinue: (decision: 'approve' | 'deny' | 'skip') => void }) {
+  const capability = pendingApproval?.pendingToolCapability;
+  return <div className="analysisPanel runtimeApprovalPanel">
+    <div className="publicSectionTitle"><span>17</span><div><b>Runtime Approval Required</b><small>Runtime execution approval boundary; not architecture review.</small></div></div>
+    {pendingApproval && <>
+      <SummaryRows rows={[
+        ['requested capability/tool', capability?.mappedHermesToolName ?? capability?.capabilityId ?? 'unknown'],
+        ['related NeoBlock', pendingApproval.relatedNeoBlockId ?? 'not mapped'],
+        ['related Gate', pendingApproval.relatedGateId ?? 'not mapped'],
+        ['related MOLT', pendingApproval.relatedMoltId ?? 'not mapped'],
+        ['risk level', capability?.riskLevel ?? 'unknown'],
+        ['policy', capability?.executionPolicy ?? 'unknown'],
+        ['availability', capability?.available ?? 'unknown'],
+        ['traceId', pendingApproval.pendingApprovalTraceId]
+      ]} />
+      <p className="analysisSummary">{pendingApproval.approvalReason}</p>
+      <div className="templateActionRow runtimeApprovalActions">
+        <button type="button" className="publicPrimaryCta" disabled={isRunning || capability?.executionPolicy === 'unavailable' || capability?.executionPolicy === 'blocked'} onClick={() => onContinue('approve')}>Approve & Continue</button>
+        <button type="button" className="publicSecondaryCta" disabled={isRunning} onClick={() => onContinue('skip')}>Continue Without Tool</button>
+        <button type="button" className="publicSecondaryCta" disabled={isRunning} onClick={() => onContinue('deny')}>Deny / Skip</button>
+      </div>
+      <small>Continuation preserves UMG trace linkage and asks Hermes to continue from the real approval point. Unused blocks remain off until returned trace activates them.</small>
+    </>}
+    <div className="phase7ChipRow"><b>Capability resolver</b>{resolutions.length ? resolutions.map((resolution) => <span key={resolution.capabilityId}>{resolution.capabilityId}: {resolution.available} · {resolution.executionPolicy} · {resolution.riskLevel}</span>) : <span>none</span>}</div>
   </div>;
 }
 
