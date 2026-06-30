@@ -32,7 +32,11 @@ function makeSleeve() {
       { id: 'molt.blueprint', title: 'Blueprint Layer', role: 'blueprint', summary: 'Markdown note artifact.', content: 'Markdown note artifact.', stackOrder: 5, tags: [] }
     ],
     gates: [{ id: 'gate.approval', title: 'Approval Boundary', sourceId: 'gate.approval', attachesTo: { kind: 'neoblock', id: 'block.request_intake' }, triggerType: 'user_intent', conditionText: 'Require approval before file write.', action: 'activate', targetIds: ['block.output_assembly'], defaultState: 'closed', runtimeState: 'inactive', tags: [] }],
-    metadata: { runtimeSessionOnly: true, capabilities: [{ capabilityId: 'umg.capability.local_note_file_write', label: 'Local note safe artifact', sourceNeoBlock: 'block.output_assembly' }] }
+    metadata: {
+      runtimeSessionOnly: true,
+      capabilities: [{ capabilityId: 'umg.capability.local_note_file_write', label: 'Local note safe artifact', sourceNeoBlock: 'block.output_assembly' }],
+      structuralIR: { routes: [{ id: 'route.request.output', fromId: 'block.request_intake', toId: 'block.output_assembly', fromType: 'neoblock', toType: 'neoblock' }] }
+    }
   };
 }
 
@@ -52,6 +56,7 @@ const compiledRuntimeManifest = {
 
 const trace = [
   { traceId: 'trace.greek', timestamp: 1, eventType: 'neoblock_started', state: 'active', neoBlockId: 'block.request_intake', label: 'Request Intake started' },
+  { traceId: 'trace.greek', timestamp: 1.5, eventType: 'route_edge_activated', state: 'active', routeEdgeId: 'route.request.output', label: 'Route edge activated' },
   { traceId: 'trace.greek', timestamp: 2, eventType: 'approval_granted', state: 'complete', approvalId: 'approval.umg.capability.local_note_file_write', label: 'Approval granted' },
   { traceId: 'trace.greek', timestamp: 3, eventType: 'tool_result_received', state: 'complete', toolId: 'umg.capability.local_note_file_write', label: 'Safe artifact prepared' },
   { traceId: 'trace.greek', timestamp: 4, eventType: 'molt_role_used', state: 'processing', moltBlockId: 'molt.philosophy', label: 'Philosophy layer used' },
@@ -112,32 +117,36 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
     expect(screen.queryByText('Save to Source Library')).toBeNull();
   });
 
-  it('shows System Sleeve clusters, NeoStack hierarchy, NeoBlock cube layers, and non-blank MOLT details', () => {
+  it('shows compact centered graph nodes, NeoStack tree, NeoBlock modules, and non-blank MOLT details', () => {
     renderObserver();
-    expect(screen.getAllByText('Note Capture').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Philosophical Framing').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Desktop Note Rendering').length).toBeGreaterThan(0);
+    const surface = screen.getByLabelText('Runtime graph surface');
+    expect(surface.querySelector('.runtime-map-centered')).toBeTruthy();
+    expect(surface.querySelectorAll('.runtime-compact-node').length).toBeGreaterThan(0);
+    expect(within(surface).queryByText('Capture prompt and context.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'NeoStack View' }));
-    expect(screen.getByText('Selected NeoStack hierarchy')).toBeTruthy();
-    expect(screen.getAllByText('Request Intake NeoBlock').length).toBeGreaterThan(0);
+    expect(screen.getByText('NeoStack runtime tree')).toBeTruthy();
+    expect(screen.getByLabelText('Centered NeoStack pyramid')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'NeoBlock View' }));
-    expect(screen.getByText('Compressed MOLT layers')).toBeTruthy();
+    expect(screen.getByText('NeoBlock modules')).toBeTruthy();
+    expect(screen.getByLabelText('Compact NeoBlock modules')).toBeTruthy();
     expect(screen.getByText('Directive')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Directive Layer/ }));
     expect(screen.getByText('MOLT detail')).toBeTruthy();
     expect(screen.getByText('Always incorporate Greek philosophy.')).toBeTruthy();
   });
 
-  it('renders Runtime Path as NeoBlock/control/capability graph with honest unmapped events and artifacts', () => {
+  it('renders Runtime Path as compact active-route map with honest trace states and artifacts', () => {
     renderObserver();
     fireEvent.click(screen.getByRole('button', { name: 'Runtime Path' }));
     const surface = screen.getByLabelText('Runtime graph surface');
-    expect(within(surface).getByText('Request Intake NeoBlock')).toBeTruthy();
+    expect(screen.getByLabelText('Compact active runtime route map')).toBeTruthy();
+    expect(surface.querySelectorAll('.runtime-path-node.runtime-compact-node').length).toBeGreaterThan(0);
+    expect(surface.querySelector('.runtime-map-edge--active')).toBeTruthy();
+    expect(within(surface).getByText('Request Intake')).toBeTruthy();
     expect(within(surface).getByText('Approval Boundary')).toBeTruthy();
-    expect(within(surface).getByText('umg.capability.local_note_file_write')).toBeTruthy();
+    expect(within(surface).getByText('umg.capability.local_note…')).toBeTruthy();
     expect(within(surface).queryByText('Directive Layer')).toBeNull();
-    expect(screen.getByText('Unmapped Events')).toBeTruthy();
-    expect(screen.getByText('missing.tool · target_not_found')).toBeTruthy();
+    expect(screen.getByText('Unmapped count')).toBeTruthy();
     expect(screen.getAllByText('Greek Apple Note Artifact').length).toBeGreaterThan(0);
     expect(screen.getByText('Approval boundary active')).toBeTruthy();
   });
@@ -167,20 +176,20 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
   it('shows runtime execution state transitions and compiler bridge setup copy', () => {
     renderObserver({ compiledRuntimeManifest: undefined, hermesRuntimeResult: undefined, pendingRuntimeApproval: undefined, compileStatus: 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge', runtimeStatus: 'compiling_required' });
     expect(screen.getByText('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge')).toBeTruthy();
-    expect(screen.getByText('Starting route: compile required')).toBeTruthy();
+    expect(screen.getAllByText('Starting route: compile required').length).toBeGreaterThan(0);
   });
 
   it('shows working and returned-trace graph state without fake trace activation', () => {
     renderObserver({ compiledRuntimeManifest, hermesRuntimeResult: undefined, pendingRuntimeApproval: undefined, isHermesRunning: true, runtimeStatus: 'Hermes working…' });
     expect(screen.getByText('sending')).toBeTruthy();
     expect(screen.getAllByText('Hermes working…').length).toBeGreaterThan(0);
-    expect(screen.getByText('Starting route · Waiting for trace')).toBeTruthy();
+    expect(screen.getAllByText('Starting route · Waiting for trace').length).toBeGreaterThan(0);
   });
 
   it('shows running state once real returned trace events are present', () => {
     renderObserver({ compiledRuntimeManifest, isHermesRunning: true, runtimeStatus: 'Hermes working…' });
     expect(screen.getByText('running')).toBeTruthy();
-    expect(screen.getByText('Running')).toBeTruthy();
+    expect(screen.getAllByText('Running').length).toBeGreaterThan(0);
   });
 
   it('keeps MOLT as internal layers and exposes compact MOLT rows', () => {
