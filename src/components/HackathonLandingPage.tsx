@@ -12,6 +12,10 @@ type SelectedLocalFile = {
   name: string;
   size: number;
   lastModified: number;
+  type?: string;
+  intakeStatus?: 'parsed_text' | 'unsupported_type' | 'read_error';
+  textPreview?: string;
+  keywords?: string[];
 };
 
 type HackathonLandingPageProps = {
@@ -34,7 +38,7 @@ type HackathonLandingPageProps = {
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
   onChipSelect: (value: string) => void;
-  onFilesAdd: (files: SelectedLocalFile[]) => void;
+  onFilesAdd: (files: File[]) => void;
   onFileRemove: (file: SelectedLocalFile) => void;
   onFilesClear: () => void;
   onSubmit: () => void;
@@ -83,7 +87,7 @@ export function HackathonLandingPage({
   children
 }: HackathonLandingPageProps) {
   const handleFileChange = (files: FileList | null, input: HTMLInputElement) => {
-    const selected = Array.from(files ?? []).map((file) => ({ name: file.name, size: file.size, lastModified: file.lastModified }));
+    const selected = Array.from(files ?? []);
     if (selected.length) onFilesAdd(selected);
     input.value = '';
   };
@@ -137,11 +141,12 @@ export function HackathonLandingPage({
               <span>Attach Files</span>
               <input type="file" multiple onChange={(event) => handleFileChange(event.target.files, event.currentTarget)} />
             </div>
-            <small>Select local files for later parsing/intake context. Selected locally; not parsed yet. No upload.</small>
+            <small>Reads text/plain, Markdown, JSON, and CSV locally into intake context. PDFs/DOCX/images are selected only until future extractors are added. No upload.</small>
             {selectedFiles.length > 0 && <div className="hackathonFileList" aria-label="Selected local files">
               {selectedFiles.map((file) => <span className="hackathonFileChip" key={`${file.name}:${file.size}:${file.lastModified}`}>
                 <b>{file.name}</b>
-                <em>{formatFileSize(file.size)} · selected locally · not parsed yet</em>
+                <em>{formatFileSize(file.size)} · {file.intakeStatus === 'parsed_text' ? `parsed locally${file.keywords?.length ? ` · ${file.keywords.slice(0, 4).join(', ')}` : ''}` : file.intakeStatus === 'unsupported_type' ? 'selected locally · extractor pending' : file.intakeStatus === 'read_error' ? 'read error' : 'selected locally'}</em>
+                {file.textPreview && <small>{file.textPreview}</small>}
                 <button type="button" aria-label={`Remove ${file.name}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onFileRemove(file); }}>×</button>
               </span>)}
               {selectedFiles.length > 1 && <button type="button" className="hackathonClearFiles" onClick={onFilesClear}>Clear All</button>}

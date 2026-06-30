@@ -54,6 +54,8 @@ import { SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, StudioMode } from './lib/umg/basicModeScaffolds';
 import { adaptHermesCustomSleevePlanToRuntimeSessionSleeve, buildHermesCustomSleeveGenerationRequest, requestHermesCustomSleevePlan } from './lib/umg/hermesCustomSleeveGeneration';
 import type { HermesCustomSleevePlanCapability } from './lib/umg/hermesCustomSleeveGeneration';
+import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './lib/umg/generated/umgLibraryMetadataIndex';
+import { buildUploadedContextText, createMetadataMoltBlock, extractKeywordsFromText, itemMatchesLiveTagQuery, itemMatchesSelectedTags, matchesPrefixFirstBlockSearch, normalizeLibraryText, sortMatchingTags, sortPrefixFirstBlockSearchItems, summarizeUploadedText, UploadedIntakeContext } from './lib/umg/libraryBrowserSemantics';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -103,54 +105,6 @@ const ensureSegmentChildPlacement = (segment: UMGSegmentLayout, seededScopeSegme
   return moveChildToRow(nextSegment, childId, targetRowId);
 };
 
-const sortMatchingTags = (tags: string[], query: string) => {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return [...new Set(tags)].sort((a, b) => a.localeCompare(b));
-  return [...new Set(tags)]
-    .filter((tag) => tag.toLowerCase().includes(needle))
-    .sort((a, b) => {
-      const aLower = a.toLowerCase();
-      const bLower = b.toLowerCase();
-      const aPrefix = aLower.startsWith(needle) ? 0 : 1;
-      const bPrefix = bLower.startsWith(needle) ? 0 : 1;
-      if (aPrefix !== bPrefix) return aPrefix - bPrefix;
-      return aLower.localeCompare(bLower);
-    });
-};
-
-const tagMatchPriority = (tags: string[], query: string) => {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return 0;
-  const loweredTags = tags.map((tag) => tag.toLowerCase());
-  if (loweredTags.some((tag) => tag.startsWith(needle))) return 0;
-  if (loweredTags.some((tag) => tag.includes(needle))) return 1;
-  return 2;
-};
-
-const getBlockSearchSortTier = (item: ShelfAsset, query: string) => {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return undefined;
-  const block = item.asset as UMGBlock;
-  const title = (item.title || block.title || '').toLowerCase();
-  const roles = [block.role, block.displayType, item.displayType, item.kind].filter(Boolean).map((value) => String(value).toLowerCase());
-  const categories = [block.category].filter(Boolean).map((value) => String(value).toLowerCase());
-  const tags = [...new Set([...(block.tags ?? []), ...item.tags].filter(Boolean).map((value) => String(value).toLowerCase()))];
-  const contentFields = [block.content, block.description, ...item.containedTitles].filter(Boolean).map((value) => String(value).toLowerCase());
-  const secondaryFields = [item.id, block.id, item.sourcePath].filter(Boolean).map((value) => String(value).toLowerCase());
-  const queryTokens = needle.split(/\s+/).filter(Boolean);
-  const matchesTokens = (values: string[]) => queryTokens.every((token) => values.some((value) => value.includes(token)));
-
-  if (title.startsWith(needle)) return 0;
-  if (title.includes(needle)) return 1;
-  if (matchesTokens([...roles, ...categories])) return 2;
-  if (matchesTokens(tags.filter((tag) => tag.startsWith(needle)))) return 3;
-  if (matchesTokens(contentFields)) return 4;
-  if (matchesTokens(secondaryFields)) return 5;
-  return undefined;
-};
-
-const matchesBlockSearch = (item: ShelfAsset, query: string) => getBlockSearchSortTier(item, query) !== undefined;
-
 type InspectorTab = typeof inspectorTabs[number];
 
 type ResizeTarget = 'left' | 'right' | 'bottom';
@@ -164,7 +118,9 @@ type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
 type PlacementTargetChoice = { id: string; label: string; detail?: string; neostackId?: string; neoblockId?: string };
 const runtimeDrawerTabs: RuntimeDrawerTab[] = ['RuntimeSpec', 'Trace', 'IR Matrix', 'Glyph Matrix', 'Output'];
 const publicQuickChips = ['Business Automation', 'Chatbot / Support Agent', 'Website / Landing Page', 'Custom Workflow'];
-type PublicSelectedFile = { name: string; size: number; lastModified: number };
+type PublicSelectedFile = { name: string; size: number; lastModified: number; type?: string; intakeStatus?: UploadedIntakeContext['status']; textPreview?: string; keywords?: string[] };
+const supportedIntakeTextFile = (file: File) => /^(text\/|application\/(json|csv)$)/i.test(file.type) || /\.(md|markdown|txt|json|csv)$/i.test(file.name);
+const publicFileKey = (file: Pick<PublicSelectedFile, 'name' | 'size' | 'lastModified'>) => `${file.name}:${file.size}:${file.lastModified}`;
 const normalizePublicChipForAnalyzer = (chip?: string) => ({
   'Chatbot / Support Agent': 'Chatbot',
   'Website / Landing Page': 'Website Builder',
@@ -325,6 +281,9 @@ export default function App() {
   const [publicContext, setPublicContext] = useState('');
   const [publicSelectedChip, setPublicSelectedChip] = useState<string | undefined>('Custom Workflow');
   const [publicSelectedFiles, setPublicSelectedFiles] = useState<PublicSelectedFile[]>([]);
+  const [uploadedIntakeContexts, setUploadedIntakeContexts] = useState<UploadedIntakeContext[]>([]);
+  const uploadedIntakeContextText = useMemo(() => buildUploadedContextText(uploadedIntakeContexts), [uploadedIntakeContexts]);
+  const uploadedIntakeKeywords = useMemo(() => Array.from(new Set(uploadedIntakeContexts.flatMap((context) => context.keywords))).slice(0, 40), [uploadedIntakeContexts]);
   const [studioMode, setStudioMode] = useState<StudioMode>('basic');
   const [runtimeObserverOpen, setRuntimeObserverOpen] = useState(false);
   const [runtimeObserverPrompt, setRuntimeObserverPrompt] = useState('');
@@ -357,10 +316,12 @@ export default function App() {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
   }, [layout]);
 
-  const libraryWithStatus = useMemo(() => [...library, ...sessionMoltBlocks].map((block) => {
+  const generatedMetadataMoltBlocks = useMemo(() => UMG_LIBRARY_METADATA_INDEX.filter((candidate) => candidate.blockType === 'molt').map(createMetadataMoltBlock), []);
+  const generatedMetadataSummary = UMG_LIBRARY_METADATA_INDEX_INFO;
+  const libraryWithStatus = useMemo(() => [...generatedMetadataMoltBlocks, ...sessionMoltBlocks].map((block) => {
     const classification = classifyLibraryDisplay(block);
     return { ...block, displayType: classification.displayType, presentationStatus: classification.status };
-  }), [library, sessionMoltBlocks]);
+  }), [generatedMetadataMoltBlocks, sessionMoltBlocks]);
   const triggerGateSourceCards = useMemo(() => normalizeTriggerGateSourceCards(Object.entries(triggerGateSourceModules).map(([sourcePath, markdown]) => ({ sourcePath, markdown }))), []);
   const sections = useMemo(() => sectionLibraryByDisplayType(libraryWithStatus), [libraryWithStatus]);
   const statusCounts = useMemo(() => libraryWithStatus.reduce((acc, block) => ({ ...acc, [block.presentationStatus!]: (acc[block.presentationStatus!] ?? 0) + 1 }), {} as Record<string, number>), [libraryWithStatus]);
@@ -386,10 +347,16 @@ export default function App() {
     primary: libraryWithStatus.filter((block) => block.displayType === 'primary').length,
     philosophy: libraryWithStatus.filter((block) => block.displayType === 'philosophy').length,
     blueprint: libraryWithStatus.filter((block) => block.displayType === 'blueprint').length,
+    meta_other: libraryWithStatus.filter((block) => !['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'].includes(String(block.displayType))).length,
     meta: libraryWithStatus.filter((block) => block.displayType === 'meta').length
   }), [libraryWithStatus, triggerCategoryCount]);
   const countForRoleFilter = (role: string) => roleFilterCount[role] ?? 0;
   const activeTagQuery = tagQuery.trim();
+  const shelfCountOverrides = useMemo(() => ({
+    molt_blocks: generatedMetadataSummary.counts.molt ?? libraryWithStatus.length,
+    neoblocks: generatedMetadataSummary.counts.neoblock ?? localLibraryNeoBlocks.length,
+    neostacks: generatedMetadataSummary.counts.neostack ?? localLibraryNeoStacks.length
+  }), [generatedMetadataSummary, libraryWithStatus.length, localLibraryNeoBlocks.length, localLibraryNeoStacks.length]);
 
   useEffect(() => {
     if (workspaceMode !== 'debug') setLastPrimaryMode(workspaceMode);
@@ -411,33 +378,17 @@ export default function App() {
 
   const visibleItems = useMemo(() => {
     if (activeShelf === 'molt_blocks' && !isTriggerCategoryActive) {
-      const normalizedSearch = search.trim();
-      return resolvedShelf.items
-        .filter((item) => {
-          const block = item.asset as UMGBlock;
-          const roleMatches = roleFilter === 'all' || block.displayType === roleFilter;
-          const statusMatches = (isDebugMode ? statusFilter : defaultStatusFilter) === 'all' || block.presentationStatus === (isDebugMode ? statusFilter : defaultStatusFilter);
-          const selectedTagsMatch = tagFilters.every((tag) => item.tags.some((itemTag) => itemTag.toLowerCase() === tag.toLowerCase()));
-          const blockSearchMatches = matchesBlockSearch(item, normalizedSearch);
-          const liveTagMatches = !activeTagQuery || tagMatchPriority(item.tags, activeTagQuery) < 2;
-          return roleMatches && statusMatches && selectedTagsMatch && blockSearchMatches && liveTagMatches;
-        })
-        .map((item, index) => ({
-          item,
-          index,
-          tagPriority: activeTagQuery ? tagMatchPriority(item.tags, activeTagQuery) : 0,
-          blockSearchTier: normalizedSearch ? getBlockSearchSortTier(item, normalizedSearch) ?? Number.MAX_SAFE_INTEGER : undefined,
-          title: item.title.toLowerCase()
-        }))
-        .sort((a, b) => {
-          if (normalizedSearch) {
-            if (a.blockSearchTier !== b.blockSearchTier) return (a.blockSearchTier ?? Number.MAX_SAFE_INTEGER) - (b.blockSearchTier ?? Number.MAX_SAFE_INTEGER);
-            return a.title.localeCompare(b.title);
-          }
-          if (activeTagQuery && a.tagPriority !== b.tagPriority) return a.tagPriority - b.tagPriority;
-          return a.index - b.index;
-        })
-        .map(({ item }) => item);
+      const normalizedSearch = normalizeLibraryText(search);
+      const filtered = resolvedShelf.items.filter((item) => {
+        const block = item.asset as UMGBlock;
+        const roleMatches = roleFilter === 'all' || (roleFilter === 'meta_other' ? !moltBuilderSections.some((section) => section.key !== 'meta_other' && section.key === block.displayType) : block.displayType === roleFilter);
+        const statusMatches = (isDebugMode ? statusFilter : defaultStatusFilter) === 'all' || block.presentationStatus === (isDebugMode ? statusFilter : defaultStatusFilter);
+        const selectedTagsMatch = itemMatchesSelectedTags(item, tagFilters);
+        const blockSearchMatches = matchesPrefixFirstBlockSearch(item, normalizedSearch);
+        const liveTagMatches = itemMatchesLiveTagQuery(item, activeTagQuery);
+        return roleMatches && statusMatches && selectedTagsMatch && blockSearchMatches && liveTagMatches;
+      });
+      return sortPrefixFirstBlockSearchItems(filtered, normalizedSearch);
     }
     return searchShelfAssets(resolvedShelf.items, { query: search, tags: tagFilters });
   }, [resolvedShelf, search, tagFilters, activeShelf, roleFilter, statusFilter, isTriggerCategoryActive, activeTagQuery, isDebugMode]);
@@ -1802,9 +1753,14 @@ export default function App() {
   };
 
   const submitPublicIntake = () => {
+    const combinedContext = [
+      publicContext,
+      uploadedIntakeContextText ? `Uploaded file intake context:\n${uploadedIntakeContextText}` : '',
+      uploadedIntakeKeywords.length ? `Uploaded file keywords: ${uploadedIntakeKeywords.join(', ')}` : ''
+    ].filter(Boolean).join('\n\n');
     const businessInput = createBusinessInputFromPublicIntake({
       goal: publicGoal,
-      context: publicContext,
+      context: combinedContext,
       selectedChip: normalizePublicChipForAnalyzer(publicSelectedChip),
       selectedFileName: publicSelectedFiles.map((file) => file.name).join(', ')
     });
@@ -1912,7 +1868,11 @@ export default function App() {
       try {
         const generationRequest = buildHermesCustomSleeveGenerationRequest({
           userPrompt: publicBusinessInput?.text || publicGoal,
-          userContext: publicContext,
+          userContext: [
+            publicContext,
+            uploadedIntakeContextText ? `Uploaded file intake context:\n${uploadedIntakeContextText}` : '',
+            uploadedIntakeKeywords.length ? `Uploaded file keywords: ${uploadedIntakeKeywords.join(', ')}` : ''
+          ].filter(Boolean).join('\n\n'),
           requestId: `phase13ic_${Date.now()}`
         });
         const hermesConfig = getHermesRuntimeAdapterConfigFromEnv();
@@ -1922,6 +1882,8 @@ export default function App() {
           viteHermesGenerateUrlPresent: Boolean(generationEndpoint),
           candidateRetrievalRan: true,
           candidateCount: generationRequest.libraryCandidates.length,
+          uploadedContextCount: uploadedIntakeContexts.filter((context) => context.status === 'parsed_text').length,
+          uploadedContextKeywords: uploadedIntakeKeywords,
           topCandidates: generationRequest.libraryCandidates.slice(0, 5).map((candidate) => ({ id: candidate.id, title: candidate.title, blockType: candidate.blockType, matchReasons: candidate.matchReasons })),
           libraryCandidatesIncludedInRequest: Array.isArray(generationRequest.libraryCandidates),
           libraryCandidatesPayloadLength: generationRequest.libraryCandidates.length
@@ -2345,15 +2307,31 @@ export default function App() {
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
       onChipSelect={setPublicSelectedChip}
-      onFilesAdd={(files) => setPublicSelectedFiles((current) => {
-        const next = [...current];
-        files.forEach((file) => {
-          if (!next.some((existing) => existing.name === file.name && existing.size === file.size && existing.lastModified === file.lastModified)) next.push(file);
+      onFilesAdd={(files) => {
+        files.forEach(async (file) => {
+          const base = { name: file.name, size: file.size, lastModified: file.lastModified, type: file.type };
+          if (!supportedIntakeTextFile(file)) {
+            const unsupported: UploadedIntakeContext = { ...base, mimeType: file.type, status: 'unsupported_type', keywords: [] };
+            setUploadedIntakeContexts((current) => current.some((entry) => publicFileKey(entry) === publicFileKey(base)) ? current : [...current, unsupported]);
+            setPublicSelectedFiles((current) => current.some((entry) => publicFileKey(entry) === publicFileKey(base)) ? current : [...current, { ...base, intakeStatus: 'unsupported_type' }]);
+            return;
+          }
+          try {
+            const text = await file.text();
+            const keywords = extractKeywordsFromText(text);
+            const summary = summarizeUploadedText(file.name, text);
+            const parsed: UploadedIntakeContext = { ...base, mimeType: file.type, status: 'parsed_text', text, summary, keywords };
+            setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), parsed]);
+            setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'parsed_text', textPreview: summary, keywords }]);
+          } catch (error) {
+            const failed: UploadedIntakeContext = { ...base, mimeType: file.type, status: 'read_error', keywords: [], error: error instanceof Error ? error.message : String(error) };
+            setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), failed]);
+            setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'read_error' }]);
+          }
         });
-        return next;
-      })}
-      onFileRemove={(file) => setPublicSelectedFiles((current) => current.filter((existing) => !(existing.name === file.name && existing.size === file.size && existing.lastModified === file.lastModified)))}
-      onFilesClear={() => setPublicSelectedFiles([])}
+      }}
+      onFileRemove={(file) => { setPublicSelectedFiles((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); setUploadedIntakeContexts((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); }}
+      onFilesClear={() => { setPublicSelectedFiles([]); setUploadedIntakeContexts([]); }}
       onSubmit={submitPublicIntake}
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onRunBlockMatching={runBusinessAutomationBlockMatching}
@@ -2433,6 +2411,7 @@ export default function App() {
           searchQuery={search}
           setRoleFilter={setRoleFilter}
           countForRoleFilter={countForRoleFilter}
+          shelfCountOverrides={shelfCountOverrides}
           activeShelfStats={activeShelf === 'molt_blocks' ? {
             roleFilter,
             statusFilter,
@@ -2674,7 +2653,7 @@ function PublicLandingShell({
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
   onChipSelect: (value: string) => void;
-  onFilesAdd: (files: PublicSelectedFile[]) => void;
+  onFilesAdd: (files: File[]) => void;
   onFileRemove: (file: PublicSelectedFile) => void;
   onFilesClear: () => void;
   onSubmit: () => void;
@@ -3150,7 +3129,7 @@ function LibraryAudit({ report }: { report: any }) {
   return <div className="report auditSummary"><b>Library Audit / Source Assets</b>{rows.map(([label, value]) => <span key={String(label)}>{String(label)}: {String(value)}</span>)}<span>reconciled: {String(summary.accountedTotal)}/{String(summary.totalScanned)}</span></div>;
 }
 
-function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, tagQuery, setTagQuery, visibleTags, filtered, shown, total, roleFilter = 'all', statusFilter, searchQuery, setRoleFilter, countForRoleFilter, activeShelfStats, setStatusFilter, clear, debugMode = false }: any) {
+function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch, tagFilters, setTagFilters, tagQuery, setTagQuery, visibleTags, filtered, shown, total, roleFilter = 'all', statusFilter, searchQuery, setRoleFilter, countForRoleFilter, shelfCountOverrides = {}, activeShelfStats, setStatusFilter, clear, debugMode = false }: any) {
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   const tagPickerRef = useRef<HTMLDivElement | null>(null);
   const isMoltShelf = activeShelf === 'molt_blocks';
@@ -3158,7 +3137,7 @@ function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch
   const toggleTag = (tag: string) => setTagFilters(tagFilters.includes(tag) ? tagFilters.filter((t: string) => t !== tag) : [...tagFilters, tag]);
   const blockSearchLabel = isMoltShelf ? 'Block Search' : activeShelf === 'source_audit' ? 'Audit Search' : activeShelf === 'control_sources' ? 'TriggerGate Search' : 'Library Search';
   const blockSearchPlaceholder = isMoltShelf ? 'Search blocks by title, content, type, tag...' : 'Search items by title, tag, or source...';
-  const tagSuggestions = useMemo(() => sortMatchingTags(visibleTags, normalizedTagQuery).filter((tag) => !tagFilters.includes(tag)).slice(0, 20), [tagFilters, normalizedTagQuery, visibleTags]);
+  const tagSuggestions = useMemo(() => sortMatchingTags(visibleTags, normalizedTagQuery, tagFilters).slice(0, 20), [tagFilters, normalizedTagQuery, visibleTags]);
   const showTagSuggestions = isMoltShelf && tagMenuOpen && Boolean(normalizedTagQuery);
   const visibleRoleFilters = [
     { key: 'directive', label: 'Directive' },
@@ -3203,7 +3182,7 @@ function ShelfControls({ shelves, activeShelf, setActiveShelf, search, setSearch
   };
 
   return <>
-    <div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelf.items.length})</button>)}</div>
+    <div className="shelfTabs">{shelves.map((shelf: any) => <button key={shelf.id} className={activeShelf === shelf.id ? 'hot activeShelfTab' : ''} onClick={() => setActiveShelf(shelf.id)}>{shelf.label} ({shelfCountOverrides[shelf.id] ?? shelf.items.length})</button>)}</div>
     {isMoltShelf && <div className="filterGroup"><b>MOLT type</b><div className="filterBar roleSubsections compactRoleFilters"><button className={roleFilter === 'all' ? 'hot roleHot' : ''} onClick={() => toggleRoleFilter('all')}>All ({countForRoleFilter('all')})</button>{visibleRoleFilters.map((role) => <button key={role.key} className={roleFilter === role.key ? 'hot roleHot' : ''} onClick={() => toggleRoleFilter(role.key)}>{role.label} ({countForRoleFilter(role.key)})</button>)}</div></div>}
     <label className="searchLabel">{blockSearchLabel}<input placeholder={blockSearchPlaceholder} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
     {isMoltShelf && <div className="searchLabel tagPicker" ref={tagPickerRef}>
