@@ -87,8 +87,14 @@ function eventTargetId(event: UMGTraceEvent) {
   return getRuntimeTargetId(event) ?? event.sleeveId ?? event.neoStackId ?? event.neoBlockId ?? event.moltBlockId ?? event.gateId ?? event.toolId ?? event.approvalId ?? event.sourceId;
 }
 
+function approvalCapabilityAlias(approvalId: unknown) {
+  const text = toText(approvalId);
+  return text?.startsWith('approval.') ? text.slice('approval.'.length) : undefined;
+}
+
 function eventAliases(event: UMGTraceEvent) {
   const target = eventTargetId(event);
+  const approvalCapability = approvalCapabilityAlias(event.approvalId);
   return unique([
     target,
     target ? `sleeve:${target}` : undefined,
@@ -112,6 +118,9 @@ function eventAliases(event: UMGTraceEvent) {
     event.toolId,
     event.toolId ? `capability:${event.toolId}` : undefined,
     event.approvalId,
+    approvalCapability,
+    approvalCapability ? `capability:${approvalCapability}` : undefined,
+    approvalCapability ? `tool:${approvalCapability}` : undefined,
     event.sourceId,
     ...(event.metadataAliases ?? []),
     ...(event.metadataAliases ?? []).map((alias) => `capability:${alias}`)
@@ -311,6 +320,168 @@ export function buildRuntimeGeometryObserverGraph(args: {
   return { nodes, edges: Array.from(new Map(edges.map((edge) => [edge.id, edge])).values()), unmappedEvents };
 }
 
+
+export type RuntimeVisualViewMode = 'system_sleeve' | 'neostack' | 'neoblock' | 'runtime_path';
+export type RuntimeVisualNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'gate' | 'capability' | 'resource' | 'artifact' | 'context' | 'molt_layer';
+export type RuntimeVisualNodeStatus = 'idle' | 'available' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error' | 'off';
+export type RuntimeVisualSourceStatus = 'source-library-reused' | 'reuse-decision' | 'runtime-draft' | 'generated-glue' | 'unresolved';
+
+export type RuntimeVisualNode = {
+  id: string;
+  kind: RuntimeVisualNodeKind;
+  label: string;
+  shortLabel?: string;
+  icon?: string;
+  status: RuntimeVisualNodeStatus;
+  sourceStatus?: RuntimeVisualSourceStatus;
+  parentId?: string;
+  stackOrder?: number;
+  neoStackId?: string;
+  neoBlockId?: string;
+  traceEventIds?: string[];
+  artifactIds?: string[];
+  metadata?: Record<string, unknown>;
+  rawNode?: RuntimeGeometryNode;
+};
+
+export type RuntimeVisualEdge = {
+  id: string;
+  from: string;
+  to: string;
+  kind: 'contains' | 'routes' | 'uses' | 'guards' | 'emits' | 'fallback';
+  status: RuntimeVisualNodeStatus;
+  traceEventIds?: string[];
+};
+
+export type RuntimeVisualViewModel = {
+  mode: RuntimeVisualViewMode;
+  nodes: RuntimeVisualNode[];
+  edges: RuntimeVisualEdge[];
+  pathNodes: RuntimeVisualNode[];
+  neoStacks: RuntimeVisualNode[];
+  neoBlocks: RuntimeVisualNode[];
+  gates: RuntimeVisualNode[];
+  capabilities: RuntimeVisualNode[];
+  resources: RuntimeVisualNode[];
+  artifacts: RuntimeVisualNode[];
+  contexts: RuntimeVisualNode[];
+  neoBlockLayers: Map<string, RuntimeVisualNode[]>;
+  unmappedEvents: UnmappedTrace[];
+};
+
+const visualStatusFromGeometry = (status: RuntimeGeometryNodeStatus): RuntimeVisualNodeStatus => status;
+const sourceStatusFromNode = (node: RuntimeGeometryNode): RuntimeVisualSourceStatus => {
+  const metadata = node.metadata ?? {};
+  const rawStatus = String(metadata.sourceStatus ?? metadata.reuseStatus ?? metadata.status ?? '').toLowerCase();
+  if (/source|reused/.test(rawStatus)) return 'source-library-reused';
+  if (/reuse/.test(rawStatus)) return 'reuse-decision';
+  if (/glue/.test(rawStatus)) return 'generated-glue';
+  if (/unresolved/.test(rawStatus)) return 'unresolved';
+  return node.kind === 'molt' ? 'reuse-decision' : 'runtime-draft';
+};
+
+function graphNodeToVisualNode(node: RuntimeGeometryNode): RuntimeVisualNode {
+  const kind: RuntimeVisualNodeKind = node.kind === 'molt' ? 'molt_layer' : node.kind;
+  return {
+    id: node.kind === 'molt' ? `molt:${node.sourceId ?? node.id.replace(/^molt:/, '')}` : node.id,
+    kind,
+    label: node.label,
+    shortLabel: kind === 'capability' ? node.label : node.label.length > 28 ? `${node.label.slice(0, 25)}…` : node.label,
+    icon: kind === 'neostack' ? '▦' : kind === 'neoblock' ? '◈' : kind === 'molt_layer' ? '▤' : kind === 'gate' ? '◇' : kind === 'capability' ? '⚙' : kind === 'sleeve' ? '⬢' : '•',
+    status: visualStatusFromGeometry(node.status),
+    sourceStatus: sourceStatusFromNode(node),
+    parentId: node.parentId,
+    neoStackId: node.kind === 'neoblock' ? node.parentId?.replace(/^neostack:/, '') : undefined,
+    neoBlockId: node.kind === 'molt' ? node.parentId?.replace(/^neoblock:/, '') : node.kind === 'neoblock' ? node.sourceId ?? node.id.replace(/^neoblock:/, '') : undefined,
+    traceEventIds: node.traceEvents.map((event, index) => eventId(event, index)),
+    artifactIds: node.artifacts.map((artifact) => artifact.id),
+    metadata: { ...(node.metadata ?? {}), sourceId: node.sourceId, aliases: node.aliases, traceEvents: node.traceEvents, artifacts: node.artifacts },
+    rawNode: node
+  };
+}
+
+function orderedNodes(nodes: RuntimeVisualNode[]) {
+  return [...nodes].sort((a, b) => (a.stackOrder ?? Number(a.metadata?.stackOrder ?? a.metadata?.blockOrder ?? 999)) - (b.stackOrder ?? Number(b.metadata?.stackOrder ?? b.metadata?.blockOrder ?? 999)) || a.label.localeCompare(b.label));
+}
+
+export function buildRuntimeVisualViewModel(args: {
+  activeSessionSleeve: NormalizedTemplateSleeve;
+  geometryManifest?: UMGGeometryManifest;
+  compiledRuntimeManifest?: UMGCompiledRuntimeManifest;
+  hermesRuntimeVisualState?: UMGRuntimeVisualState;
+  hermesRuntimeResult?: HermesCognitiveRuntimeResult;
+  mode?: RuntimeVisualViewMode;
+}): RuntimeVisualViewModel {
+  const mode = args.mode ?? 'system_sleeve';
+  const graph = buildRuntimeGeometryObserverGraph({
+    activeSessionSleeve: args.activeSessionSleeve,
+    geometryManifest: args.geometryManifest,
+    compiledRuntimeManifest: args.compiledRuntimeManifest,
+    hermesRuntimeVisualState: args.hermesRuntimeVisualState,
+    hermesRuntimeResult: args.hermesRuntimeResult,
+    mode: mode === 'runtime_path' ? 'runtime' : 'structure'
+  });
+  const baseNodes = graph.nodes.map(graphNodeToVisualNode);
+  const artifactNodes: RuntimeVisualNode[] = (args.hermesRuntimeResult?.artifacts ?? []).map((artifact) => ({
+    id: `artifact:${artifact.id}`,
+    kind: 'artifact',
+    label: artifact.label,
+    shortLabel: artifact.label.length > 28 ? `${artifact.label.slice(0, 25)}…` : artifact.label,
+    icon: '✦',
+    status: 'complete',
+    artifactIds: [artifact.id],
+    metadata: { artifact }
+  }));
+  const resources: RuntimeVisualNode[] = [
+    ['resource:source-library', 'source library'],
+    ['resource:compiler-manifest', 'compiler manifest'],
+    ['resource:hermes-runtime', 'Hermes runtime'],
+    ['resource:capability-registry', 'capability registry'],
+    ['context:upload-memory', 'upload/context memory'],
+    ['resource:artifact-store', 'artifact store']
+  ].map(([id, label]) => ({ id, label, kind: id.startsWith('context:') ? 'context' : 'resource', icon: id.startsWith('context:') ? '◌' : '▱', status: 'available', metadata: { foundation: true } as Record<string, unknown> }));
+  const nodes = [...baseNodes, ...resources, ...artifactNodes];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const edges: RuntimeVisualEdge[] = graph.edges.map((edge) => ({
+    id: edge.id,
+    from: edge.from,
+    to: edge.to,
+    kind: edge.kind === 'uses' ? 'uses' : edge.kind === 'guards' ? 'guards' : edge.kind === 'routes' ? 'routes' : 'contains',
+    status: mergeStatus(byId.get(edge.from)?.status as RuntimeGeometryNodeStatus ?? 'idle', byId.get(edge.to)?.status as RuntimeGeometryNodeStatus ?? 'idle') as RuntimeVisualNodeStatus,
+    traceEventIds: [...(byId.get(edge.from)?.traceEventIds ?? []), ...(byId.get(edge.to)?.traceEventIds ?? [])]
+  }));
+  const neoStacks = orderedNodes(nodes.filter((node) => node.kind === 'neostack'));
+  const neoBlocks = orderedNodes(nodes.filter((node) => node.kind === 'neoblock'));
+  const gates = orderedNodes(nodes.filter((node) => node.kind === 'gate'));
+  const capabilities = orderedNodes(nodes.filter((node) => node.kind === 'capability'));
+  const neoBlockLayers = new Map<string, RuntimeVisualNode[]>();
+  nodes.filter((node) => node.kind === 'molt_layer').forEach((layer) => {
+    const key = layer.parentId?.replace(/^neoblock:/, '') ?? layer.neoBlockId ?? 'unknown';
+    neoBlockLayers.set(key, orderedNodes([...(neoBlockLayers.get(key) ?? []), layer]));
+  });
+  const pathNodes = orderedNodes([
+    ...neoBlocks,
+    ...gates,
+    ...capabilities,
+    ...artifactNodes
+  ]);
+  return {
+    mode,
+    nodes,
+    edges,
+    pathNodes,
+    neoStacks,
+    neoBlocks,
+    gates,
+    capabilities,
+    resources: nodes.filter((node) => node.kind === 'resource'),
+    contexts: nodes.filter((node) => node.kind === 'context'),
+    artifacts: artifactNodes,
+    neoBlockLayers,
+    unmappedEvents: graph.unmappedEvents
+  };
+}
+
 function groupByParent(nodes: RuntimeGeometryNode[]) {
   const grouped = new Map<string, RuntimeGeometryNode[]>();
   nodes.forEach((node) => {
@@ -360,89 +531,159 @@ export function RuntimeGeometryObserver({
   isHermesRunning,
   pendingRuntimeApproval
 }: RuntimeGeometryObserverProps) {
-  const [mode, setMode] = useState<RuntimeGeometryObserverMode>('structure');
-  const graph = useMemo(() => buildRuntimeGeometryObserverGraph({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode]);
+  const [viewMode, setViewMode] = useState<RuntimeVisualViewMode>('system_sleeve');
+  const [leftRailOpen, setLeftRailOpen] = useState(true);
+  const [rightRailOpen, setRightRailOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<'JSON' | 'Trace' | 'Manifest' | 'Artifacts' | 'Diagnostics'>('JSON');
+  const model = useMemo(() => buildRuntimeVisualViewModel({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
+  const graph = useMemo(() => buildRuntimeGeometryObserverGraph({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode === 'runtime_path' ? 'runtime' : 'structure' }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
   const grouped = useMemo(() => groupByParent(graph.nodes), [graph.nodes]);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
-  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) ?? graph.nodes.find((node) => node.kind === 'sleeve');
+  const traceEvents = hermesRuntimeVisualState?.timeline ?? hermesRuntimeResult?.trace ?? [];
+  const artifactCount = hermesRuntimeResult?.artifacts?.length ?? 0;
   const summary = useMemo(() => {
     try { return summarizeGeometryManifest(geometryManifest ?? buildRuntimeGeometryManifest({ templateSleeve: activeSessionSleeve, compiledRuntimeManifest })); } catch { return undefined; }
   }, [activeSessionSleeve, compiledRuntimeManifest, geometryManifest]);
-  const sleeveNode = graph.nodes.find((node) => node.kind === 'sleeve');
-  const stackNodes = graph.nodes.filter((node) => node.kind === 'neostack');
-  const traceEvents = hermesRuntimeVisualState?.timeline ?? hermesRuntimeResult?.trace ?? [];
-  const artifactCount = hermesRuntimeResult?.artifacts?.length ?? 0;
+  const firstStack = model.neoStacks[0];
+  const firstBlock = model.neoBlocks[0];
+  const [selectedStackId, setSelectedStackId] = useState<string | undefined>();
+  const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
+  const selectedStack = model.neoStacks.find((node) => node.id === selectedStackId) ?? firstStack;
+  const selectedBlock = model.neoBlocks.find((node) => node.id === selectedNodeId) ?? model.neoBlocks.find((node) => node.parentId === selectedStack?.id) ?? firstBlock;
+  const sleeveNode = model.nodes.find((node) => node.kind === 'sleeve');
+  const selectedVisualNode = model.nodes.find((node) => node.id === selectedNodeId) ?? selectedBlock ?? selectedStack ?? sleeveNode;
+  const selectedGeometryNode = selectedVisualNode?.rawNode;
+  const selectVisualNode = (node: RuntimeVisualNode) => {
+    setSelectedNodeId(node.id);
+    if (node.kind === 'neostack') setSelectedStackId(node.id);
+    if (node.kind === 'neoblock' && node.parentId) setSelectedStackId(node.parentId);
+    setDrawerOpen(true);
+    setDrawerTab('JSON');
+  };
+  const selectStack = (node: RuntimeVisualNode) => {
+    setSelectedStackId(node.id);
+    setSelectedNodeId(node.id);
+    setDrawerOpen(true);
+  };
+  const selectBlock = (node: RuntimeVisualNode) => {
+    setSelectedNodeId(node.id);
+    if (node.parentId) setSelectedStackId(node.parentId);
+    setDrawerOpen(true);
+  };
+  const childBlocksForStack = (stackId?: string) => model.neoBlocks.filter((block) => block.parentId === stackId);
+  const layersForBlock = (block?: RuntimeVisualNode) => model.neoBlockLayers.get(block?.id.replace(/^neoblock:/, '') ?? '') ?? [];
+  const selectedLayers = layersForBlock(selectedBlock);
+  const selectedMoltLayer = selectedVisualNode?.kind === 'molt_layer' ? selectedVisualNode : undefined;
+  const foundationItems = [...model.resources, ...model.contexts];
+  const moltSourceDetail = (layer?: RuntimeVisualNode) => activeSessionSleeve.moltBlocks.find((block) => block.id === String(layer?.metadata?.sourceId ?? '').replace(/^molt:/, ''));
+  const moltLayerBody = (layer?: RuntimeVisualNode) => {
+    const source = moltSourceDetail(layer);
+    return String(source?.content ?? layer?.metadata?.description ?? layer?.metadata?.content ?? layer?.rawNode?.metadata?.content ?? layer?.rawNode?.subtitle ?? layer?.label ?? 'MOLT detail unavailable');
+  };
 
-  return <section className="runtime-geometry-observer" aria-label="Runtime Geometry Observer">
-    <header className="runtime-geometry-header">
+  const renderVisualNode = (node: RuntimeVisualNode, extra = '') => <button key={node.id} type="button" className={`runtime-node runtime-node--${node.status} runtime-node--${node.kind} ${selectedVisualNode?.id === node.id ? 'runtime-node--selected' : ''} ${extra}`} onClick={() => selectVisualNode(node)}>
+    <span className="runtime-node-icon">{node.icon}</span>
+    <b>{node.shortLabel ?? node.label}</b>
+    <small>{node.kind.replace('_', ' ')}</small>
+    {node.sourceStatus && <em>{node.sourceStatus}</em>}
+    {(node.traceEventIds?.length ?? 0) > 0 && <i>{node.traceEventIds?.length} trace</i>}
+    {(node.artifactIds?.length ?? 0) > 0 && <i>{node.artifactIds?.length} artifact</i>}
+  </button>;
+
+  const renderSystemSleeveView = () => <div className="runtime-system-sleeve-view">
+    <section className="runtime-sleeve-package">
+      <div className="runtime-sleeve-banner">
+        <span className="runtime-sleeve-icon">⬢</span>
+        <div><h2>System Sleeve</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} neostack nodes · {model.neoBlocks.length} neoblock nodes · {summary ? `${summary.totalMoltBindings} molt layers · ${summary.totalGates} gate nodes · ${summary.totalToolEndpoints + model.capabilities.length} capability nodes` : 'manifest pending'}</small></div>
+      </div>
+      <div className="runtime-neostack-clusters">
+        {model.neoStacks.map((stack) => <article key={stack.id} className="runtime-neostack-cluster">
+          <button type="button" className={`runtime-stack-title runtime-node runtime-node--${stack.status}`} onClick={() => { selectStack(stack); setViewMode('neostack'); }}><span>▦</span><b>{stack.label}</b><small>NeoStack cluster</small></button>
+          <div className="runtime-neoblock-tile-grid">{childBlocksForStack(stack.id).map((block) => <button key={block.id} type="button" className={`runtime-neoblock-tile runtime-node runtime-node--${block.status}`} onClick={() => selectBlock(block)}><span>◈</span><b>{block.shortLabel ?? block.label}</b><small>{layersForBlock(block).length} MOLT layers</small></button>)}</div>
+        </article>)}
+      </div>
+    </section>
+    <section className="runtime-foundation-rail" aria-label="Runtime foundation rail">{foundationItems.map((item) => <button key={item.id} type="button" className="runtime-foundation-item" onClick={() => { selectVisualNode(item); setDrawerTab(item.kind === 'resource' && item.id.includes('compiler') ? 'Manifest' : 'Diagnostics'); }}><span>{item.icon}</span><b>{item.label}</b></button>)}{model.capabilities.map((capability) => <button key={`foundation-${capability.id}`} type="button" className="runtime-foundation-item" onClick={() => selectVisualNode(capability)}><span>⚙</span><b>{capability.label}</b></button>)}</section>
+  </div>;
+
+  const renderNeoStackView = () => <div className="runtime-neostack-view">
+    <h2>Selected NeoStack hierarchy</h2>
+    {selectedStack && <button type="button" className="runtime-neostack-hero runtime-node runtime-node--available" onClick={() => { selectStack(selectedStack); setDrawerOpen(!drawerOpen); }}><span>▦</span><b>{selectedStack.label}</b><small>click toggles child summary / drawer</small></button>}
+    <div className="runtime-tier-grid">
+      {childBlocksForStack(selectedStack?.id).map((block, index) => <div key={block.id} className={`runtime-tier runtime-tier--${index}`}>
+        <div className="runtime-edge runtime-edge--active" />
+        <button type="button" className={`runtime-node runtime-node--${block.status} runtime-neoblock-tile`} onClick={() => selectBlock(block)} onDoubleClick={() => { selectBlock(block); setViewMode('neoblock'); }}><span>◈</span><b>{block.label}</b><small>{layersForBlock(block).length} compressed MOLT layers</small></button>
+      </div>)}
+    </div>
+    {selectedBlock && <RuntimeNodeInspectorCard node={selectedBlock} layers={layersForBlock(selectedBlock)} onOpenNeoBlock={() => setViewMode('neoblock')} onSelect={selectVisualNode} />}
+  </div>;
+
+  const renderNeoBlockView = () => <div className="runtime-neoblock-view">
+    <h2>Compressed MOLT layers</h2>
+    {selectedBlock ? <article className="runtime-neoblock-cube runtime-node runtime-node--available">
+      <header><span>◈</span><div><b>{selectedBlock.label}</b><small>Parent NeoStack: {model.neoStacks.find((stack) => stack.id === selectedBlock.parentId)?.label ?? 'unknown'}</small></div></header>
+      <div className="runtime-molt-layer-stack">
+        {['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'].map((role) => {
+          const layer = selectedLayers.find((entry) => String(entry.metadata?.localSlotRole ?? entry.rawNode?.subtitle ?? entry.label).toLowerCase().includes(role));
+          return <button key={role} type="button" className={`runtime-molt-layer runtime-node runtime-node--${layer?.status ?? 'off'}`} disabled={!layer} onClick={() => layer && selectVisualNode(layer)}><span>{role === 'trigger' ? 'Trigger' : role[0].toUpperCase() + role.slice(1)}</span><b>{layer?.label ?? 'not present'}</b><small>{layer?.sourceStatus ?? 'off'}</small></button>;
+        })}
+      </div>
+      <footer><span>Gates: {model.gates.filter((gate) => gate.parentId === selectedBlock.id || model.edges.some((edge) => edge.kind === 'guards' && edge.to === selectedBlock.id && edge.from === gate.id)).length}</span><span>Capabilities: {model.capabilities.filter((capability) => capability.parentId === selectedBlock.id).length}</span><span>Trigger / Merge / Off are visual state labels only.</span></footer>
+    </article> : <small>Select a NeoBlock to inspect compressed layers.</small>}
+    {selectedMoltLayer && <aside className="runtime-molt-detail"><h3>MOLT detail</h3><b>{selectedMoltLayer.label}</b><p>{moltLayerBody(selectedMoltLayer)}</p><small>{selectedMoltLayer.sourceStatus}</small></aside>}
+  </div>;
+
+  const renderRuntimePathView = () => <div className="runtime-path-view">
+    <h2>Runtime Path View</h2>
+    {traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace has been captured yet. Nodes remain idle/available; this screen does not fabricate activation.</div>}
+    <div className="runtime-path-columns">
+      <aside className="runtime-side-modules"><b>Input / Context Modules</b>{model.contexts.map((node) => renderVisualNode(node, 'runtime-node--side-module'))}<span>domain models</span><span>knowledge graph</span><span>trigger branches</span></aside>
+      <div className="runtime-central-path">{model.pathNodes.map((node, index) => <div key={node.id} className="runtime-path-step">{index > 0 && <div className={`runtime-edge runtime-edge--${node.status}`} />} {renderVisualNode(node)}</div>)}</div>
+      <aside className="runtime-side-modules"><b>Path Stats</b><span>{model.pathNodes.length} NeoBlock/control/capability nodes</span><span>{traceEvents.length} trace events</span><span>{model.unmappedEvents.length} unmapped</span></aside>
+    </div>
+  </div>;
+
+  const drawerPayload = selectedVisualNode ? { id: selectedVisualNode.id, kind: selectedVisualNode.kind, label: selectedVisualNode.label, status: selectedVisualNode.status, sourceStatus: selectedVisualNode.sourceStatus, metadata: selectedVisualNode.metadata } : { sleeve: activeSessionSleeve.title };
+  const selectedTrace = selectedGeometryNode?.traceEvents ?? [];
+  const selectedArtifacts = selectedGeometryNode?.artifacts ?? hermesRuntimeResult?.artifacts ?? [];
+
+  return <section className="runtime-geometry-observer runtime-graph-shell" aria-label="Runtime Geometry Observer">
+    <header className="runtime-geometry-header runtime-top-status">
       <div>
-        <p className="runtime-geometry-eyebrow">Generated Sleeve as connected geometry + live trace overlay</p>
+        <p className="runtime-geometry-eyebrow">Graph-first UMG modular cognition observer</p>
         <h1>{activeSessionSleeve.title}</h1>
-        <small>Runtime-session only. This observer does not save or promote source-library content.</small>
+        <small>Runtime-session only. Real trace is the only activation source; MOLT layers stay compressed inside NeoBlocks.</small>
       </div>
       <div className="runtime-geometry-status-grid">
         <span><b>compile</b>{compileStatus}</span>
         <span><b>Hermes</b>{runtimeStatus}</span>
-        <span><b>trace events</b>{traceEvents.length}</span>
+        <span><b>trace</b>{traceEvents.length}</span>
         <span><b>artifacts</b>{artifactCount}</span>
-        <span><b>unmapped</b>{graph.unmappedEvents.length}</span>
+        <span><b>unmapped</b>{model.unmappedEvents.length}</span>
       </div>
     </header>
 
-    <div className="runtime-geometry-controls">
+    <div className="runtime-geometry-controls runtime-view-tabs">
       <button type="button" onClick={onBackToBuilder}>Back to Sleeve Builder</button>
-      <button type="button" className={mode === 'structure' ? 'hot' : ''} onClick={() => setMode('structure')}>Structure View</button>
-      <button type="button" className={mode === 'runtime' ? 'hot' : ''} onClick={() => setMode('runtime')}>Runtime View</button>
+      {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => setViewMode(tab)}>{tab === 'system_sleeve' ? 'System Sleeve' : tab === 'neostack' ? 'NeoStack View' : tab === 'neoblock' ? 'NeoBlock View' : 'Runtime Path'}</button>)}
       <label className="runtime-geometry-prompt"><span>Runtime prompt</span><textarea value={runtimePrompt} onChange={(event) => onRuntimePromptChange(event.target.value)} placeholder="write a note on my desktop about apples" /></label>
       <button type="button" className="publicPrimaryCta" disabled={!compiledRuntimeManifest || isHermesRunning} onClick={onRunHermesRuntime}>{isHermesRunning ? 'Hermes Running…' : 'Run Hermes in Active Sleeve'}</button>
       {pendingRuntimeApproval && <div className="runtime-geometry-approval"><b>Approval boundary active</b><button type="button" onClick={() => onContinueRuntimeApproval('approve')} disabled={isHermesRunning}>Approve & Continue</button><button type="button" onClick={() => onContinueRuntimeApproval('skip')} disabled={isHermesRunning}>Skip</button></div>}
     </div>
 
-    {mode === 'runtime' && traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace has been captured yet. All geometry remains idle; this screen does not fabricate activation.</div>}
-
-    <div className="runtime-geometry-layout">
-      <div className="runtime-geometry-canvas" aria-label="Connected Runtime Geometry">
-        <div className="runtime-geometry-row runtime-geometry-row--sleeve">
-          {sleeveNode && <NodeButton node={sleeveNode} selected={selectedNode?.id === sleeveNode.id} onSelect={(node) => setSelectedNodeId(node.id)} />}
-        </div>
-        <div className="runtime-geometry-row runtime-geometry-row--stacks">
-          {stackNodes.map((stack) => <div key={stack.id} className="runtime-geometry-stack-column">
-            <NodeButton node={stack} selected={selectedNode?.id === stack.id} onSelect={(node) => setSelectedNodeId(node.id)} />
-            <div className="runtime-geometry-edge runtime-geometry-edge--vertical" />
-            {(grouped.get(stack.id) ?? []).filter((node) => node.kind === 'neoblock').map((block) => <div key={block.id} className="runtime-geometry-block-group">
-              <NodeButton node={block} selected={selectedNode?.id === block.id} onSelect={(node) => setSelectedNodeId(node.id)} />
-              <div className="runtime-geometry-children">
-                {(grouped.get(block.id) ?? []).map((child) => <NodeButton key={child.id} node={child} selected={selectedNode?.id === child.id} onSelect={(node) => setSelectedNodeId(node.id)} />)}
-                {graph.nodes.filter((gate) => gate.kind === 'gate' && graph.edges.some((edge) => edge.kind === 'guards' && edge.from === gate.id && edge.to === block.id)).map((gate) => <NodeButton key={gate.id} node={gate} selected={selectedNode?.id === gate.id} onSelect={(node) => setSelectedNodeId(node.id)} />)}
-              </div>
-            </div>)}
-          </div>)}
-        </div>
-        <div className="runtime-geometry-row runtime-geometry-row--loose">
-          {graph.nodes.filter((node) => !node.parentId && node.kind !== 'sleeve' && !stackNodes.some((stack) => stack.id === node.id)).map((node) => <NodeButton key={node.id} node={node} selected={selectedNode?.id === node.id} onSelect={(entry) => setSelectedNodeId(entry.id)} />)}
-        </div>
-        <small className="runtime-geometry-connection-note">{graph.edges.length} trustworthy connections · {summary ? `${summary.totalNeoStacks} NeoStacks / ${summary.totalNeoBlocks} NeoBlocks / ${summary.totalMoltBindings} MOLT / ${summary.totalGates} Gates / ${summary.totalToolEndpoints + graph.nodes.filter((node) => node.kind === 'capability').length} Capabilities` : 'manifest summary unavailable'}</small>
-      </div>
-
-      <aside className="runtime-geometry-inspector">
-        <h2>Selected Node</h2>
-        {selectedNode ? <>
-          <div className="analysisRows">{statusRows({ ...selectedNode, metadata: { ...selectedNode.metadata, childCount: grouped.get(selectedNode.id)?.length ?? graph.edges.filter((edge) => edge.from === selectedNode.id).length } }).map(([key, value]) => <div key={key}><b>{key}</b><span>{value}</span></div>)}</div>
-          {selectedNode.traceEvents.length > 0 && <ol className="runtime-geometry-mini-list">{selectedNode.traceEvents.map((event, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol>}
-          {selectedNode.artifacts.length > 0 && <div className="runtime-geometry-artifact-list">{selectedNode.artifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><small>{artifact.kind}</small></article>)}</div>}
-          <pre>{JSON.stringify(selectedNode.metadata ?? {}, null, 2).slice(0, 1000)}</pre>
-        </> : <small>Select a geometry node to inspect details.</small>}
-      </aside>
-
-      <aside className="runtime-geometry-rail">
-        <h2>Trace / Artifacts</h2>
-        <h3>Timeline</h3>
-        {traceEvents.length ? <ol className="runtime-geometry-trace-list">{traceEvents.map((event, index) => <li className="runtime-geometry-trace-event" key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span><small>{eventTargetId(event) ?? 'missing target'}</small></li>)}</ol> : <small>No real Hermes trace yet.</small>}
-        <h3>Artifacts</h3>
-        {hermesRuntimeResult?.artifacts?.length ? <div className="runtime-geometry-artifact-list">{hermesRuntimeResult.artifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content)}</p><span>{JSON.stringify(artifact.metadata ?? {})}</span></article>)}</div> : <small>No artifacts yet.</small>}
-        <h3>Unmapped Events</h3>
-        {graph.unmappedEvents.length ? <ol className="runtime-geometry-unmapped-events">{graph.unmappedEvents.map(({ event, targetId, reason }, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{targetId ?? 'missing target'} · {reason}</span></li>)}</ol> : <small>No unmapped runtime events.</small>}
-      </aside>
+    <div className={`runtime-main-layout ${leftRailOpen ? 'runtime-main-layout--left-open' : ''} ${rightRailOpen ? 'runtime-main-layout--right-open' : ''}`}>
+      <aside className="runtime-left-rail" aria-label="Runtime hierarchy rail"><button type="button" onClick={() => setLeftRailOpen(!leftRailOpen)}>{leftRailOpen ? 'Collapse hierarchy' : 'Open hierarchy'}</button>{leftRailOpen && <><h2>Sleeve hierarchy</h2>{model.neoStacks.map((stack) => <section key={stack.id}><button type="button" onClick={() => { selectStack(stack); setViewMode('neostack'); }}><b>{stack.label}</b></button>{childBlocksForStack(stack.id).map((block) => <button key={block.id} type="button" onClick={() => { selectBlock(block); setViewMode('neoblock'); }}>{block.label}</button>)}</section>)}</>}</aside>
+      <main className="runtime-graph-surface" aria-label="Runtime graph surface">{viewMode === 'system_sleeve' && renderSystemSleeveView()}{viewMode === 'neostack' && renderNeoStackView()}{viewMode === 'neoblock' && renderNeoBlockView()}{viewMode === 'runtime_path' && renderRuntimePathView()}</main>
+      <aside className="runtime-right-rail" aria-label="Runtime trace and artifact rail"><button type="button" onClick={() => setRightRailOpen(!rightRailOpen)}>{rightRailOpen ? 'Collapse runtime rail' : 'Open runtime rail'}</button>{rightRailOpen && <><h2>Runtime Rail</h2><h3>Legend</h3><div className="runtime-legend"><span>cyan active</span><span>pink approval</span><span>green complete</span><span>orange blocked</span></div><h3>Activity Stream</h3>{traceEvents.length ? <ol className="runtime-geometry-trace-list">{traceEvents.map((event, index) => <li className="runtime-geometry-trace-event" key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span><small>{eventTargetId(event) ?? 'missing target'}</small></li>)}</ol> : <small>No real Hermes trace yet.</small>}<h3>Artifacts</h3>{hermesRuntimeResult?.artifacts?.length ? <div className="runtime-geometry-artifact-list">{hermesRuntimeResult.artifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><small>{artifact.kind}</small></article>)}</div> : <small>No artifacts yet.</small>}<h3>Unmapped Events</h3>{model.unmappedEvents.length ? <ol className="runtime-geometry-unmapped-events">{model.unmappedEvents.map(({ event, targetId, reason }, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{targetId ?? 'missing target'} · {reason}</span></li>)}</ol> : <small>No unmapped runtime events.</small>}</>}</aside>
     </div>
+
+    <section className={`runtime-bottom-drawer ${drawerOpen ? 'runtime-bottom-drawer--open' : ''}`} aria-label="Runtime bottom drawer">
+      <div className="runtime-bottom-drawer-tabs"><button type="button" onClick={() => setDrawerOpen(!drawerOpen)}>{drawerOpen ? 'Collapse drawer' : 'Open drawer'}</button>{(['JSON', 'Trace', 'Manifest', 'Artifacts', 'Diagnostics'] as const).map((tab) => <button key={tab} type="button" className={drawerTab === tab ? 'hot' : ''} onClick={() => { setDrawerTab(tab); setDrawerOpen(true); }}>{tab}</button>)}</div>
+      {drawerOpen && <div className="runtime-bottom-drawer-body">{drawerTab === 'JSON' && <pre>{JSON.stringify(drawerPayload, null, 2)}</pre>}{drawerTab === 'Trace' && <ol>{(selectedTrace.length ? selectedTrace : traceEvents).map((event, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol>}{drawerTab === 'Manifest' && <pre>{JSON.stringify({ compileStatus, summary, manifest: compiledRuntimeManifest }, null, 2).slice(0, 3000)}</pre>}{drawerTab === 'Artifacts' && <div>{selectedArtifacts.length ? selectedArtifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><pre>{JSON.stringify(artifact, null, 2)}</pre></article>) : <small>No artifacts selected.</small>}</div>}{drawerTab === 'Diagnostics' && <pre>{JSON.stringify({ runtimeStatus, unmappedEvents: model.unmappedEvents, noFakeActivation: true, sourceLibraryWrite: false }, null, 2)}</pre>}</div>}
+    </section>
   </section>;
+}
+
+function RuntimeNodeInspectorCard({ node, layers, onOpenNeoBlock, onSelect }: { node: RuntimeVisualNode; layers: RuntimeVisualNode[]; onOpenNeoBlock: () => void; onSelect: (node: RuntimeVisualNode) => void }) {
+  return <aside className="runtime-node-inspector-card"><h3>NeoBlock inspector</h3><b>{node.label}</b><p>{String(node.metadata?.description ?? node.rawNode?.subtitle ?? 'Compressed NeoBlock container')}</p><button type="button" onClick={onOpenNeoBlock}>Open NeoBlock View</button><div>{layers.map((layer) => <button key={layer.id} type="button" onClick={() => onSelect(layer)}>{layer.label}</button>)}</div></aside>;
 }
