@@ -52,11 +52,30 @@ export type HermesGeneratedDecision = {
   needsUserReview?: boolean;
 };
 
+export type HermesStructuralIR = {
+  sleeve: Record<string, unknown>;
+  neoStacks: Array<Record<string, unknown>>;
+  neoBlocks: Array<Record<string, unknown>>;
+  moltLayers: Array<Record<string, unknown>>;
+  mergeOps: Array<Record<string, unknown>>;
+  gates: Array<Record<string, unknown>>;
+  toolBlocks: Array<Record<string, unknown>>;
+  routes: Array<Record<string, unknown>>;
+};
+
+export type HermesStructuralAuditResult = {
+  passed: boolean;
+  checks: Array<{ id: string; passed: boolean; notes: string }>;
+  revisionRequired: boolean;
+};
+
 export type HermesCustomSleevePlanV01 = {
   schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1';
   source: 'hermes_custom_workflow_generation';
   mode: 'runtime_session_draft';
   generationSource?: 'live_hermes_cli' | 'live_hermes_provider' | 'mocked_test' | string;
+  structuralIR: HermesStructuralIR;
+  auditResult: HermesStructuralAuditResult;
   requestId: string;
   title: string;
   summary: string;
@@ -85,6 +104,32 @@ function makeRequestId() {
   return `hermes_custom_sleeve_${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+const COMPETITOR_BRIDGE_PATTERN = /openclaw|langchain/i;
+const HERMES_NATIVE_CANDIDATE_PATTERN = /hermes|metamolt|tool|note|file|runtime task|text document|documentation|aristotelian|stoic|platon/i;
+
+export function promptExplicitlyRequestsCompetitorBridge(text: string) {
+  return COMPETITOR_BRIDGE_PATTERN.test(text);
+}
+
+export function isCompetitorBridgeCandidate(candidate: Pick<UmgLibraryCandidate, 'id' | 'title' | 'description' | 'domain' | 'tags' | 'sourcePath' | 'matchReasons'>) {
+  const haystack = [candidate.id, candidate.title, candidate.description, candidate.domain, candidate.sourcePath, ...(candidate.tags ?? []), ...(candidate.matchReasons ?? [])].filter(Boolean).join(' ');
+  return COMPETITOR_BRIDGE_PATTERN.test(haystack);
+}
+
+export function rankHermesNativeCandidates(candidates: UmgLibraryCandidate[], query: string, limit = candidates.length) {
+  const allowCompetitor = promptExplicitlyRequestsCompetitorBridge(query);
+  return [...candidates]
+    .filter((candidate) => allowCompetitor || !isCompetitorBridgeCandidate(candidate))
+    .sort((a, b) => {
+      const aText = [a.id, a.title, a.description, a.domain, ...(a.tags ?? [])].join(' ');
+      const bText = [b.id, b.title, b.description, b.domain, ...(b.tags ?? [])].join(' ');
+      const aHermes = HERMES_NATIVE_CANDIDATE_PATTERN.test(aText) ? 0 : 1;
+      const bHermes = HERMES_NATIVE_CANDIDATE_PATTERN.test(bText) ? 0 : 1;
+      return aHermes - bHermes;
+    })
+    .slice(0, limit);
+}
+
 export function buildHermesCustomSleeveGenerationRequest(args: {
   userPrompt: string;
   userContext?: string;
@@ -96,7 +141,8 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
   const uploadedNarrative = uploadedIntakeContexts.length ? buildUploadedContextNarrative(uploadedIntakeContexts) : '';
   const userContext = [args.userContext ?? '', uploadedNarrative].filter(Boolean).join('\n\n');
   const expandedRetrievalQuery = buildExpandedRetrievalQuery({ prompt: args.userPrompt, pastedContext: args.userContext, uploadedContexts: uploadedIntakeContexts });
-  const libraryCandidates = retrieveUmgLibraryCandidates(expandedRetrievalQuery, { limit: 24 });
+  const retrievedLibraryCandidates = retrieveUmgLibraryCandidates(expandedRetrievalQuery, { limit: 32 });
+  const libraryCandidates = rankHermesNativeCandidates(retrievedLibraryCandidates, expandedRetrievalQuery, 24);
   const libraryCandidateSummary = summarizeUmgLibraryCandidates(libraryCandidates);
   const intakeDiagnostics = buildIntakeDiagnostics({
     prompt: args.userPrompt,
@@ -124,7 +170,7 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
     intakeDiagnostics,
     libraryCandidates,
     libraryCandidateSummary,
-    outputContract: 'You are not merely producing a workflow outline. You are composing a UMG hierarchy: Sleeve → NeoStacks → NeoBlocks → MOLT roles → Gates → Capabilities. Return only structured JSON for schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1 with concise decompositionSummary; do not include chain-of-thought. Compose a real UMG Sleeve from userPrompt + userContext + uploadedIntakeContexts. Uploaded content must influence block selection and block generation; if uploaded content is unsupported or unreadable, say so and do not invent file contents. Use source-library candidates first from the supplied libraryCandidates array and reuse relevant source blocks when they fit; create only missing runtime-session draft blocks. Every generated MOLT draft must include id, title, role, content, description, tags, sourceKind="runtime-session draft" or "generated glue", stackOrder, optional jsonSchema, and nlCard {title, role, category, tags, description, content}. Every NeoBlock must contain meaningful MOLT layers and include id, title, purpose/description, parentNeoStackId or neoStackId, stackOrder/blockOrder, moltBlocks or moltBlockIds, gates, capabilities, sourceKind, nlCard, and jsonSchema. Every NeoStack must contain meaningful NeoBlocks and include id, title, purpose/description, stackOrder, neoBlocks or neoBlockIds, sourceKind, nlCard, and jsonSchema. Every Sleeve must explain why each NeoStack exists. Produce both NL card fields and JSON schema fields. Preserve reusedBlockId, sourcePath, sourceKind="source-library reused" when a candidate is reused. Gates must stay control records, not fake prompt MOLT blocks. Do not claim source-library mutation. Do not write files. Do not emit lazy generic blocks such as Process Task unless the prompt truly only supports that.'
+    outputContract: `STRUCTURAL IR COMPOSER CONTRACT: Hermes must generate UMG IR first, not a generic workflow outline that is converted later. Required order: 1 parse prompt/context/uploads; 2 search library candidates; 3 identify domain and action intent; 4 identify major kinds of work; 5 create NeoStacks from kinds of work; 6 create NeoBlocks as reusable modules inside each NeoStack; 7 place MOLT roles inside each NeoBlock; 8 add Merge operations where concepts/layers must fuse; 9 add Gates for validation/routing/approval/policy; 10 add MetaMOLT Tool Blocks for Hermes-native tool actions; 11 define route edges; 12 run audit pass; 13 revise failed geometry; 14 convert final IR into JSON; 15 return JSON only. UMG ontology: NeoStack = kind of work; NeoBlock = module or step inside that work; MOLT = atomic thought role inside the module; Merge = semantic/cognitive fusion operation; Gate = control/routing/approval object; MetaMOLT Tool Block = executable Hermes capability; Capability = runtime binding; Trace = what actually happened. Return a single JSON object with REQUIRED top-level structuralIR, auditResult, and final Sleeve JSON fields matching schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1. structuralIR must contain sleeve, neoStacks, neoBlocks, moltLayers, mergeOps, gates, toolBlocks, routes. auditResult must contain passed, checks, revisionRequired. Every NeoStack/NeoBlock/MOLT record must include a concise generationReason explaining why that line exists. Every generated MOLT draft must include id, title, role, content, description, tags, sourceKind="runtime-session draft" or "generated glue", stackOrder, optional jsonSchema, nlCard {title, role, category, tags, description, content}, and generationReason. Every NeoBlock must contain meaningful MOLT layers and include id, title, purpose/description, parentNeoStackId or neoStackId, stackOrder/blockOrder, moltBlocks or moltBlockIds, gates, capabilities, sourceKind, nlCard, jsonSchema, and generationReason. Every NeoStack must contain meaningful NeoBlocks and include id, title, purpose/description, stackOrder, neoBlocks or neoBlockIds, sourceKind, nlCard, jsonSchema, kindOfWork, and generationReason. Merge operations must be explicit in structuralIR.mergeOps when semantic/cognitive fusion occurs. Use source-library candidates first from the supplied libraryCandidates array and preserve reusedBlockId/matchedCandidateId/sourcePath/sourceKind="source-library reused" when reused. Gates are control records, not fake MOLT. MetaMOLT Tool Blocks attach to tool-using NeoBlocks. Include runtime trace expectations/routes for app-surface observation: after compile/run, trace events should map to Sleeve/NeoStack/NeoBlock/MOLT/Gate/Tool IDs so the Runtime Graph can light active blocks, grey unused blocks, and show Hermes terminal/cognitive execution as it happens without inventing activation. Do not write files, mutate source libraries, import Website Builder, or claim success without valid UMG structure. CALIBRATION EXAMPLE — GREEK DESKTOP NOTE SLEEVE: User prompt: workflow that creates and saves notes on my desktop in haiku form whenever prompted to generate a written text note, while integrating Greek philosophy into the note context and semantics. Correct structure: S.GREEK_NOTE.01 Greek Philosophy Desktop Note Sleeve. NeoStacks: NS.01 Prompt Intake and Note Triggering kindOfWork intake/request normalization/trigger detection with NB.01 Detect Note Generation Request and NB.02 Normalize Note Intent; NS.02 Greek Philosophical Lens Selection kindOfWork philosophical retrieval/worldview selection with NB.03 Retrieve Greek Philosophy Candidates and NB.04 Select Greek Lens; NS.03 Semantic Merge and Note Composition kindOfWork semantic fusion/meaning transformation/note generation with NB.05 Merge Philosophy into Note Semantics MERGE.GREEK_SEMANTIC_FRAME, NB.06 Merge Requested Form with Enriched Meaning MERGE.FORM_WITH_SEMANTICS, NB.07 Compose Final Note Draft MERGE.DRAFT_SYNTHESIS, NB.08 Validate Greek Integration G.GREEK_INTEGRATION_CHECK; NS.04 Desktop Note Emission and Hermes Native Execution kindOfWork output preparation/native Hermes tool invocation/verification with NB.09 Prepare Desktop Note Action using TOOL.HERMES.NOTE_CREATE.v0.1 and TOOL.HERMES.FILE_WRITE.v0.1 plus G.DESKTOP_WRITE_ACTION, and NB.10 Verify Note Creation with G.OUTPUT_VERIFICATION. Route: NB.01 ==> NB.02 ==> NB.03 ==> NB.04 ==> NB.05 ==> NB.06 ==> NB.07 ==> NB.08 ==> NB.09 ==> NB.10. Audit checklist: neostack_kind_of_work, stack_has_blocks, block_is_reusable_module, block_has_molt, molt_internal_layers, source_candidates_bound_as_molt_children, tool_blocks_attached, gates_are_control_objects, merge_ops_explicit, route_renderable, structure_inside_budget, runtime_graph_renderable_without_invented_geometry. If any audit item fails, revise structuralIR before returning JSON.`
   };
 }
 
@@ -140,6 +186,20 @@ export function validateHermesCustomSleevePlan(plan: unknown): { valid: boolean;
   if (!candidate.title) errors.push('title is required.');
   if (!candidate.summary) errors.push('summary is required.');
   if (!candidate.decompositionSummary) errors.push('decompositionSummary is required.');
+  const structuralIR = (candidate as Record<string, unknown>).structuralIR as Record<string, unknown> | undefined;
+  const auditResult = (candidate as Record<string, unknown>).auditResult as Record<string, unknown> | undefined;
+  if (!structuralIR || typeof structuralIR !== 'object') errors.push('structuralIR is required before final Sleeve JSON.');
+  else {
+    for (const field of ['sleeve', 'neoStacks', 'neoBlocks', 'moltLayers', 'mergeOps', 'gates', 'toolBlocks', 'routes']) {
+      if (!(field === 'sleeve' ? structuralIR[field] && typeof structuralIR[field] === 'object' : Array.isArray(structuralIR[field]))) errors.push(`structuralIR.${field} is required.`);
+    }
+  }
+  if (!auditResult || typeof auditResult !== 'object') errors.push('auditResult is required.');
+  else {
+    if (auditResult.passed !== true) errors.push('auditResult.passed must be true after revision.');
+    if (auditResult.revisionRequired !== false) errors.push('auditResult.revisionRequired must be false.');
+    if (!Array.isArray(auditResult.checks) || auditResult.checks.length === 0) errors.push('auditResult.checks must be non-empty.');
+  }
   if (!Array.isArray(candidate.neoStacks) || candidate.neoStacks.length === 0) errors.push('At least one neoStack is required.');
   if (!Array.isArray(candidate.neoBlocks) || candidate.neoBlocks.length === 0) errors.push('At least one neoBlock is required.');
   if (!Array.isArray(candidate.moltBlocks) || candidate.moltBlocks.length === 0) errors.push('At least one supported prompt MOLT block is required.');
@@ -152,6 +212,18 @@ export function validateHermesCustomSleevePlan(plan: unknown): { valid: boolean;
   }
   const gateLikeMolt = (candidate.moltBlocks ?? []).find((block) => /gate|trigger|approval/i.test(`${block.role} ${block.id} ${block.title}`) && !UMG_SUPPORTED_PROMPT_MOLT_ROLES.includes(block.role));
   if (gateLikeMolt) errors.push(`Gate/control record appears in prompt MOLT blocks: ${gateLikeMolt.id}`);
+  (candidate.neoStacks ?? []).forEach((stack) => {
+    const record = stack as Record<string, unknown>;
+    if (!String(record.generationReason ?? record.reason ?? '').trim()) errors.push(`NeoStack ${String(record.id ?? '(unknown)')} requires generationReason.`);
+  });
+  (candidate.neoBlocks ?? []).forEach((block) => {
+    const record = block as Record<string, unknown>;
+    if (!String(record.generationReason ?? record.reason ?? '').trim()) errors.push(`NeoBlock ${String(record.id ?? '(unknown)')} requires generationReason.`);
+  });
+  (candidate.moltBlocks ?? []).forEach((block) => {
+    const record = block as Record<string, unknown>;
+    if (!String(record.generationReason ?? record.reason ?? '').trim()) errors.push(`MOLT ${String(record.id ?? '(unknown)')} requires generationReason.`);
+  });
   (candidate.gates ?? []).forEach((gate) => {
     if (!(gate as Record<string, unknown>).id || !(gate as Record<string, unknown>).title) errors.push('Each gate requires id and title.');
   });

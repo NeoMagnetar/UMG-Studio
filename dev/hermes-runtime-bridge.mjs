@@ -945,19 +945,25 @@ export function buildCustomSleeveGenerationPrompt(request) {
     'Use the app-local UMG skill bundle supplied below. Do not assume global Hermes skills are installed.',
     'Do not provide hidden reasoning. Include only a concise decompositionSummary.',
     'Do not perform external actions. Do not write source libraries. Do not import Website Builder.',
-    'You are not merely producing a workflow outline. You are composing a UMG hierarchy: Sleeve → NeoStacks → NeoBlocks → MOLT roles → Gates → Capabilities.',
+    'You are not merely producing a workflow outline. You are composing UMG Structural IR first: Sleeve → NeoStacks → NeoBlocks → MOLT roles → Merge operations → Gates → MetaMOLT Tool Blocks → Capabilities → Routes → Runtime trace expectations.',
+    'Do not generate a generic workflow outline and then convert it. Think in UMG ontology before JSON: NeoStack = kind of work; NeoBlock = module/step inside that work; MOLT = atomic thought role inside the module; Merge = semantic/cognitive fusion operation; Gate = control/routing/approval object; MetaMOLT Tool Block = executable Hermes capability; Capability = runtime binding; Trace = what actually happened.',
     'Analyze userPrompt + userContext + uploadedIntakeContexts. Uploaded content must influence block selection and block generation; if uploaded content is unsupported or unreadable, say so and do not invent file contents.',
     'Use libraryCandidates first. Reuse relevant source-library blocks when they fit. Create only missing runtime-session draft blocks; do not emit lazy generic Process Task-style filler.',
     'Gates are control/routing/approval records, not prompt MOLT blocks.',
+    'Required generation order: 1 parse prompt/context/uploads; 2 search library candidates; 3 identify domain and action intent; 4 identify major kinds of work; 5 create NeoStacks from kinds of work; 6 create NeoBlocks as reusable modules inside each NeoStack; 7 place MOLT roles inside each NeoBlock; 8 add Merge operations where concepts/layers must fuse; 9 add Gates for validation/routing/approval/policy; 10 add MetaMOLT Tool Blocks for Hermes-native tool actions; 11 define route edges; 12 run audit pass; 13 revise failed geometry; 14 convert final IR into JSON; 15 return JSON only.',
     'Return ONLY JSON matching schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1.',
-    'Required top-level fields: schemaVersion, source, mode, generationSource, requestId, title, summary, decompositionSummary, reuseDecisions, generatedDecisions, neoStacks, neoBlocks, moltBlocks, gates, capabilities, warnings.',
+    'Required top-level fields: structuralIR, auditResult, schemaVersion, source, mode, generationSource, requestId, title, summary, decompositionSummary, reuseDecisions, generatedDecisions, neoStacks, neoBlocks, moltBlocks, gates, capabilities, warnings.',
     'Exact required constants: source must equal hermes_custom_workflow_generation; mode must equal runtime_session_draft.',
-    'Exact object field contract: every generated MOLT draft uses id, title, role, content, description, tags, sourceKind, stackOrder, optional jsonSchema, and nlCard {title, role, category, tags, description, content}; every NeoBlock uses id, title, description/purpose, neoStackId or parentNeoStackId, stackOrder/blockOrder, moltBlockIds or moltBlocks, gates, capabilities, sourceKind, nlCard, and jsonSchema; every NeoStack uses id, title, description/purpose, stackOrder, neoBlockIds or neoBlocks, sourceKind, nlCard, and jsonSchema.',
-    'Every NeoBlock must contain meaningful MOLT layers. Every NeoStack must contain meaningful NeoBlocks. Every Sleeve must explain why each NeoStack exists.',
+    'structuralIR contract: {sleeve:{}, neoStacks:[], neoBlocks:[], moltLayers:[], mergeOps:[], gates:[], toolBlocks:[], routes:[]}. auditResult contract: {passed:true, checks:[{id, passed, notes}], revisionRequired:false}.',
+    'Greek note calibration ground truth: S.GREEK_NOTE.01 Greek Philosophy Desktop Note Sleeve. NeoStacks: NS.01 Prompt Intake and Note Triggering with NB.01 Detect Note Generation Request and NB.02 Normalize Note Intent; NS.02 Greek Philosophical Lens Selection with NB.03 Retrieve Greek Philosophy Candidates and NB.04 Select Greek Lens; NS.03 Semantic Merge and Note Composition with NB.05 Merge Philosophy into Note Semantics / MERGE.GREEK_SEMANTIC_FRAME, NB.06 Merge Requested Form with Enriched Meaning / MERGE.FORM_WITH_SEMANTICS, NB.07 Compose Final Note Draft / MERGE.DRAFT_SYNTHESIS, NB.08 Validate Greek Integration / G.GREEK_INTEGRATION_CHECK; NS.04 Desktop Note Emission and Hermes Native Execution with NB.09 Prepare Desktop Note Action / TOOL.HERMES.NOTE_CREATE.v0.1 / TOOL.HERMES.FILE_WRITE.v0.1 / G.DESKTOP_WRITE_ACTION and NB.10 Verify Note Creation / G.OUTPUT_VERIFICATION. Route NB.01 ==> NB.02 ==> NB.03 ==> NB.04 ==> NB.05 ==> NB.06 ==> NB.07 ==> NB.08 ==> NB.09 ==> NB.10.',
+    'Audit checklist ids must include: neostack_kind_of_work, stack_has_blocks, block_is_reusable_module, block_has_molt, molt_internal_layers, source_candidates_bound_as_molt_children, tool_blocks_attached, gates_are_control_objects, merge_ops_explicit, route_renderable, structure_inside_budget, runtime_graph_renderable_without_invented_geometry. If any audit item fails, revise structuralIR before returning JSON.',
+    'Exact object field contract: every generated MOLT draft uses id, title, role, content, description, tags, sourceKind, stackOrder, optional jsonSchema, nlCard {title, role, category, tags, description, content}, and generationReason; every NeoBlock uses id, title, description/purpose, neoStackId or parentNeoStackId, stackOrder/blockOrder, moltBlockIds or moltBlocks, gates, capabilities, sourceKind, nlCard, jsonSchema, and generationReason; every NeoStack uses id, title, description/purpose, stackOrder, neoBlockIds or neoBlocks, sourceKind, nlCard, jsonSchema, kindOfWork, and generationReason.',
+    'Every NeoBlock must contain meaningful MOLT layers. Every NeoStack must contain meaningful NeoBlocks. Every Sleeve must explain why each NeoStack exists. No bare NeoBlocks are allowed.',
     'Do not use alternate keys such as name, stackId, type-only blocks, id-only capability objects, or source objects without the required fields above.',
     'Use only prompt MOLT roles: directive, instruction, subject, primary, philosophy, blueprint.',
     'Every generatedDecision must set runtimeSessionOnly true and sourceLibraryWrite false.',
     'Capability declarations are declarations only; externalActionTaken must remain false.',
+    'Runtime trace expectation: this app is the observing UMG surface for Hermes terminal/cognitive work. Generated routes and IDs must allow runtime events to light the active Sleeve/NeoStack/NeoBlock/MOLT/Gate/Tool path as Hermes executes, while unused blocks remain grey/off. Do not invent trace activation; define observable IDs and expected event mapping only.',
     `CUSTOM_WORKFLOW_REQUEST_JSON:\n${JSON.stringify(safeRequest, null, 2)}`
   ].join('\n\n');
 }
@@ -1048,12 +1054,26 @@ export function validateCustomSleevePlan(plan) {
   if (!plan.requestId) errors.push('requestId is required.');
   if (!plan.title) errors.push('title is required.');
   if (!plan.decompositionSummary) errors.push('decompositionSummary is required.');
+  if (!hasObject(plan.structuralIR)) errors.push('structuralIR is required before final Sleeve JSON.');
+  else {
+    if (!hasObject(plan.structuralIR.sleeve)) errors.push('structuralIR.sleeve is required.');
+    for (const field of ['neoStacks', 'neoBlocks', 'moltLayers', 'mergeOps', 'gates', 'toolBlocks', 'routes']) {
+      if (!Array.isArray(plan.structuralIR[field])) errors.push(`structuralIR.${field} is required.`);
+    }
+  }
+  if (!hasObject(plan.auditResult)) errors.push('auditResult is required.');
+  else {
+    if (plan.auditResult.passed !== true) errors.push('auditResult.passed must be true after revision.');
+    if (plan.auditResult.revisionRequired !== false) errors.push('auditResult.revisionRequired must be false.');
+    if (!Array.isArray(plan.auditResult.checks) || !plan.auditResult.checks.length) errors.push('auditResult.checks must be non-empty.');
+  }
   if (!Array.isArray(plan.neoStacks) || !plan.neoStacks.length) errors.push('neoStacks must be non-empty.');
   if (!Array.isArray(plan.neoBlocks) || !plan.neoBlocks.length) errors.push('neoBlocks must be non-empty.');
   if (!Array.isArray(plan.moltBlocks) || !plan.moltBlocks.length) errors.push('moltBlocks must be non-empty.');
   for (const stack of plan.neoStacks || []) {
     const label = `NeoStack ${stack?.id || '(unknown)'}`;
     if (!String(stack?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
+    if (!String(stack?.generationReason || stack?.reason || '').trim()) errors.push(`${label} requires generationReason.`);
     if (!Number.isFinite(Number(stack?.stackOrder))) errors.push(`${label} requires stackOrder.`);
     if (!hasChildren(stack, 'neoBlockIds', 'neoBlocks')) errors.push(`${label} requires meaningful NeoBlock children.`);
     validateNlCard(stack?.nlCard, label, errors);
@@ -1062,6 +1082,7 @@ export function validateCustomSleevePlan(plan) {
   for (const block of plan.neoBlocks || []) {
     const label = `NeoBlock ${block?.id || '(unknown)'}`;
     if (!String(block?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
+    if (!String(block?.generationReason || block?.reason || '').trim()) errors.push(`${label} requires generationReason.`);
     if (!String(block?.neoStackId || block?.parentNeoStackId || '').trim()) errors.push(`${label} requires neoStackId or parentNeoStackId.`);
     if (!Number.isFinite(Number(block?.stackOrder ?? block?.blockOrder))) errors.push(`${label} requires stackOrder or blockOrder.`);
     if (!hasChildren(block, 'moltBlockIds', 'moltBlocks')) errors.push(`${label} requires meaningful MOLT children.`);
@@ -1077,6 +1098,7 @@ export function validateCustomSleevePlan(plan) {
     if (!String(block?.description || '').trim()) errors.push(`${label} requires description.`);
     if (!Array.isArray(block?.tags)) errors.push(`${label} requires tags array.`);
     if (!String(block?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
+    if (!String(block?.generationReason || block?.reason || '').trim()) errors.push(`${label} requires generationReason.`);
     if (!Number.isFinite(Number(block?.stackOrder))) errors.push(`${label} requires stackOrder.`);
     if (!/source-library/i.test(String(block?.sourceKind || ''))) {
       validateNlCard(block?.nlCard, label, errors);
@@ -1119,12 +1141,27 @@ STRICT_RETRY_INSTRUCTION: Return only the JSON object. No prose. No markdown.`;
         plan = parseJsonObjectFromText(strictHermes.text || '');
       } catch (strictParseError) {
         const reason = `Hermes output did not contain a valid JSON object after strict JSON retry. ${strictParseError?.message || parseError?.message || ''}`.trim();
-        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_json_parse_failed', fallbackUsed: false, fallbackReason: reason, parseRetryUsed: true, rawFirstOutputPreview: truncateText(hermes.text || '', 400), rawRetryOutputPreview: truncateText(strictHermes.text || '', 400) } }, undefined);
+        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_json_parse_failed', failureStage: 'strict_json_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(strictHermes.text || '', 400) } }, undefined);
       }
     }
-    const planValidation = validateCustomSleevePlan(plan);
-    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_validation_failed', fallbackUsed: false, fallbackReason: planValidation.errors.join(' '), responseSleeveTitle: plan?.title } }, undefined);
-    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, responseSleeveTitle: plan.title, parseRetryUsed } }, undefined);
+    let planValidation = validateCustomSleevePlan(plan);
+    let structuralContractRetryUsed = false;
+    if (!planValidation.valid && planValidation.errors.some((error) => /structuralIR|auditResult/i.test(error))) {
+      structuralContractRetryUsed = true;
+      const contractRetryPrompt = `${prompt}
+
+STRICT_STRUCTURAL_IR_RETRY_INSTRUCTION: Return only valid JSON containing structuralIR, auditResult, and final Sleeve JSON fields. No prose. No markdown. structuralIR must contain sleeve, neoStacks, neoBlocks, moltLayers, mergeOps, gates, toolBlocks, routes. auditResult must contain passed:true, non-empty checks, revisionRequired:false. Include generationReason on every NeoStack, NeoBlock, and MOLT.`;
+      const retryHermes = await runtimePost(contractRetryPrompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
+      try {
+        plan = parseJsonObjectFromText(retryHermes.text || '');
+        planValidation = validateCustomSleevePlan(plan);
+      } catch (retryParseError) {
+        const reason = `Hermes structural IR retry did not return valid JSON. ${retryParseError?.message || ''}`.trim();
+        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_structural_ir_retry_parse_failed', failureStage: 'structural_ir_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed, structuralContractRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(retryHermes.text || '', 400) } }, undefined);
+      }
+    }
+    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_validation_failed', failureStage: structuralContractRetryUsed ? 'structural_ir_retry_validation' : 'plan_validation', fallbackUsed: false, fallbackReason: planValidation.errors.join(' '), responseSleeveTitle: plan?.title, parseRetryUsed, structuralContractRetryUsed } }, undefined);
+    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, responseSleeveTitle: plan.title, parseRetryUsed, structuralContractRetryUsed } }, undefined);
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : undefined;
     const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';

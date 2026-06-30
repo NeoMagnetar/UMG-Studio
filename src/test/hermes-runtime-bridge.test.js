@@ -34,6 +34,37 @@ function makeMockStream() {
   return stream;
 }
 
+function withStructuralContract(plan) {
+  const neoStacks = (plan.neoStacks || []).map((stack, index) => ({ generationReason: `Stack ${index + 1} is a distinct kind of work.`, kindOfWork: stack.kindOfWork || stack.title, ...stack }));
+  const neoBlocks = (plan.neoBlocks || []).map((block, index) => ({ generationReason: `Block ${index + 1} is a reusable module inside its stack.`, ...block }));
+  const moltBlocks = (plan.moltBlocks || []).map((block, index) => ({ generationReason: `MOLT ${index + 1} is an internal thought layer for the parent NeoBlock.`, ...block }));
+  return {
+    ...plan,
+    structuralIR: {
+      sleeve: { id: plan.requestId, title: plan.title, generationReason: 'Sleeve coordinates the full workflow.' },
+      neoStacks,
+      neoBlocks,
+      moltLayers: moltBlocks,
+      mergeOps: [{ id: 'MERGE.TEST.01', mergeType: 'semantic_overlay', inputs: ['input'], output: 'merged output', generationReason: 'Explicit semantic fusion placeholder for validation.' }],
+      gates: plan.gates || [],
+      toolBlocks: [],
+      routes: [{ from: neoBlocks[0]?.id || 'start', to: neoBlocks[1]?.id || 'end', generationReason: 'Renderable route edge.' }]
+    },
+    auditResult: {
+      passed: true,
+      revisionRequired: false,
+      checks: [
+        { id: 'neostack_kind_of_work', passed: true, notes: 'Each stack performs a distinct work lane.' },
+        { id: 'stack_has_blocks', passed: true, notes: 'Every stack has blocks.' },
+        { id: 'block_has_molt', passed: true, notes: 'Every block has MOLT layers.' }
+      ]
+    },
+    neoStacks,
+    neoBlocks,
+    moltBlocks
+  };
+}
+
 function makeMockProcess({ stdout = '', stderr = '', code = 0, delayMs = 1 } = {}) {
   const stdoutStream = makeMockStream();
   const stderrStream = makeMockStream();
@@ -134,11 +165,16 @@ describe('Hermes runtime bridge helpers', () => {
     expect(prompt).toContain('UMG Sleeve Decomposition Skill');
     expect(prompt).toContain('Return ONLY JSON');
     expect(prompt).toContain('You are not merely producing a workflow outline');
-    expect(prompt).toContain('Sleeve → NeoStacks → NeoBlocks → MOLT roles → Gates → Capabilities');
+    expect(prompt).toContain('Sleeve → NeoStacks → NeoBlocks → MOLT roles → Merge operations → Gates → MetaMOLT Tool Blocks → Capabilities');
     expect(prompt).toContain('Uploaded content must influence block selection and block generation');
     expect(prompt).toContain('nlCard');
     expect(prompt).toContain('jsonSchema');
     expect(prompt).toContain('Every NeoBlock must contain meaningful MOLT layers');
+    expect(prompt).toContain('UMG Structural IR');
+    expect(prompt).toContain('structuralIR');
+    expect(prompt).toContain('auditResult');
+    expect(prompt).toContain('Greek Philosophy Desktop Note Sleeve');
+    expect(prompt).toContain('Runtime trace expectation');
     expect(prompt).toContain('custom_workflow');
     expect(prompt).not.toContain('chain-of-thought');
     const hermesPlan = {
@@ -159,17 +195,18 @@ describe('Hermes runtime bridge helpers', () => {
       capabilities: [],
       warnings: []
     };
+    const structuralHermesPlan = withStructuralContract(hermesPlan);
     const response = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: `Here is the plan:
 
 \`\`\`json
-${JSON.stringify(hermesPlan)}
+${JSON.stringify(structuralHermesPlan)}
 \`\`\`` }));
     expect(response.status).toBe(200);
     expect(response.body.plan.title).toBe('Bridge Generated Sleeve');
     expect(response.body.plan.generationSource).toBe('live_hermes_cli');
     expect(response.body.validation.valid).toBe(true);
     expect(response.body.externalActionTaken).toBe(false);
-    const invalidMissingCards = { ...hermesPlan, moltBlocks: [{ id: 'molt.bad', title: 'Bad Primary', role: 'primary', content: 'Missing required card/schema/source fields.', parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge' }] };
+    const invalidMissingCards = { ...structuralHermesPlan, moltBlocks: [{ id: 'molt.bad', title: 'Bad Primary', role: 'primary', content: 'Missing required card/schema/source fields.', parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge' }] };
     const invalidResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(invalidMissingCards) }));
     expect(invalidResponse.status).toBe(422);
     expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/nlCard|jsonSchema|sourceKind|tags/);
@@ -195,12 +232,13 @@ ${JSON.stringify(hermesPlan)}
       capabilities: [],
       warnings: []
     };
+    const structuralPlan = withStructuralContract(plan);
     expect(parseJsonObjectFromText(`prefix {"ignored": true} suffix`).ignored).toBe(true);
     const request = { requestId: 'req.s1d.retry', userPrompt: 'Generate a retry Sleeve.', userContext: '', selectedMode: 'custom_workflow', supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'] };
     const calls = [];
     const response = await buildCustomSleeveGenerationResponse(request, {}, async (prompt) => {
       calls.push(prompt);
-      return calls.length === 1 ? { ok: true, status: 200, text: 'I cannot format this yet.' } : { ok: true, status: 200, text: JSON.stringify(plan) };
+      return calls.length === 1 ? { ok: true, status: 200, text: 'I cannot format this yet.' } : { ok: true, status: 200, text: JSON.stringify(structuralPlan) };
     });
     expect(response.status).toBe(200);
     expect(response.body.plan.title).toBe('Strict Retry Sleeve');
@@ -211,6 +249,46 @@ ${JSON.stringify(hermesPlan)}
     expect(failed.status).toBe(502);
     expect(failed.body.validation.errors.join(' ')).toContain('strict JSON retry');
     expect(failed.body.debug.fallbackUsed).toBe(false);
+    expect(failed.body.debug.parseRetryUsed).toBe(true);
+    expect(failed.body.debug.failureStage).toBe('strict_json_retry_parse');
+    expect(failed.body.debug.rawOutputPreview).toContain('still no JSON');
+    expect(failed.body.debug.retryOutputPreview).toContain('still no JSON');
+  });
+
+  it('rejects or retries Hermes outputs that skip structuralIR or auditResult', async () => {
+    const { buildCustomSleeveGenerationResponse } = await getRuntimeBridgeModule();
+    const basePlan = {
+      schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1',
+      source: 'hermes_custom_workflow_generation',
+      mode: 'runtime_session_draft',
+      generationSource: 'live_hermes_cli',
+      requestId: 'req.structural.retry',
+      title: 'Structural Retry Sleeve',
+      summary: 'Generated after structural retry.',
+      decompositionSummary: 'Structural retry returned IR and audit.',
+      reuseDecisions: [],
+      generatedDecisions: [{ id: 'generated.structural', title: 'Structural draft', runtimeSessionOnly: true, sourceLibraryWrite: false, reason: 'Needed for test.' }],
+      neoStacks: [{ id: 'stack.structural', title: 'Structural Stack', description: 'Structural stack.', stackOrder: 1, neoBlockIds: ['block.structural'], sourceKind: 'runtime-session draft', nlCard: { title: 'Structural Stack', role: 'neostack', category: 'test', tags: ['structural'], description: 'Structural stack.', content: 'Structural stack content.' }, jsonSchema: { type: 'object' } }],
+      neoBlocks: [{ id: 'block.structural', title: 'Structural Block', description: 'Structural block.', neoStackId: 'stack.structural', stackOrder: 1, blockOrder: 1, moltBlockIds: ['molt.structural'], gates: [], capabilities: [], sourceKind: 'runtime-session draft', nlCard: { title: 'Structural Block', role: 'neoblock', category: 'test', tags: ['structural'], description: 'Structural block.', content: 'Structural block content.' }, jsonSchema: { type: 'object' } }],
+      moltBlocks: [{ id: 'molt.structural', title: 'Structural Directive', role: 'directive', content: 'Structural content.', description: 'Structural content.', tags: ['structural'], sourceKind: 'runtime-session draft', stackOrder: 1, parentNeoBlockId: 'block.structural', parentNeoStackId: 'stack.structural', nlCard: { title: 'Structural Directive', role: 'directive', category: 'test', tags: ['structural'], description: 'Structural content.', content: 'Structural content.' }, jsonSchema: { type: 'object' } }],
+      gates: [],
+      capabilities: [],
+      warnings: []
+    };
+    const request = { requestId: 'req.structural.retry', userPrompt: 'Generate a structural Sleeve.', userContext: '', selectedMode: 'custom_workflow', supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'] };
+    const calls = [];
+    const response = await buildCustomSleeveGenerationResponse(request, {}, async (prompt) => {
+      calls.push(prompt);
+      return calls.length === 1 ? { ok: true, status: 200, text: JSON.stringify(basePlan) } : { ok: true, status: 200, text: JSON.stringify(withStructuralContract(basePlan)) };
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.debug.structuralContractRetryUsed).toBe(true);
+    expect(calls[1]).toContain('Return only valid JSON containing structuralIR, auditResult, and final Sleeve JSON fields');
+
+    const failed = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(basePlan) }));
+    expect(failed.status).toBe(422);
+    expect(failed.body.debug.structuralContractRetryUsed).toBe(true);
+    expect(failed.body.validation.errors.join(' ')).toMatch(/structuralIR|auditResult/);
   });
 
   it('executes customer_message_draft as real safe app-local capability with artifact and trace events', async () => {

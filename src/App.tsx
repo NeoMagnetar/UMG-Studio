@@ -2763,6 +2763,28 @@ function PublicLandingShell({
   </HackathonLandingPage>;
 }
 
+function isBasicCompetitorCandidate(candidate: Record<string, unknown>, prompt: string) {
+  if (/openclaw|langchain/i.test(prompt)) return false;
+  const haystack = [candidate.id, candidate.title, candidate.description, candidate.domain, candidate.sourcePath, candidate.blockType, ...(Array.isArray(candidate.tags) ? candidate.tags : []), ...(Array.isArray(candidate.matchReasons) ? candidate.matchReasons : [])].filter(Boolean).join(' ');
+  return /openclaw|langchain/i.test(haystack);
+}
+
+function getBasicCandidatePreview(candidates: unknown, prompt: string) {
+  if (!Array.isArray(candidates)) return [];
+  return candidates
+    .filter((candidate): candidate is Record<string, unknown> => Boolean(candidate && typeof candidate === 'object'))
+    .filter((candidate) => !isBasicCompetitorCandidate(candidate, prompt))
+    .slice(0, 5);
+}
+
+function getCompilerBridgeCopy(result?: UMGCompilerResult) {
+  const config = getCompilerAdapterConfigFromEnv();
+  if (!config.endpoint) return 'Compiler endpoint not configured. Start it with: npm run umg:compiler-bridge';
+  if (result?.status === 'error') return 'Compiler endpoint configured, but bridge is not responding. Start it with: npm run umg:compiler-bridge';
+  if (result?.status === 'not_configured') return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
+  return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
+}
+
 function StatusLine({ label, value, tone }: { label: string; value: string; tone: 'ready' | 'pending' }) {
   return <div className={`publicStatusLine ${tone}`}><span>{label}</span><b>{value}</b></div>;
 }
@@ -2820,8 +2842,10 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
   } : undefined;
   const activeStackPreview = activeSessionSleeve?.neoStacks.map((stack) => ({ id: stack.id, title: stack.title, reason: stack.description })) ?? [];
   const compositionSource = (hermesCustomGenerationDiagnostics?.compositionSource ?? buildCompositionSourceDiagnostics({ sleeve: activeSessionSleeve, route: activeSessionSleeve ? 'live Hermes' : 'intake draft' })) as Record<string, unknown>;
-  const compileStatus = compiledRuntimeManifest ? 'Compile succeeded' : activeSessionSleeve?.metadata?.generatedByHermes && compilerResult?.status === 'not_configured' ? 'Source-bound Sleeve ready. Compiler bridge not connected.' : activeSessionSleeve?.metadata?.generatedByHermes ? 'Compile Sleeve' : 'Compile available after source-bound Sleeve is ready.';
-  const runtimeStatus = isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? 'Hermes completed' : compiledRuntimeManifest ? 'Runtime ready' : 'Waiting for compile';
+  const compilerBridgeCopy = getCompilerBridgeCopy(compilerResult);
+  const compileStatus = compiledRuntimeManifest ? 'Compile succeeded' : activeSessionSleeve?.metadata?.generatedByHermes ? (compilerResult?.status === 'ok' ? 'Compile Sleeve' : compilerBridgeCopy) : 'Compile available after source-bound Sleeve is ready.';
+  const runtimeStatus = isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? 'Hermes completed' : compiledRuntimeManifest ? 'Runtime ready' : activeSessionSleeve ? 'Structure view available before compile' : 'Waiting for Sleeve';
+  const basicCandidatePreview = getBasicCandidatePreview(hermesCustomGenerationDiagnostics?.topCandidates, businessInput.text);
   const hermesGenerationFailed = Boolean(hermesCustomGenerationStatus?.startsWith('failed') || compilerResult?.errors?.some((error) => String(error.code).startsWith('HERMES_CUSTOM_SLEEVE_GENERATION')));
   const nonCanonicalDevRoute = typeof window !== 'undefined' && ['5185', '5174', '5175', '5177'].includes(window.location.port);
   const toolBlockCount = activeSessionSleeve?.moltBlocks.filter((block) => block.sourceKind === 'metamolt tool' || block.id.startsWith('TOOL.')).length ?? 0;
@@ -2841,9 +2865,9 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     </div>
     {hermesGenerationFailed && !activeSessionSleeve && <div className="analysisPanel basicSleeveFailure">
       <div className="publicSectionTitle"><span>02</span><div><b>Hermes generation failed</b><small>No generic intake scaffold was promoted to a Sleeve.</small></div></div>
-      <p>{compilerResult?.errors?.map((error) => error.message).join(' ') || hermesCustomGenerationStatus || 'Hermes did not return a valid source-bound Sleeve.'}</p>
-      <SummaryRows rows={[["candidate retrieval ran", String(hermesCustomGenerationDiagnostics?.candidateRetrievalRan ?? ((hermesCustomGenerationDiagnostics?.compositionSource as Record<string, unknown> | undefined)?.libraryRetrieval === 'ran'))], ["candidate count", String(hermesCustomGenerationDiagnostics?.candidateCount ?? (hermesCustomGenerationDiagnostics?.compositionSource as Record<string, unknown> | undefined)?.candidateCount ?? 0)], ["generation route", String(hermesCustomGenerationDiagnostics?.generationRoute ?? 'live Hermes')], ["compile eligibility", 'no']]} />
-      <div className="neoStackSummaryList">{Array.isArray(hermesCustomGenerationDiagnostics?.topCandidates) ? (hermesCustomGenerationDiagnostics.topCandidates as Array<Record<string, unknown>>).slice(0, 5).map((candidate) => <div key={String(candidate.id)} className="neoStackSummaryItem"><b>{String(candidate.title ?? candidate.id)}</b><small>{String(candidate.blockType ?? '')} · {Array.isArray(candidate.matchReasons) ? candidate.matchReasons.join(', ') : ''}</small></div>) : null}</div>
+      <p>{compilerResult?.errors?.[0]?.message || hermesCustomGenerationStatus || 'Hermes did not return a valid source-bound Sleeve.'}</p>
+      <SummaryRows rows={[["status", 'No source-bound Sleeve yet'], ["candidate retrieval ran", String(hermesCustomGenerationDiagnostics?.candidateRetrievalRan ?? ((hermesCustomGenerationDiagnostics?.compositionSource as Record<string, unknown> | undefined)?.libraryRetrieval === 'ran'))], ["candidate count", String(hermesCustomGenerationDiagnostics?.candidateCount ?? (hermesCustomGenerationDiagnostics?.compositionSource as Record<string, unknown> | undefined)?.candidateCount ?? 0)], ["compile eligibility", 'no'], ["reason", 'Hermes generation failed']]} />
+      {basicCandidatePreview.length > 0 && <div className="compactCandidatePreview"><b>Useful candidates</b>{basicCandidatePreview.map((candidate) => <span key={String(candidate.id)}>{String(candidate.title ?? candidate.id)} · {String(candidate.blockType ?? 'candidate')}</span>)}</div>}
       <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{isHermesRunning ? 'Generating…' : 'Retry Hermes Generation'}</button><button type="button" className="publicSecondaryCta" onClick={() => onStudioModeChange('advanced')}>Open Advanced Details</button></div>
     </div>}
     {activeSessionSleeve && <div className="analysisPanel basicSleevePreview">
@@ -2860,13 +2884,14 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicCompilePanel">
       <div className="publicSectionTitle"><span>04</span><div><b>Compile</b><small>{compileStatus}</small></div></div>
-      <p>{!activeSessionSleeve?.metadata?.generatedByHermes ? 'Compile available after source-bound Sleeve is ready.' : compilerResult?.status === 'not_configured' ? 'Source-bound Sleeve ready. Compiler bridge not connected.' : compilerResult?.errors?.length ? 'Compiler bridge not connected.' : compiledRuntimeManifest ? 'Compiler returned a real runtime manifest.' : 'Source-bound Sleeve ready. Start compiler bridge, then Compile Sleeve.'}</p>
+      <p>{!activeSessionSleeve?.metadata?.generatedByHermes ? 'Compile available after source-bound Sleeve is ready.' : compiledRuntimeManifest ? 'Compiler returned a real runtime manifest.' : compilerBridgeCopy}</p>
       <button type="button" className="publicPrimaryCta" onClick={onCompileWithUMGCompiler} disabled={isHermesRunning || !activeSessionSleeve?.metadata?.generatedByHermes}>{isHermesRunning ? 'Generating…' : compiledRuntimeManifest ? 'Recompile Sleeve' : activeSessionSleeve?.metadata?.generatedByHermes ? 'Compile Sleeve' : 'Start compiler bridge, then Compile Sleeve'}</button>
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicRuntimeObserver">
       <div className="publicSectionTitle"><span>05</span><div><b>Runtime</b><small>{runtimeStatus}</small></div></div>
-      <SummaryRows rows={[["Hermes", hermesEndpointConfigured ? 'configured' : 'not connected'], ["Native tools", 'available'], ["Action mode", nativeActionMode], ["Status", compiledRuntimeManifest ? 'Ready for runtime' : 'Waiting for compile'], ...runtimeDetailRows]} />
-      <div className="templateActionRow">{activeSessionSleeve && <button type="button" className="publicPrimaryCta" onClick={onOpenRuntimeGeometry}>Open Runtime Graph</button>}</div>
+      <SummaryRows rows={[["Hermes", hermesEndpointConfigured ? 'configured' : 'not connected'], ["Native tools", 'available'], ["Runtime Graph", activeSessionSleeve ? 'structure available' : 'waiting for Sleeve'], ["Action mode", nativeActionMode], ...runtimeDetailRows]} />
+      <small>{activeSessionSleeve ? 'Structure view available before compile. Runtime trace appears after compile/run.' : 'Generate a Sleeve first.'}</small>
+      <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onOpenRuntimeGeometry} disabled={!activeSessionSleeve}>Open Runtime Graph</button></div>
       {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
       {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}
       {hermesRuntimeVisualState?.timeline.length ? <ol className="basicTraceList">{hermesRuntimeVisualState.timeline.map((event) => <li key={`${event.traceId}:${event.timestamp}`}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol> : <small>No runtime trace yet. Basic mode does not fabricate activation.</small>}

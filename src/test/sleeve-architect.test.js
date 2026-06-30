@@ -264,6 +264,19 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(diagnostics.compileEligibility).toBe('yes');
   });
 
+  it('filters competitor bridge candidates from Hermes-native Basic generation unless explicitly requested', async () => {
+    const { rankHermesNativeCandidates } = await import('../lib/umg/hermesCustomSleeveGeneration');
+    const candidates = [
+      { id: 'TOOL.OPENCLAW.LANGCHAIN', title: 'LangChain OpenClaw Tool Bridge', description: 'Competitor bridge', domain: 'tool', tags: ['langchain'], sourcePath: 'library/openclaw.md', blockType: 'molt', role: 'tool', score: 10, matchReasons: ['OpenClaw bridge'] },
+      { id: 'TOOL.HERMES.NOTE_CREATE.v0.1', title: 'Hermes Native Note Create', description: 'Hermes note tool', domain: 'tool', tags: ['hermes'], sourcePath: 'library/hermes-note.md', blockType: 'molt', role: 'tool', score: 8, matchReasons: ['Hermes note'] },
+      { id: 'PHIL.002', title: 'Aristotelianism', description: 'Greek philosophy', domain: 'philosophy', tags: ['greek'], sourcePath: 'library/phil.md', blockType: 'molt', role: 'philosophy', score: 7, matchReasons: ['Greek philosophy'] }
+    ];
+    const hermesOnly = rankHermesNativeCandidates(candidates, 'Create a Hermes desktop note workflow', 5);
+    expect(hermesOnly.map((candidate) => candidate.title)).toEqual(['Hermes Native Note Create', 'Aristotelianism']);
+    const explicit = rankHermesNativeCandidates(candidates, 'Create an OpenClaw LangChain bridge workflow', 5);
+    expect(explicit.map((candidate) => candidate.title)).toContain('LangChain OpenClaw Tool Bridge');
+  });
+
   it('marks intake drafts/offline placeholders as not compileable and exposes composition source diagnostics', async () => {
     const { buildCompositionSourceDiagnostics, buildHermesCustomSleeveGenerationRequest } = await import('../lib/umg/hermesCustomSleeveGeneration');
     const request = buildHermesCustomSleeveGenerationRequest({ userPrompt: ecommercePrompt, userContext: '', requestId: 'req.s1c.intake.test' });
@@ -387,6 +400,10 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(palette.map((card) => card.label)).not.toEqual(expect.arrayContaining(['Generate executive summary', 'Create financial assumptions']));
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     expect(appSource).toContain('Open Runtime Graph');
+    expect(appSource).toContain('Structure view available before compile. Runtime trace appears after compile/run.');
+    expect(appSource).toContain('Generate a Sleeve first.');
+    expect(appSource).toContain('npm run umg:compiler-bridge');
+    expect(appSource).toContain('Compiler endpoint configured, but bridge is not responding.');
     expect(appSource).not.toContain('Open Runtime Observer');
     expect(appSource).not.toContain('Open Runtime Geometry');
     expect(appSource).not.toContain('Generated glue');
