@@ -1,6 +1,7 @@
 import type { UMGGateRecord } from './cognitiveRuntimeTypes';
-import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock, NormalizedTemplateNeoStack, NormalizedTemplateSleeve } from './templateSleeveStructures';
+import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock, NormalizedTemplateNeoStack, NormalizedTemplateSleeve, NormalizedTemplateSourceKind } from './templateSleeveStructures';
 import { getHermesUmgAppLocalSkillBundle, UMG_SUPPORTED_PROMPT_MOLT_ROLES, type HermesUmgAppLocalSkillBundle, type UmgSupportedPromptMoltRole } from './hermesUmgSkillBundle';
+import { retrieveUmgLibraryCandidates, summarizeUmgLibraryCandidates, type UmgLibraryCandidate } from './umgLibraryCandidateRetrieval';
 import { validateHermesCustomSleevePlanScaffold } from './hermesSleevePlanSchema';
 
 export type HermesCustomSleeveGenerationRequest = {
@@ -16,6 +17,8 @@ export type HermesCustomSleeveGenerationRequest = {
   gatePolicy: string;
   sourceLibraryPolicy: string;
   capabilityPolicy: string;
+  libraryCandidates: UmgLibraryCandidate[];
+  libraryCandidateSummary: ReturnType<typeof summarizeUmgLibraryCandidates>;
   outputContract: string;
 };
 
@@ -81,6 +84,8 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
   requestId?: string;
 }): HermesCustomSleeveGenerationRequest {
   const appLocalSkillBundle = getHermesUmgAppLocalSkillBundle();
+  const libraryCandidates = retrieveUmgLibraryCandidates(`${args.userPrompt}\n${args.userContext ?? ''}`, { limit: 24 });
+  const libraryCandidateSummary = summarizeUmgLibraryCandidates(libraryCandidates);
   return {
     requestId: args.requestId ?? makeRequestId(),
     userPrompt: args.userPrompt,
@@ -92,9 +97,11 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
     compilerAlignmentRules: appLocalSkillBundle.compilerAlignmentRules,
     supportedPromptMoltRoles: [...UMG_SUPPORTED_PROMPT_MOLT_ROLES],
     gatePolicy: 'Gates are control/routing/approval records, not prompt MOLT blocks. Reject plans that put gates in moltBlocks.',
-    sourceLibraryPolicy: 'No source-library mutation. Generated records are runtime-session only and sourceLibraryWrite must remain false.',
+    sourceLibraryPolicy: 'No source-library mutation. Reuse relevant existing library blocks first from libraryCandidates. Preserve candidate id/sourcePath when reused. Generated records are runtime-session only and sourceLibraryWrite must remain false.',
     capabilityPolicy: appLocalSkillBundle.capabilityBoundaryRules,
-    outputContract: 'Return only structured JSON for schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1 with concise decompositionSummary; do not include chain-of-thought.'
+    libraryCandidates,
+    libraryCandidateSummary,
+    outputContract: 'Return only structured JSON for schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1 with concise decompositionSummary; do not include chain-of-thought. Use libraryCandidates before inventing blocks: preserve reusedBlockId, sourcePath, sourceKind="source-library reused" when a candidate is reused; generate only missing glue blocks; attach NeoStacks under Sleeve, NeoBlocks under NeoStacks, and MOLT blocks under NeoBlocks with parentNeoStackId, parentNeoBlockId, stackOrder, role, tags, blockType, and source status. Gates must stay control records, not fake prompt MOLT blocks.'
   };
 }
 
@@ -129,6 +136,30 @@ export function validateHermesCustomSleevePlan(plan: unknown): { valid: boolean;
     if (!capability.capabilityId) errors.push('Each capability declaration requires capabilityId.');
   });
   return { valid: errors.length === 0, errors, warnings };
+}
+
+function getCandidateForRecord(record: { id?: string; sourceId?: string; reusedBlockId?: string; sourcePath?: string; title?: string }, request: HermesCustomSleeveGenerationRequest, blockType?: string) {
+  const ids = new Set([record.id, record.sourceId, record.reusedBlockId].filter(Boolean));
+  return request.libraryCandidates.find((candidate) =>
+    (!blockType || candidate.blockType === blockType) &&
+    (ids.has(candidate.id) || ids.has(candidate.sourcePath) || candidate.sourcePath === record.sourcePath || normalizeLoose(candidate.title) === normalizeLoose(record.title ?? ''))
+  );
+}
+
+function normalizeLoose(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function sourceMetadataFor(record: { id?: string; sourceId?: string; reusedBlockId?: string; sourcePath?: string; title?: string; sourceKind?: string }, request: HermesCustomSleeveGenerationRequest, blockType: 'molt' | 'neoblock' | 'neostack') {
+  const candidate = getCandidateForRecord(record, request, blockType);
+  const sourceKind: NormalizedTemplateSourceKind = record.sourceKind === 'source-library reused' || candidate ? 'source-library reused' : (record.sourceKind === 'unresolved' ? 'unresolved' : 'generated glue');
+  return {
+    sourceKind,
+    reusedBlockId: record.reusedBlockId ?? record.sourceId ?? candidate?.id,
+    sourcePath: record.sourcePath ?? candidate?.sourcePath,
+    matchedCandidateId: candidate?.id,
+    blockType
+  };
 }
 
 export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
@@ -188,9 +219,9 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
     templateKind: 'custom',
     source: 'session',
     tags: Array.from(new Set(['custom_workflow', 'runtime_session', 'hermes_generated', ...(plan.sleeve?.tags ?? [])])),
-    neoStacks: plan.neoStacks.map((stack, index) => ({ ...stack, stackOrder: stack.stackOrder ?? index + 1, tags: stack.tags ?? [] })),
-    neoBlocks: plan.neoBlocks.map((block, index) => ({ ...block, blockOrder: block.blockOrder ?? index + 1, tags: block.tags ?? [], gateIds: block.gateIds ?? [], defaultState: block.defaultState ?? 'off' })),
-    moltBlocks: plan.moltBlocks.map((block) => ({ ...block, tags: block.tags ?? [], defaultState: block.defaultState ?? 'off' })),
+    neoStacks: plan.neoStacks.map((stack, index) => ({ ...stack, ...sourceMetadataFor(stack, request, 'neostack'), stackOrder: stack.stackOrder ?? index + 1, tags: stack.tags ?? [] })),
+    neoBlocks: plan.neoBlocks.map((block, index) => ({ ...block, ...sourceMetadataFor(block, request, 'neoblock'), blockOrder: block.blockOrder ?? index + 1, tags: block.tags ?? [], gateIds: block.gateIds ?? [], defaultState: block.defaultState ?? 'off' })),
+    moltBlocks: plan.moltBlocks.map((block, index) => ({ ...block, ...sourceMetadataFor(block, request, 'molt'), tags: block.tags ?? [], stackOrder: block.stackOrder ?? index + 1, defaultState: block.defaultState ?? 'off' })),
     gates: normalizedGates,
     governanceBlockIds: plan.sleeve?.governanceBlockIds ?? [],
     defaultExecutionMode: plan.sleeve?.defaultExecutionMode ?? 'approvalRequired',
@@ -208,6 +239,14 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
       capabilities: normalizedCapabilities,
       reuseDecisions: plan.reuseDecisions,
       generatedDecisions: plan.generatedDecisions,
+      libraryCandidateSummary: request.libraryCandidateSummary,
+      libraryCandidates: request.libraryCandidates.slice(0, 12),
+      sourceStatusSummary: {
+        libraryCandidateCount: request.libraryCandidates.length,
+        reuseDecisionCount: plan.reuseDecisions.length,
+        generatedGlueDecisionCount: plan.generatedDecisions.length,
+        unresolved: 0
+      },
       createdAt: now
     }
   };

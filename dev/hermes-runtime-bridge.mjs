@@ -783,22 +783,30 @@ export function validateCustomSleevePlan(plan) {
 }
 
 export async function buildCustomSleeveGenerationResponse(request, env = process.env, runtimePost = runHermesRuntimeCli) {
+  const debug = {
+    receivedLibraryCandidateCount: Array.isArray(request?.libraryCandidates) ? request.libraryCandidates.length : 0,
+    receivedLibraryCandidateTopIds: Array.isArray(request?.libraryCandidates) ? request.libraryCandidates.slice(0, 5).map((candidate) => candidate?.id).filter(Boolean) : [],
+    generationMode: 'live_hermes_cli',
+    fallbackUsed: false,
+    fallbackReason: undefined,
+    responseSleeveTitle: undefined
+  };
   const validation = validateCustomSleeveGenerationRequest(request);
-  if (!validation.ok) return jsonResponse(validation.status, { ok: false, error: validation.error, validation: { valid: false, errors: [validation.error], warnings: [] }, externalActionTaken: false }, undefined);
+  if (!validation.ok) return jsonResponse(validation.status, { ok: false, error: validation.error, validation: { valid: false, errors: [validation.error], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'rejected_request', fallbackUsed: false, fallbackReason: validation.error } }, undefined);
   const prompt = buildCustomSleeveGenerationPrompt(request);
   try {
     const timeoutMs = Number(env.HERMES_CUSTOM_SLEEVE_TIMEOUT_MS || env.HERMES_RUNTIME_TIMEOUT_MS || 90000);
     const hermes = await runtimePost(prompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
     const plan = parseJsonObjectFromText(hermes.text || '');
     const planValidation = validateCustomSleevePlan(plan);
-    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false }, undefined);
-    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false }, undefined);
+    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_validation_failed', fallbackUsed: false, fallbackReason: planValidation.errors.join(' '), responseSleeveTitle: plan?.title } }, undefined);
+    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, responseSleeveTitle: plan.title } }, undefined);
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : undefined;
     const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';
     const status = code === 'ETIMEDOUT' ? 504 : 502;
     const message = code === 'ETIMEDOUT' ? 'Hermes custom Sleeve generation CLI timed out.' : `Hermes custom Sleeve generation CLI failed.${stderr ? ` ${truncateText(stderr, 220)}` : ` ${error?.message || String(error)}`}`;
-    return jsonResponse(status, { ok: false, error: message, validation: { valid: false, errors: [message], warnings: [] }, externalActionTaken: false }, undefined);
+    return jsonResponse(status, { ok: false, error: message, validation: { valid: false, errors: [message], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_cli_error', fallbackUsed: false, fallbackReason: message } }, undefined);
   }
 }
 

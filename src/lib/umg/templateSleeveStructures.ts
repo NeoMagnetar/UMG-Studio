@@ -1,6 +1,16 @@
 import { UMGGateRecord } from './cognitiveRuntimeTypes';
 import { MOLTRole, Sleeve } from './types';
 
+export type NormalizedTemplateSourceKind = 'source-library reused' | 'runtime-session draft' | 'generated glue' | 'unresolved';
+
+export type NormalizedTemplateSourceMetadata = {
+  sourceKind?: NormalizedTemplateSourceKind;
+  reusedBlockId?: string;
+  sourcePath?: string;
+  matchedCandidateId?: string;
+  blockType?: 'molt' | 'neoblock' | 'neostack' | 'gate' | 'capability' | 'unknown';
+};
+
 export type NormalizedTemplateNeoStack = {
   id: string;
   title: string;
@@ -8,7 +18,7 @@ export type NormalizedTemplateNeoStack = {
   stackOrder: number;
   tags: string[];
   neoBlockIds: string[];
-};
+} & NormalizedTemplateSourceMetadata;
 
 export type NormalizedTemplateNeoBlock = {
   id: string;
@@ -21,7 +31,7 @@ export type NormalizedTemplateNeoBlock = {
   gateIds: string[];
   defaultState: 'off' | 'on';
   runtimeState?: 'idle' | 'queued' | 'active' | 'processing' | 'complete' | 'skipped' | 'blocked' | 'error';
-};
+} & NormalizedTemplateSourceMetadata;
 
 export type NormalizedTemplateMoltBlock = {
   id: string;
@@ -32,9 +42,10 @@ export type NormalizedTemplateMoltBlock = {
   tags: string[];
   parentNeoBlockId?: string;
   parentNeoStackId?: string;
+  stackOrder?: number;
   sourceNotes?: string[];
   defaultState: 'off' | 'on';
-};
+} & NormalizedTemplateSourceMetadata;
 
 export type NormalizedTemplateSleeve = {
   id: string;
@@ -66,3 +77,36 @@ export type InstantiatedTemplateSleeve = {
     governanceBlocks: number;
   };
 };
+
+const numberFromMetadata = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+export function summarizeNormalizedTemplateSourceStatus(sleeve: NormalizedTemplateSleeve) {
+  const hierarchyNodes = [...sleeve.neoStacks, ...sleeve.neoBlocks, ...sleeve.moltBlocks];
+  const nodeLevelReusedCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'source-library reused').length;
+  const generatedGlueCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'generated glue').length;
+  const runtimeDraftCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'runtime-session draft').length;
+  const unresolvedCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'unresolved').length;
+  const sourceStatusSummary = (sleeve.metadata?.sourceStatusSummary ?? {}) as Record<string, unknown>;
+  const reuseDecisionCount = numberFromMetadata(sourceStatusSummary.reuseDecisionCount);
+  const generatedGlueDecisionCount = numberFromMetadata(sourceStatusSummary.generatedGlueDecisionCount);
+  const libraryCandidateCount = numberFromMetadata(sourceStatusSummary.libraryCandidateCount);
+  const sourceBindingStatus = reuseDecisionCount === 0
+    ? 'missing'
+    : nodeLevelReusedCount >= reuseDecisionCount
+      ? 'complete'
+      : 'partial';
+  const sourceBindingWarning = reuseDecisionCount > 0 && nodeLevelReusedCount < reuseDecisionCount
+    ? 'Reuse decisions received; node-level source binding incomplete.'
+    : undefined;
+  return {
+    libraryCandidateCount,
+    nodeLevelReusedCount,
+    reuseDecisionCount,
+    generatedGlueCount,
+    generatedGlueDecisionCount,
+    runtimeDraftCount,
+    unresolvedCount,
+    sourceBindingStatus,
+    sourceBindingWarning
+  };
+}

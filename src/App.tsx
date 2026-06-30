@@ -34,7 +34,7 @@ import { getTemplateById, getTemplateSleeveCatalog } from './lib/umg/templateSle
 import { selectTemplateSleeve } from './lib/umg/templateSelection';
 import { BusinessInput, BusinessMap, TemplateSelectionResult } from './lib/umg/businessIntakeTypes';
 import { BUSINESS_AUTOMATION_CORE_SLEEVE_ID, instantiateBusinessAutomationCoreSleeve } from './lib/umg/businessAutomationCoreSleeve';
-import { InstantiatedTemplateSleeve, NormalizedTemplateSleeve } from './lib/umg/templateSleeveStructures';
+import { InstantiatedTemplateSleeve, NormalizedTemplateSleeve, summarizeNormalizedTemplateSourceStatus } from './lib/umg/templateSleeveStructures';
 import { matchBusinessMapToBusinessAutomationCore } from './lib/umg/businessBlockMatcher';
 import { detectMissingCapabilities, generateDraftsForMissingCapabilities } from './lib/umg/missingCapabilityDrafts';
 import { createCompileCandidateFromAssemblyPlan, createSleeveAssemblyPlan } from './lib/umg/sleeveAssemblyPlanner';
@@ -335,6 +335,7 @@ export default function App() {
   const [sleeveArchitectPlan, setSleeveArchitectPlan] = useState<SleeveArchitectPlan | undefined>();
   const [activeSessionSleeve, setActiveSessionSleeve] = useState<NormalizedTemplateSleeve | undefined>();
   const [hermesCustomGenerationStatus, setHermesCustomGenerationStatus] = useState<string | undefined>();
+  const [hermesCustomGenerationDiagnostics, setHermesCustomGenerationDiagnostics] = useState<Record<string, unknown> | undefined>();
   const [businessAutomationCoreBuild, setBusinessAutomationCoreBuild] = useState<InstantiatedTemplateSleeve | undefined>();
   const [blockMatchPlan, setBlockMatchPlan] = useState<BlockMatchPlan | undefined>();
   const [draftReviewState, setDraftReviewState] = useState<GeneratedBlockDraft[]>([]);
@@ -1816,6 +1817,7 @@ export default function App() {
     setSleeveArchitectPlan(architectPlan);
     setActiveSessionSleeve(undefined);
     setHermesCustomGenerationStatus(undefined);
+    setHermesCustomGenerationDiagnostics(undefined);
     setBusinessAutomationCoreBuild(undefined);
     setBlockMatchPlan(undefined);
     setDraftReviewState([]);
@@ -1914,10 +1916,22 @@ export default function App() {
           requestId: `phase13ic_${Date.now()}`
         });
         const hermesConfig = getHermesRuntimeAdapterConfigFromEnv();
-        const generation = await requestHermesCustomSleevePlan({ runtimeEndpoint: hermesConfig.endpoint, request: generationRequest });
+        const generationEndpoint = String(import.meta.env.VITE_HERMES_GENERATE_URL || '').trim();
+        const preflightDiagnostics = {
+          generationRoute: generationEndpoint ? 'live Hermes custom-sleeve-generation endpoint' : hermesConfig.endpoint ? 'live Hermes derived custom-sleeve-generation endpoint' : 'not configured',
+          viteHermesGenerateUrlPresent: Boolean(generationEndpoint),
+          candidateRetrievalRan: true,
+          candidateCount: generationRequest.libraryCandidates.length,
+          topCandidates: generationRequest.libraryCandidates.slice(0, 5).map((candidate) => ({ id: candidate.id, title: candidate.title, blockType: candidate.blockType, matchReasons: candidate.matchReasons })),
+          libraryCandidatesIncludedInRequest: Array.isArray(generationRequest.libraryCandidates),
+          libraryCandidatesPayloadLength: generationRequest.libraryCandidates.length
+        };
+        setHermesCustomGenerationDiagnostics(preflightDiagnostics);
+        const generation = await requestHermesCustomSleevePlan({ endpoint: generationEndpoint || undefined, runtimeEndpoint: hermesConfig.endpoint, request: generationRequest });
         if (!generation.ok || !generation.plan) {
           const errors = generation.validation.errors.join(' ');
           setHermesCustomGenerationStatus(`failed: ${errors}`);
+          setHermesCustomGenerationDiagnostics({ ...preflightDiagnostics, generationRoute: 'live Hermes failed', fallbackUsed: false, fallbackReason: errors || 'validation failed', responseRawDebug: (generation.raw as Record<string, unknown> | undefined)?.debug });
           setCompilerResult({ status: hermesConfig.endpoint ? 'error' : 'not_configured', errors: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_FAILED', message: errors || 'Hermes custom Sleeve generation failed.' }], warnings: generation.validation.warnings.map((message) => ({ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_WARNING', message })) });
           setStatus(hermesConfig.endpoint ? 'Live Hermes custom Sleeve generation failed validation; no deterministic fallback was used.' : 'Hermes custom Sleeve generation endpoint is not configured; no deterministic fallback was used.');
           return;
@@ -1927,7 +1941,28 @@ export default function App() {
         const requiredTools = runtimeCapabilities.map((capability) => capability.capabilityId).filter(Boolean);
         const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools, approvalPoints: generation.plan.gates.map((gate) => gate.title), sourceLabel: 'live_hermes_custom_workflow_generation' });
         setActiveSessionSleeve(runtimeSleeve);
-        setHermesCustomGenerationStatus(`ok: ${generation.plan.generationSource ?? 'live_hermes_cli'}`);
+        const sourceStatusSummary = runtimeSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined;
+        const normalizedSourceStatus = summarizeNormalizedTemplateSourceStatus(runtimeSleeve);
+        setHermesCustomGenerationDiagnostics({
+          ...preflightDiagnostics,
+          generationRoute: 'live Hermes',
+          fallbackUsed: false,
+          fallbackReason: undefined,
+          responseSleeveTitle: generation.plan.title,
+          hermesResponseTitle: generation.plan.title,
+          hermesResponseSourceStatusSummary: sourceStatusSummary,
+          libraryCandidateCount: normalizedSourceStatus.libraryCandidateCount,
+          reuseDecisionCount: normalizedSourceStatus.reuseDecisionCount,
+          nodeLevelReusedCount: normalizedSourceStatus.nodeLevelReusedCount,
+          generatedGlueCount: normalizedSourceStatus.generatedGlueCount,
+          generatedGlueDecisionCount: normalizedSourceStatus.generatedGlueDecisionCount,
+          runtimeDraftCount: normalizedSourceStatus.runtimeDraftCount,
+          unresolvedCount: normalizedSourceStatus.unresolvedCount,
+          sourceBindingStatus: normalizedSourceStatus.sourceBindingStatus,
+          sourceBindingWarning: normalizedSourceStatus.sourceBindingWarning,
+          bridgeDebug: (generation.raw as Record<string, unknown> | undefined)?.debug
+        });
+        setHermesCustomGenerationStatus(`ok: live Hermes · candidates ${generationRequest.libraryCandidates.length} · title ${generation.plan.title}`);
         setBusinessAutomationCoreBuild(undefined);
         setBlockMatchPlan(artifacts.blockMatchPlan);
         setDraftReviewState([]);
@@ -2286,6 +2321,7 @@ export default function App() {
       sleeveArchitectPlan={sleeveArchitectPlan}
       activeSessionSleeve={activeSessionSleeve}
       hermesCustomGenerationStatus={hermesCustomGenerationStatus}
+      hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics}
       businessAutomationCoreBuild={businessAutomationCoreBuild}
       blockMatchPlan={blockMatchPlan}
       draftReviewState={draftReviewState}
@@ -2560,6 +2596,7 @@ function PublicLandingShell({
   sleeveArchitectPlan,
   activeSessionSleeve,
   hermesCustomGenerationStatus,
+  hermesCustomGenerationDiagnostics,
   businessAutomationCoreBuild,
   blockMatchPlan,
   draftReviewState,
@@ -2613,6 +2650,7 @@ function PublicLandingShell({
   sleeveArchitectPlan?: SleeveArchitectPlan;
   activeSessionSleeve?: NormalizedTemplateSleeve;
   hermesCustomGenerationStatus?: string;
+  hermesCustomGenerationDiagnostics?: Record<string, unknown>;
   businessAutomationCoreBuild?: InstantiatedTemplateSleeve;
   blockMatchPlan?: BlockMatchPlan;
   draftReviewState: GeneratedBlockDraft[];
@@ -2692,7 +2730,7 @@ function PublicLandingShell({
         <small>{studioMode === 'basic' ? 'Clean Hermes-first Sleeve Builder + Runtime Observer.' : 'Developer / Architect inspection panels.'}</small>
       </div>
       {studioMode === 'basic'
-        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
+        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
         : <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
     </>}
   </HackathonLandingPage>;
@@ -2729,7 +2767,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, compilerResult, compiledRuntimeManifest, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
+function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
   const quality = evaluateBasicSleeveQuality(sleeveArchitectPlan);
   const classifications = classifyBasicContent({ text: [businessInput.text, ...businessInput.documents.map((doc) => doc.text)].join('\n'), filenames: businessInput.documents.map((doc) => doc.filename ?? '').filter(Boolean) });
   const palette = buildBasicCapabilityPalette({ plan: sleeveArchitectPlan, activeSessionSleeve, resolutions: toolCapabilityResolutions, content: classifications });
@@ -2742,20 +2780,31 @@ function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSl
     }
   }, [compiledRuntimeManifest, hermesRuntimeVisualState]);
   const activeSleeveTitle = activeSessionSleeve?.title ?? sleeveArchitectPlan?.proposedSleeveTitle;
+  const activeSourceStatus = activeSessionSleeve ? summarizeNormalizedTemplateSourceStatus(activeSessionSleeve) : undefined;
   const activeSleeveCounts = activeSessionSleeve ? {
     neoStacks: activeSessionSleeve.neoStacks.length,
     neoBlocks: activeSessionSleeve.neoBlocks.length,
     moltBlocks: activeSessionSleeve.moltBlocks.length,
     gates: activeSessionSleeve.gates.length,
-    reused: 0,
-    generated: Array.isArray(activeSessionSleeve.metadata?.generatedDecisions) ? activeSessionSleeve.metadata.generatedDecisions.length : 0
+    reused: activeSourceStatus?.nodeLevelReusedCount ?? 0,
+    reuseDecisions: activeSourceStatus?.reuseDecisionCount ?? 0,
+    generated: activeSourceStatus?.runtimeDraftCount ?? activeSourceStatus?.generatedGlueCount ?? 0,
+    generatedGlue: activeSourceStatus?.generatedGlueCount ?? 0,
+    unresolved: activeSourceStatus?.unresolvedCount ?? 0,
+    sourceBindingStatus: activeSourceStatus?.sourceBindingStatus ?? 'missing',
+    sourceBindingWarning: activeSourceStatus?.sourceBindingWarning
   } : sleeveArchitectPlan ? {
     neoStacks: sleeveArchitectPlan.proposedNeoStacks.length,
     neoBlocks: sleeveArchitectPlan.proposedNeoBlocks.length,
     moltBlocks: sleeveArchitectPlan.proposedMoltBlocks.length,
     gates: sleeveArchitectPlan.proposedGates.length,
     reused: sleeveArchitectPlan.matchedExistingBlocks.length,
-    generated: sleeveArchitectPlan.generatedDrafts.length
+    reuseDecisions: sleeveArchitectPlan.matchedExistingBlocks.length,
+    generated: sleeveArchitectPlan.generatedDrafts.length,
+    generatedGlue: sleeveArchitectPlan.generatedDrafts.length,
+    unresolved: 0,
+    sourceBindingStatus: sleeveArchitectPlan.matchedExistingBlocks.length ? 'complete' : 'missing',
+    sourceBindingWarning: undefined
   } : undefined;
   const activeStackPreview = activeSessionSleeve?.neoStacks.map((stack) => ({ id: stack.id, title: stack.title, reason: stack.description })) ?? sleeveArchitectPlan?.proposedNeoStacks ?? [];
   const compileStatus = compiledRuntimeManifest ? 'Compile succeeded' : compilerResult?.status === 'error' ? 'Compile failed' : 'Compile needed';
@@ -2769,6 +2818,8 @@ function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSl
       <p className="analysisSummary">{businessInput.text}</p>
       <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{activeSessionSleeve || sleeveArchitectPlan ? 'Regenerate Sleeve' : 'Build UMG Sleeve'}</button><button type="button" className="publicSecondaryCta" onClick={() => onStudioModeChange('advanced')}>Open Advanced Details</button></div>
       {hermesCustomGenerationStatus && <small>Hermes custom generation: {hermesCustomGenerationStatus}</small>}
+      {hermesCustomGenerationDiagnostics && <details className="analysisWarnings libraryCandidateEvidence" open><summary><b>Generation diagnostics</b><span>{String(hermesCustomGenerationDiagnostics.generationRoute ?? 'unknown route')}</span></summary><SummaryRows rows={[["library candidate count", String(hermesCustomGenerationDiagnostics.libraryCandidateCount ?? hermesCustomGenerationDiagnostics.candidateCount ?? 'unknown')], ["top candidate IDs/titles", Array.isArray(hermesCustomGenerationDiagnostics.topCandidates) ? (hermesCustomGenerationDiagnostics.topCandidates as Array<Record<string, unknown>>).slice(0, 5).map((candidate) => `${String(candidate.id ?? 'unknown')} ${String(candidate.title ?? '')}`).join(' · ') : 'not available'], ["libraryCandidates included", String(hermesCustomGenerationDiagnostics.libraryCandidatesIncludedInRequest ?? 'unknown')], ["bridge received candidates", String((hermesCustomGenerationDiagnostics.bridgeDebug as Record<string, unknown> | undefined)?.receivedLibraryCandidateCount ?? 'unknown')], ["reuse decisions", String(hermesCustomGenerationDiagnostics.reuseDecisionCount ?? 'unknown')], ["node-level reused count", String(hermesCustomGenerationDiagnostics.nodeLevelReusedCount ?? 'unknown')], ["generated glue count", String(hermesCustomGenerationDiagnostics.generatedGlueCount ?? 'unknown')], ["runtime draft count", String(hermesCustomGenerationDiagnostics.runtimeDraftCount ?? 'unknown')], ["unresolved count", String(hermesCustomGenerationDiagnostics.unresolvedCount ?? 'unknown')], ["source binding status", String(hermesCustomGenerationDiagnostics.sourceBindingStatus ?? 'unknown')]]} />{Boolean(hermesCustomGenerationDiagnostics.sourceBindingWarning) && <div className="sourceBindingWarning"><b>Source binding warning</b><span>{String(hermesCustomGenerationDiagnostics.sourceBindingWarning)}</span></div>}<pre>{JSON.stringify(hermesCustomGenerationDiagnostics, null, 2)}</pre></details>}
+      {activeSessionSleeve?.metadata?.libraryCandidateSummary ? <div className="analysisWarnings libraryCandidateEvidence"><b>Library candidate retrieval ran</b><span>{JSON.stringify(activeSessionSleeve.metadata.libraryCandidateSummary)}</span></div> : null}
       {classifications.some((entry) => entry.sensitive) && <div className="analysisWarnings"><b>Sensitive material detected</b><span>It will not be shown in prompts, trace, or artifacts.</span></div>}
       <div className="basicClassificationChips">{classifications.map((entry) => <span key={entry.kind}>{entry.label}{entry.sensitive ? ' · protected' : ''}</span>)}</div>
     </div>
@@ -2776,7 +2827,7 @@ function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSl
       <div className="publicSectionTitle"><span>02</span><div><b>Active Session Sleeve</b><small>Generated structure available for Basic drill-down.</small></div></div>
       <h3>{activeSleeveTitle}</h3>
       <p>{activeSessionSleeve ? activeSessionSleeve.description : `${sleeveArchitectPlan?.domainSummary}. Hermes chose this structure to route prompt-specific work through NeoStacks, NeoBlocks, MOLT roles, Gates, and declared safe capabilities.`}</p>
-      {activeSleeveCounts && <div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT roles</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{palette.length}</b><span>Capabilities</span></div><div><b>{activeSleeveCounts.reused}</b><span>Reused blocks</span></div><div><b>{activeSleeveCounts.generated}</b><span>Runtime-session drafts</span></div></div>}
+      {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT roles</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{palette.length}</b><span>Capabilities</span></div><div><b>{activeSleeveCounts.reused}</b><span>Node-level reused</span></div><div><b>{activeSleeveCounts.reuseDecisions}</b><span>Reuse decisions</span></div><div><b>{activeSleeveCounts.generatedGlue}</b><span>Generated glue</span></div><div><b>{activeSleeveCounts.generated}</b><span>Runtime drafts</span></div><div><b>{activeSleeveCounts.unresolved}</b><span>Unresolved</span></div></div><div className={activeSleeveCounts.sourceBindingWarning ? 'analysisWarnings sourceBindingStatus' : 'basicQualityStrong sourceBindingStatus'}><b>Source binding status: {activeSleeveCounts.sourceBindingStatus}</b><span>Node-level reused count is kept separate from Hermes reuse decisions.</span>{activeSleeveCounts.sourceBindingWarning && <span>{activeSleeveCounts.sourceBindingWarning}</span>}</div></>}
       <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{activeSessionSleeve.neoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {block.moltBlockIds.length} · Gates {block.gateIds.length}</small></li>)}</ol>}</details>)}</div>
       {!activeSessionSleeve && <div className={quality.status === 'strong' ? 'basicQualityStrong' : 'analysisWarnings'}><b>{quality.status === 'strong' ? 'Structure looks strong' : 'Structure needs refinement'}</b>{quality.issues.map((issue) => <span key={issue}>{issue}</span>)}</div>}
       <small>Runtime-session only. This Sleeve is not saved to the source library.</small>
