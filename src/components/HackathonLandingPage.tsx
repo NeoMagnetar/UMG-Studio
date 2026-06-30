@@ -39,6 +39,8 @@ type HackathonLandingPageProps = {
   onFilesClear: () => void;
   onSubmit: () => void;
   onOpenStudio: () => void;
+  hasActiveSessionSleeve?: boolean;
+  onOpenActiveSleeve?: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
   children?: ReactNode;
@@ -76,6 +78,8 @@ export function HackathonLandingPage({
   onFilesClear,
   onSubmit,
   onOpenStudio,
+  hasActiveSessionSleeve = false,
+  onOpenActiveSleeve,
   children
 }: HackathonLandingPageProps) {
   const handleFileChange = (files: FileList | null, input: HTMLInputElement) => {
@@ -97,6 +101,7 @@ export function HackathonLandingPage({
       </div>
       <nav className="hackathonNav" aria-label="Studio access">
         <button type="button" onClick={onOpenStudio}>Open Studio Editor (general canvas)</button>
+        {hasActiveSessionSleeve && <button type="button" className="activeSleeveOpenButton" onClick={onOpenActiveSleeve}>Inspect Active Sleeve</button>}
       </nav>
     </header>
 

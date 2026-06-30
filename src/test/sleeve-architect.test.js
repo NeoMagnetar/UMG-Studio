@@ -19,6 +19,8 @@ import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapt
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, redactSensitiveText } from '../lib/umg/basicModeScaffolds';
+import { HackathonLandingPage } from '../components/HackathonLandingPage';
+import { ActiveSessionSleeveStudioInspector } from '../components/ActiveSessionSleeveStudioInspector';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
 
@@ -189,6 +191,85 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(adapted.neoBlocks).toHaveLength(1);
     expect(adapted.moltBlocks[0].role).toBe('directive');
     expect(adapted.gates[0].id).toBe('gate.refund.approval');
+  });
+
+  it('keeps general canvas separate and only exposes Inspect Active Sleeve when session state exists', () => {
+    const noop = () => undefined;
+    const baseProps = {
+      goal: 'Create a custom email generator Sleeve.',
+      context: '',
+      selectedChip: 'Custom Workflow',
+      selectedFiles: [],
+      intakeSubmitted: false,
+      businessMapReady: false,
+      templateSelected: false,
+      sleeveInstantiated: false,
+      blockMatched: false,
+      missingGenerated: false,
+      assemblyReady: false,
+      hermesEndpointConfigured: true,
+      quickChips: ['Custom Workflow', 'Business Automation', 'Chatbot', 'Website'],
+      onGoalChange: noop,
+      onContextChange: noop,
+      onChipSelect: noop,
+      onFilesAdd: noop,
+      onFileRemove: noop,
+      onFilesClear: noop,
+      onSubmit: noop,
+      onOpenStudio: noop,
+      onOpenActiveSleeve: noop,
+      onOpenRuntime: noop,
+      onOpenDebug: noop
+    };
+    const generalOnly = renderToStaticMarkup(React.createElement(HackathonLandingPage, baseProps));
+    expect(generalOnly).toContain('Open Studio Editor (general canvas)');
+    expect(generalOnly).not.toContain('Inspect Active Sleeve');
+    const withActive = renderToStaticMarkup(React.createElement(HackathonLandingPage, { ...baseProps, hasActiveSessionSleeve: true }));
+    expect(withActive).toContain('Open Studio Editor (general canvas)');
+    expect(withActive).toContain('Inspect Active Sleeve');
+    expect(withActive).toContain('Custom Workflow');
+    expect(withActive).toContain('Business Automation · coming soon');
+  });
+
+  it('renders active-session Studio inspector with generated hierarchy, MOLT roles, gates, capabilities, and no source-library write', () => {
+    const sleeve = {
+      id: 'custom.email.reseller',
+      title: 'Small Reseller Product Announcement Email Sleeve',
+      version: 'runtime-session.v1',
+      description: 'Draft reviewable product announcement emails for reseller customers without sending.',
+      source: 'session',
+      templateKind: 'custom',
+      tags: ['email', 'reseller'],
+      metadata: { runtimeSessionOnly: true, sourceLibraryWrite: false, sourceLibrarySaved: false, generationSource: 'hermes_custom_workflow_generation', capabilities: [{ capabilityId: 'customer_email_draft', label: 'Draft customer email', riskLevel: 'low' }] },
+      neoStacks: [{ id: 'stack.email', title: 'Reseller Email Stack', description: 'Plan announcement email drafting.', stackOrder: 1, neoBlockIds: ['block.email'], tags: [] }],
+      neoBlocks: [{ id: 'block.email', title: 'Draft Announcement Email', description: 'Prepare a reviewable email artifact only.', neoStackId: 'stack.email', blockOrder: 1, moltBlockIds: ['molt.dir', 'molt.inst', 'molt.subj', 'molt.prim', 'molt.phil', 'molt.blue'], gateIds: ['gate.review'], tags: [], defaultState: 'off' }],
+      moltBlocks: [
+        { id: 'molt.dir', title: 'Email Draft Directive', role: 'directive', content: 'Draft announcement emails; do not send.', parentNeoBlockId: 'block.email', parentNeoStackId: 'stack.email', tags: [], defaultState: 'off' },
+        { id: 'molt.inst', title: 'Brand Voice Instruction', role: 'instruction', content: 'Use the supplied brand voice and product details.', parentNeoBlockId: 'block.email', parentNeoStackId: 'stack.email', tags: [], defaultState: 'off' },
+        { id: 'molt.subj', title: 'Reseller Subject', role: 'subject', content: 'Small reseller customers and new products.', parentNeoBlockId: 'block.email', parentNeoStackId: 'stack.email', tags: [], defaultState: 'off' },
+        { id: 'molt.prim', title: 'Reviewable Artifact Primary', role: 'primary', content: 'Produce a reviewable email artifact.', parentNeoBlockId: 'block.email', parentNeoStackId: 'stack.email', tags: [], defaultState: 'off' },
+        { id: 'molt.phil', title: 'Safe Drafting Philosophy', role: 'philosophy', content: 'Human review before any external communication.', parentNeoBlockId: 'block.email', parentNeoStackId: 'stack.email', tags: [], defaultState: 'off' },
+        { id: 'molt.blue', title: 'Email Blueprint', role: 'blueprint', content: 'Subject, preview, body, CTA, review notes.', parentNeoBlockId: 'block.email', parentNeoStackId: 'stack.email', tags: [], defaultState: 'off' }
+      ],
+      gates: [{ id: 'gate.review', title: 'Human Review Gate', attachesTo: { kind: 'neoBlock', id: 'block.email' }, triggerType: 'manual', conditionText: 'Require human review before use.', action: 'require_approval', targetIds: ['block.email'], defaultState: 'closed', runtimeState: 'inactive', tags: [] }],
+      governanceBlockIds: []
+    };
+    const html = renderToStaticMarkup(React.createElement(ActiveSessionSleeveStudioInspector, { sleeve, selectedNeoStackId: 'stack.email', selectedNeoBlockId: 'block.email', compileStatus: 'not compiled', runtimeStatus: 'approval boundary pending' }));
+    expect(html).toContain('Active Session Sleeve Inspector');
+    expect(html).toContain('Small Reseller Product Announcement Email Sleeve');
+    expect(html).toContain('NeoStacks');
+    expect(html).toContain('Reseller Email Stack');
+    expect(html).toContain('Draft Announcement Email');
+    expect(html).toContain('Email Draft Directive');
+    expect(html).toContain('Brand Voice Instruction');
+    expect(html).toContain('Human Review Gate');
+    expect(html).toContain('Draft customer email');
+    expect(html).toContain('Runtime-session only');
+    expect(html).toContain('sourceLibrarySaved: false');
+    expect(html).toContain('sourceLibraryWrite: false');
+    expect(html).toContain('not compiled');
+    expect(html).not.toContain('Active Sleeve: none');
+    expect(html).not.toContain('NeoStacks: 0');
   });
 
   it('converts Architect execution to compiler request and Hermes tool capability declarations', () => {

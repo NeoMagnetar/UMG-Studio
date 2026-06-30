@@ -4,6 +4,7 @@ import { HackathonLandingPage } from './components/HackathonLandingPage';
 import { HierarchicalRuntimeVisualizer } from './components/HierarchicalRuntimeVisualizer';
 import { RuntimeGeometryPreview } from './components/RuntimeGeometryPreview';
 import { SleeveArchitectReviewPanel } from './components/SleeveArchitectReviewPanel';
+import { ActiveSessionSleeveStudioInspector } from './components/ActiveSessionSleeveStudioInspector';
 import './components/HierarchicalRuntimeVisualizer.css';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
@@ -152,6 +153,7 @@ type InspectorTab = typeof inspectorTabs[number];
 
 type ResizeTarget = 'left' | 'right' | 'bottom';
 type AppSurfaceMode = 'public' | 'studio';
+type StudioEntryMode = 'general_canvas' | 'active_session_sleeve';
 type ShelfMode = AssetShelfId;
 type WorkspaceMode = 'compose' | 'canvas' | 'runtime' | 'debug';
 type GraphViewMode = 'full_sleeve' | 'neostack' | 'neoblock' | 'molt_builder';
@@ -179,9 +181,91 @@ const moltBuilderSections = [
   { key: 'meta_other', label: 'Meta / Other', className: 'moltRoleMeta' }
 ] as const;
 
+function convertActiveSessionSleeveToWorkspaceSleeve(template: NormalizedTemplateSleeve): Sleeve {
+  const moltById = new Map(template.moltBlocks.map((molt, index) => [molt.id, {
+    id: molt.id,
+    title: molt.title,
+    type: 'molt_block' as const,
+    role: molt.role === 'meta' ? 'primary' : molt.role,
+    displayType: molt.role,
+    content: molt.content,
+    description: molt.content,
+    category: 'runtime-session-active-sleeve',
+    tags: ['runtime-session', 'hermes-generated', ...molt.tags],
+    priorityOrder: index + 1,
+    hierarchy: { orderIndex: index + 1, orderSource: 'source' as const, priorityMeaning: 'hierarchy_order' as const },
+    defaultState: molt.defaultState,
+    visibility: 'visible' as const,
+    activation: { mode: 'gate' as const },
+    sourcePath: `runtime-session://${template.id}/${molt.id}`,
+    sourceLayer: 'AI' as const,
+    status: 'runnable' as const,
+    presentationStatus: 'runnable' as const,
+    source: { origin: 'generated' as const, sourceId: molt.sourceId ?? molt.id, version: template.version },
+    legacy: { original: { parentNeoBlockId: molt.parentNeoBlockId, parentNeoStackId: molt.parentNeoStackId, sourceNotes: molt.sourceNotes }, sourcePath: `runtime-session://${template.id}/${molt.id}` }
+  } as UMGBlock]));
+
+  const stacks = template.neoStacks
+    .slice()
+    .sort((a, b) => a.stackOrder - b.stackOrder)
+    .map((stack) => {
+      const neoblocks = template.neoBlocks
+        .filter((block) => block.neoStackId === stack.id)
+        .sort((a, b) => a.blockOrder - b.blockOrder)
+        .map((block) => ({
+          id: block.id,
+          title: block.title,
+          type: 'neoblock' as const,
+          description: block.description,
+          category: 'runtime-session-active-sleeve',
+          tags: ['runtime-session', ...block.tags],
+          blocks: block.moltBlockIds.map((id) => moltById.get(id)).filter(Boolean) as UMGBlock[],
+          defaultState: block.defaultState,
+          priorityOrder: block.blockOrder,
+          activation: block.gateIds[0] ? { mode: 'gate' as const, gateId: block.gateIds[0] } : { mode: 'manual' as const }
+        } as NeoBlock));
+      return {
+        id: stack.id,
+        title: stack.title,
+        type: 'neostack' as const,
+        description: stack.description,
+        tags: ['runtime-session', ...stack.tags],
+        neoblocks,
+        role: 'general',
+        defaultState: 'off' as const,
+        compileStrategy: 'role_then_priority' as const
+      } as NeoStack;
+    });
+
+  const governanceBlocks = template.governanceBlockIds.map((id) => moltById.get(id)).filter(Boolean) as UMGBlock[];
+  return {
+    id: template.id,
+    title: template.title,
+    type: 'sleeve',
+    version: template.version,
+    description: template.description,
+    tags: ['runtime-session', 'active-session-sleeve', ...template.tags],
+    stacks,
+    rootController: {
+      id: `${template.id}__runtime_session_controller`,
+      title: `${template.title} Runtime Session Controller`,
+      controllerKind: 'sleeve_root',
+      ownerScopeKind: 'sleeve',
+      ownerScopeId: template.id,
+      molts: governanceBlocks,
+      metadata: { runtimeSessionOnly: true, sourceLibrarySaved: false, sourceLibraryWrite: false }
+    },
+    runtimeConfig: { active: false, depth: 'full', hermesEnabled: true, runtimeAdaptation: true, showRuntimeTrace: false },
+    metadata: { ...template.metadata, runtimeSessionOnly: true, sourceLibrarySaved: false, sourceLibraryWrite: false }
+  } as Sleeve;
+}
+
 export default function App() {
   const initialHermesGenerate = resolveHermesGenerateConfig(import.meta.env as Record<string, string | undefined>);
   const [appSurfaceMode, setAppSurfaceMode] = useState<AppSurfaceMode>('public');
+  const [studioEntryMode, setStudioEntryMode] = useState<StudioEntryMode>('general_canvas');
+  const [selectedActiveSessionNeoStackId, setSelectedActiveSessionNeoStackId] = useState<string | undefined>();
+  const [selectedActiveSessionNeoBlockId, setSelectedActiveSessionNeoBlockId] = useState<string | undefined>();
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
   const [sessionMoltBlocks, setSessionMoltBlocks] = useState<UMGBlock[]>([]);
   const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
@@ -1652,8 +1736,36 @@ export default function App() {
   const exportHermesPacketJson = () => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config));
 
   const openStudioShell = (mode: Exclude<WorkspaceMode, 'debug'> = 'canvas') => {
+    setStudioEntryMode('general_canvas');
     setPrimaryWorkspaceMode(mode);
     setAppSurfaceMode('studio');
+  };
+
+  const openActiveSessionSleeveInStudio = () => {
+    if (!activeSessionSleeve) {
+      setStatus('No active runtime-session Sleeve exists yet. Generate a Custom Workflow Sleeve first.');
+      return;
+    }
+    const sleeve = convertActiveSessionSleeveToWorkspaceSleeve(activeSessionSleeve);
+    setSessionSleeves((current) => [sleeve, ...current.filter((entry) => entry.id !== sleeve.id)]);
+    setWorkspace({
+      id: `ws_active_session_${activeSessionSleeve.id}`,
+      title: activeSessionSleeve.title,
+      activeSleeveId: sleeve.id,
+      sleeves: [sleeve],
+      libraryRefs: [],
+      graph: buildGraphFromSleeve(sleeve)
+    });
+    setCompiled(undefined);
+    setSelected(undefined);
+    setInspected(undefined);
+    setGraphViewMode('full_sleeve');
+    setSelectedActiveSessionNeoStackId(activeSessionSleeve.neoStacks[0]?.id);
+    setSelectedActiveSessionNeoBlockId(activeSessionSleeve.neoBlocks.find((block) => block.neoStackId === activeSessionSleeve.neoStacks[0]?.id)?.id ?? activeSessionSleeve.neoBlocks[0]?.id);
+    setStudioEntryMode('active_session_sleeve');
+    setPrimaryWorkspaceMode('canvas');
+    setAppSurfaceMode('studio');
+    setStatus('Opened active runtime-session Sleeve in Studio Inspector. Source library remains unchanged.');
   };
 
   const openDebugStudioShell = () => {
@@ -2172,6 +2284,7 @@ export default function App() {
       onRuntimeObserverOpenChange={setRuntimeObserverOpen}
       onRuntimeObserverPromptChange={setRuntimeObserverPrompt}
       onOpenStudio={() => openStudioShell('canvas')}
+      onOpenActiveSleeve={openActiveSessionSleeveInStudio}
       onOpenRuntime={() => openStudioShell('runtime')}
       onOpenDebug={openDebugStudioShell}
     />;
@@ -2295,6 +2408,27 @@ export default function App() {
           </div>
         </div>
         <ScopeStatusBar graphViewMode={graphViewMode} activeSleeve={activeSleeve} activeNeoStack={currentNeoStack} activeNeoBlock={currentNeoBlock} selectedLayer={selectedNeoStackRow} onOpenMoltBuilder={() => setGraphViewMode('molt_builder')} />
+        {studioEntryMode === 'active_session_sleeve' && activeSessionSleeve && <ActiveSessionSleeveStudioInspector
+          sleeve={activeSessionSleeve}
+          selectedNeoStackId={selectedActiveSessionNeoStackId}
+          selectedNeoBlockId={selectedActiveSessionNeoBlockId}
+          onSelectNeoStack={(stackId) => {
+            setSelectedActiveSessionNeoStackId(stackId);
+            const firstBlock = activeSessionSleeve.neoBlocks.find((block) => block.neoStackId === stackId);
+            setSelectedActiveSessionNeoBlockId(firstBlock?.id);
+            setGraphViewMode('neostack');
+          }}
+          onSelectNeoBlock={(blockId) => {
+            const block = activeSessionSleeve.neoBlocks.find((entry) => entry.id === blockId);
+            if (block) setSelectedActiveSessionNeoStackId(block.neoStackId);
+            setSelectedActiveSessionNeoBlockId(blockId);
+            setGraphViewMode('neoblock');
+          }}
+          compileStatus={compiledRuntimeManifest ? 'Compile succeeded' : compilerResult?.status === 'error' ? 'Compile failed' : compilerResult?.status === 'not_configured' ? 'Compiler not configured' : 'Compile pending'}
+          runtimeStatus={isHermesRunning ? 'Hermes running' : pendingRuntimeApproval ? 'Hermes needs approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'Runtime request prepared' : 'Not run'}
+          onCompile={runActualUMGCompiler}
+          isCompiling={isHermesRunning}
+        />}
         <div className="graphViewport">
         {isDebugMode && graphViewMode === 'full_sleeve' && <ControllerDebugPanel controller={displaySleeve?.rootController} scopeKind="Sleeve" scopeId={activeSleeve?.id} />}
         {isDebugMode && graphViewMode === 'neostack' && <ControllerDebugPanel controller={displayNeoStack?.rootController} scopeKind="NeoStack" scopeId={currentNeoStack?.id} />}
@@ -2418,6 +2552,7 @@ function PublicLandingShell({
   onRuntimeObserverOpenChange,
   onRuntimeObserverPromptChange,
   onOpenStudio,
+  onOpenActiveSleeve,
   onOpenRuntime,
   onOpenDebug
 }: {
@@ -2470,6 +2605,7 @@ function PublicLandingShell({
   onRuntimeObserverOpenChange: (open: boolean) => void;
   onRuntimeObserverPromptChange: (value: string) => void;
   onOpenStudio: () => void;
+  onOpenActiveSleeve: () => void;
   onOpenRuntime: () => void;
   onOpenDebug: () => void;
 }) {
@@ -2490,6 +2626,8 @@ function PublicLandingShell({
     traceComplete={Boolean(hermesRuntimeVisualState?.timeline.length)}
     hermesEndpointConfigured={hermesEndpointConfigured}
     quickChips={publicQuickChips}
+    hasActiveSessionSleeve={Boolean(activeSessionSleeve)}
+    onOpenActiveSleeve={onOpenActiveSleeve}
     onGoalChange={onGoalChange}
     onContextChange={onContextChange}
     onChipSelect={onChipSelect}
@@ -2729,29 +2867,7 @@ function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, s
 }
 
 function ActiveSessionSleeveInspector({ sleeve }: { sleeve: NormalizedTemplateSleeve }) {
-  return <div className="analysisPanel activeSessionSleeveInspector">
-    <div className="publicSectionTitle"><span>07</span><div><b>Active Generated Sleeve Inspector</b><small>Runtime-session only; source library is not mutated.</small></div></div>
-    <SummaryRows rows={[
-      ['Sleeve ID', sleeve.id],
-      ['Title', sleeve.title],
-      ['Generation source', String(sleeve.metadata?.generationSource ?? 'unknown')],
-      ['Runtime-session only', String(sleeve.metadata?.runtimeSessionOnly === true)],
-      ['Source library write', String(sleeve.metadata?.sourceLibraryWrite === true)]
-    ]} />
-    <div className="templateHierarchyPreview">
-      {sleeve.neoStacks.map((stack) => {
-        const blocks = sleeve.neoBlocks.filter((block) => block.neoStackId === stack.id);
-        return <details key={stack.id} className="templateStackPreview" open>
-          <summary><b>{stack.title}</b><span>{blocks.length} NeoBlocks</span></summary>
-          <ol>{blocks.map((block) => {
-            const molts = sleeve.moltBlocks.filter((molt) => block.moltBlockIds.includes(molt.id));
-            const gates = sleeve.gates.filter((gate) => block.gateIds.includes(gate.id));
-            return <li key={block.id}><b>{block.title}</b><small>{block.description}</small><div className="basicClassificationChips">{molts.map((molt) => <span key={molt.id}>{molt.role}: {molt.title}</span>)}{gates.map((gate) => <span key={gate.id}>Gate: {gate.title}</span>)}</div></li>;
-          })}</ol>
-        </details>;
-      })}
-    </div>
-  </div>;
+  return <ActiveSessionSleeveStudioInspector sleeve={sleeve} compileStatus="See compiler panel" runtimeStatus="See runtime panel" />;
 }
 
 function BusinessAutomationCoreBuiltPanel({ build }: { build: InstantiatedTemplateSleeve }) {
