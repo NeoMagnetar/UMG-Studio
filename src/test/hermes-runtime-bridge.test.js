@@ -159,7 +159,11 @@ describe('Hermes runtime bridge helpers', () => {
       capabilities: [],
       warnings: []
     };
-    const response = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(hermesPlan) }));
+    const response = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: `Here is the plan:
+
+\`\`\`json
+${JSON.stringify(hermesPlan)}
+\`\`\`` }));
     expect(response.status).toBe(200);
     expect(response.body.plan.title).toBe('Bridge Generated Sleeve');
     expect(response.body.plan.generationSource).toBe('live_hermes_cli');
@@ -169,6 +173,44 @@ describe('Hermes runtime bridge helpers', () => {
     const invalidResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(invalidMissingCards) }));
     expect(invalidResponse.status).toBe(422);
     expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/nlCard|jsonSchema|sourceKind|tags/);
+  });
+
+  it('extracts custom Sleeve JSON from prose and retries once with strict JSON instructions when no object exists', async () => {
+    const { buildCustomSleeveGenerationResponse, parseJsonObjectFromText } = await getRuntimeBridgeModule();
+    const plan = {
+      schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1',
+      source: 'hermes_custom_workflow_generation',
+      mode: 'runtime_session_draft',
+      generationSource: 'live_hermes_cli',
+      requestId: 'req.s1d.retry',
+      title: 'Strict Retry Sleeve',
+      summary: 'Generated after retry.',
+      decompositionSummary: 'Retry returned strict JSON.',
+      reuseDecisions: [],
+      generatedDecisions: [{ id: 'generated.retry', title: 'Retry block', runtimeSessionOnly: true, sourceLibraryWrite: false, reason: 'Needed for test.' }],
+      neoStacks: [{ id: 'stack.retry', title: 'Retry Stack', description: 'Retry stack.', stackOrder: 1, neoBlockIds: ['block.retry'], sourceKind: 'runtime-session draft', nlCard: { title: 'Retry Stack', role: 'neostack', category: 'test', tags: ['retry'], description: 'Retry stack.', content: 'Retry stack content.' }, jsonSchema: { type: 'object' } }],
+      neoBlocks: [{ id: 'block.retry', title: 'Retry Block', description: 'Retry block.', neoStackId: 'stack.retry', stackOrder: 1, blockOrder: 1, moltBlockIds: ['molt.retry'], gates: [], capabilities: [], sourceKind: 'runtime-session draft', nlCard: { title: 'Retry Block', role: 'neoblock', category: 'test', tags: ['retry'], description: 'Retry block.', content: 'Retry block content.' }, jsonSchema: { type: 'object' } }],
+      moltBlocks: [{ id: 'molt.retry', title: 'Retry Directive', role: 'directive', content: 'Retry content.', description: 'Retry content.', tags: ['retry'], sourceKind: 'runtime-session draft', stackOrder: 1, parentNeoBlockId: 'block.retry', parentNeoStackId: 'stack.retry', nlCard: { title: 'Retry Directive', role: 'directive', category: 'test', tags: ['retry'], description: 'Retry content.', content: 'Retry content.' }, jsonSchema: { type: 'object' } }],
+      gates: [],
+      capabilities: [],
+      warnings: []
+    };
+    expect(parseJsonObjectFromText(`prefix {"ignored": true} suffix`).ignored).toBe(true);
+    const request = { requestId: 'req.s1d.retry', userPrompt: 'Generate a retry Sleeve.', userContext: '', selectedMode: 'custom_workflow', supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'] };
+    const calls = [];
+    const response = await buildCustomSleeveGenerationResponse(request, {}, async (prompt) => {
+      calls.push(prompt);
+      return calls.length === 1 ? { ok: true, status: 200, text: 'I cannot format this yet.' } : { ok: true, status: 200, text: JSON.stringify(plan) };
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.plan.title).toBe('Strict Retry Sleeve');
+    expect(response.body.debug.parseRetryUsed).toBe(true);
+    expect(calls[1]).toContain('Return only the JSON object. No prose. No markdown.');
+
+    const failed = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: 'still no JSON here' }));
+    expect(failed.status).toBe(502);
+    expect(failed.body.validation.errors.join(' ')).toContain('strict JSON retry');
+    expect(failed.body.debug.fallbackUsed).toBe(false);
   });
 
   it('executes customer_message_draft as real safe app-local capability with artifact and trace events', async () => {

@@ -34,6 +34,7 @@ type HackathonLandingPageProps = {
   hermesRunComplete?: boolean;
   traceComplete?: boolean;
   hermesEndpointConfigured: boolean;
+  intakeStatusOverride?: string;
   quickChips: string[];
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
@@ -73,6 +74,7 @@ export function HackathonLandingPage({
   hermesRunComplete = false,
   traceComplete = false,
   hermesEndpointConfigured,
+  intakeStatusOverride,
   quickChips,
   onGoalChange,
   onContextChange,
@@ -95,7 +97,7 @@ export function HackathonLandingPage({
   const hasResults = Boolean(children);
   const stageClass = hasResults ? sleeveInstantiated ? ' hasResults hasSleeve' : ' hasResults isProcessing' : '';
   const promptSummary = goal.trim() || 'No prompt entered yet.';
-  const intakeStatus = sleeveInstantiated ? 'Sleeve preview ready' : templateSelected ? 'Sleeve plan ready' : businessMapReady ? 'Intake understood' : intakeSubmitted ? 'Creating Sleeve' : 'Awaiting intake';
+  const intakeStatus = intakeStatusOverride ?? (sleeveInstantiated ? 'Sleeve ready' : templateSelected ? 'Intake analyzed' : businessMapReady ? 'Intake analyzed' : intakeSubmitted ? 'Generating Sleeve' : 'Ready for intake');
 
   return <div className={`hackathonLanding${stageClass}`}>
     <header className="hackathonHeader">
@@ -104,8 +106,7 @@ export function HackathonLandingPage({
         <span aria-hidden="true">UMG</span>
       </div>
       <nav className="hackathonNav" aria-label="Studio access">
-        <button type="button" onClick={onOpenStudio}>Open Studio Editor (general canvas)</button>
-        {hasActiveSessionSleeve && <button type="button" className="activeSleeveOpenButton" onClick={onOpenActiveSleeve}>Inspect Active Sleeve</button>}
+        <button type="button" onClick={onOpenStudio}>Open Studio Editor</button>
       </nav>
     </header>
 
@@ -193,7 +194,7 @@ function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sl
 function StatusRow({ hermesEndpointConfigured, compilerComplete, hermesRunComplete, traceComplete }: { hermesEndpointConfigured: boolean; compilerComplete: boolean; hermesRunComplete: boolean; traceComplete: boolean }) {
   return <section className="hackathonStatus" aria-label="Runtime and compiler status">
     <div><span>Runtime</span><b>Ready</b></div>
-    <div><span>Compiler</span><b>{compilerComplete ? 'Compiled' : 'Bridge Needed'}</b></div>
+    <div><span>Compiler</span><b>{compilerComplete ? 'Compiled' : 'Bridge not connected'}</b></div>
     <div><span>Hermes</span><b>{hermesRunComplete ? 'Response Received' : hermesEndpointConfigured ? 'Configured' : 'Not Connected'}</b></div>
     <div><span>Trace</span><b>{traceComplete ? 'Ingested' : 'Pending'}</b></div>
   </section>;

@@ -4,6 +4,7 @@ import { getHermesUmgAppLocalSkillBundle, UMG_SUPPORTED_PROMPT_MOLT_ROLES, type 
 import { retrieveUmgLibraryCandidates, summarizeUmgLibraryCandidates, type UmgLibraryCandidate } from './umgLibraryCandidateRetrieval';
 import { validateHermesCustomSleevePlanScaffold } from './hermesSleevePlanSchema';
 import { buildExpandedRetrievalQuery, buildIntakeDiagnostics, buildUploadedContextNarrative, type UploadedIntakeContext } from './intakeSemanticExtraction';
+import { getHermesNativeToolBlockByCapability } from './nativeHermesToolBlocks';
 
 export type HermesCustomSleeveGenerationRequest = {
   requestId: string;
@@ -179,9 +180,134 @@ function sourceMetadataFor(record: { id?: string; sourceId?: string; reusedBlock
     sourceKind,
     reusedBlockId: record.reusedBlockId ?? record.sourceId ?? candidate?.id,
     sourcePath: record.sourcePath ?? candidate?.sourcePath,
-    matchedCandidateId: candidate?.id,
+    matchedCandidateId: candidate?.id ?? record.reusedBlockId ?? record.sourceId,
     blockType
   };
+}
+
+function normalizedMoltRole(value?: string): NormalizedTemplateMoltBlock['role'] {
+  const role = String(value ?? '').toLowerCase();
+  if (role === 'instruction' || role === 'subject' || role === 'primary' || role === 'philosophy' || role === 'blueprint' || role === 'meta') return role;
+  return 'directive';
+}
+
+function asMoltChildFromLibraryCandidate(candidate: UmgLibraryCandidate, parentNeoBlockId: string, parentNeoStackId: string, index: number): NormalizedTemplateMoltBlock {
+  return {
+    id: candidate.id,
+    sourceId: candidate.id,
+    title: candidate.title,
+    role: normalizedMoltRole(candidate.role),
+    content: candidate.description || candidate.title,
+    tags: Array.from(new Set([...(candidate.tags ?? []), 'source-library', 'reused'])),
+    parentNeoBlockId,
+    parentNeoStackId,
+    stackOrder: index + 1,
+    sourceKind: 'source-library reused',
+    reusedBlockId: candidate.id,
+    matchedCandidateId: candidate.id,
+    sourcePath: candidate.sourcePath,
+    blockType: 'molt',
+    defaultState: 'off'
+  };
+}
+
+function createMetaMoltToolChild(capability: HermesCustomSleevePlanCapability, parentNeoBlockId: string, parentNeoStackId: string, index: number): NormalizedTemplateMoltBlock | undefined {
+  const rawId = String(capability.capabilityId ?? capability.id ?? capability.capability ?? capability.label ?? '').toLowerCase();
+  const nativeCapabilityId = rawId.includes('note') ? 'umg.native.hermes.note_create'
+    : rawId.includes('file') || rawId.includes('write') || rawId.includes('persistence') || rawId.includes('export') ? 'umg.native.hermes.file_write'
+      : rawId.includes('read') ? 'umg.native.hermes.file_read'
+        : rawId.includes('shell') || rawId.includes('terminal') || rawId.includes('command') ? 'umg.native.hermes.shell_command'
+          : rawId.includes('project') || rawId.includes('edit') ? 'umg.native.hermes.project_edit'
+            : rawId.includes('hermes') || rawId.includes('runtime') || rawId.includes('tool') || rawId.includes('capability') ? 'umg.native.hermes.runtime_task'
+              : undefined;
+  if (!nativeCapabilityId) return undefined;
+  const tool = getHermesNativeToolBlockByCapability(nativeCapabilityId);
+  if (!tool) return undefined;
+  return {
+    id: tool.id,
+    sourceId: tool.id,
+    title: tool.title,
+    role: 'meta',
+    content: tool.content ?? tool.description ?? tool.title,
+    tags: Array.from(new Set([...(tool.tags ?? []), 'metamolt', 'tool', 'hermes', 'capability'])),
+    parentNeoBlockId,
+    parentNeoStackId,
+    stackOrder: 10_000 + index,
+    sourceKind: 'metamolt tool',
+    reusedBlockId: tool.id,
+    matchedCandidateId: tool.id,
+    sourcePath: tool.sourcePath,
+    blockType: 'capability',
+    defaultState: 'off',
+    sourceNotes: [`Attached for capability ${capability.capabilityId ?? capability.label}`]
+  };
+}
+
+function bindPlanMoltChildrenToNeoBlocks(plan: HermesCustomSleevePlanV01, request: HermesCustomSleeveGenerationRequest, capabilities: HermesCustomSleevePlanCapability[]) {
+  const firstBlock = plan.neoBlocks[0];
+  const firstBlockId = firstBlock?.id ?? plan.sleeve?.id ?? `runtime.${plan.requestId}.neoblock`;
+  const firstStackId = firstBlock?.neoStackId ?? (firstBlock as Record<string, unknown> | undefined)?.parentNeoStackId as string | undefined ?? plan.neoStacks[0]?.id ?? `runtime.${plan.requestId}.neostack`;
+  const existing = new Map<string, NormalizedTemplateMoltBlock>();
+  plan.moltBlocks.forEach((block, index) => {
+    const parentNeoBlockId = block.parentNeoBlockId ?? firstBlockId;
+    const parentNeoStackId = block.parentNeoStackId ?? plan.neoBlocks.find((candidate) => candidate.id === parentNeoBlockId)?.neoStackId ?? firstStackId;
+    existing.set(block.id, {
+      ...block,
+      ...sourceMetadataFor(block, request, 'molt'),
+      role: normalizedMoltRole(block.role),
+      content: block.content || (block as { description?: string }).description || block.title,
+      tags: block.tags ?? [],
+      parentNeoBlockId,
+      parentNeoStackId,
+      stackOrder: block.stackOrder ?? index + 1,
+      defaultState: block.defaultState ?? 'off'
+    });
+  });
+  plan.reuseDecisions.forEach((decision, index) => {
+    const record = decision as { id?: string; sourceId?: string; reusedBlockId?: string; matchedCandidateId?: string; targetNeoBlockId?: string; parentNeoBlockId?: string; targetNeoStackId?: string; parentNeoStackId?: string; title?: string };
+    const candidateId = record.matchedCandidateId ?? record.reusedBlockId ?? record.sourceId ?? record.id;
+    const candidate = request.libraryCandidates.find((entry) => entry.blockType === 'molt' && (entry.id === candidateId || entry.sourcePath === candidateId || normalizeLoose(entry.title) === normalizeLoose(record.title ?? '')));
+    if (!candidate || existing.has(candidate.id)) return;
+    const parentNeoBlockId = record.targetNeoBlockId ?? record.parentNeoBlockId ?? firstBlockId;
+    const parentNeoStackId = record.targetNeoStackId ?? record.parentNeoStackId ?? plan.neoBlocks.find((block) => block.id === parentNeoBlockId)?.neoStackId ?? firstStackId;
+    existing.set(candidate.id, asMoltChildFromLibraryCandidate(candidate, parentNeoBlockId, parentNeoStackId, plan.moltBlocks.length + index));
+  });
+  capabilities.forEach((capability, index) => {
+    const parentNeoBlockId = firstBlockId;
+    const parentNeoStackId = plan.neoBlocks.find((block) => block.id === parentNeoBlockId)?.neoStackId ?? firstStackId;
+    const toolChild = createMetaMoltToolChild(capability, parentNeoBlockId, parentNeoStackId, index);
+    if (toolChild && !existing.has(toolChild.id)) existing.set(toolChild.id, toolChild);
+  });
+  return Array.from(existing.values()).sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0));
+}
+
+export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTemplateSleeve; request?: HermesCustomSleeveGenerationRequest; route: 'live Hermes' | 'offline template' | 'intake draft'; reasonIfNotEligible?: string }) {
+  const sleeve = args.sleeve;
+  const moltBlocks = sleeve?.moltBlocks ?? [];
+  const boundMoltCount = moltBlocks.filter((block) => block.sourceKind === 'source-library reused' || block.sourceKind === 'metamolt tool' || block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length;
+  const sourceLibraryBoundCount = moltBlocks.filter((block) => block.sourceKind === 'source-library reused').length;
+  const unresolvedCount = moltBlocks.filter((block) => block.sourceKind === 'unresolved').length;
+  const compileEligible = args.route === 'live Hermes' && Boolean(sleeve?.metadata?.generatedByHermes) && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length);
+  return {
+    generationRoute: args.route,
+    libraryRetrieval: args.request ? 'ran' : 'skipped',
+    candidateCount: args.request?.libraryCandidates.length ?? 0,
+    topCandidates: args.request?.libraryCandidates.slice(0, 5).map((candidate) => ({ id: candidate.id, title: candidate.title, role: candidate.role, blockType: candidate.blockType, sourcePath: candidate.sourcePath })) ?? [],
+    selectedBoundCandidates: moltBlocks.filter((block) => block.matchedCandidateId || block.sourcePath).slice(0, 8).map((block) => ({ id: block.id, title: block.title, role: block.role, sourceKind: block.sourceKind, matchedCandidateId: block.matchedCandidateId, sourcePath: block.sourcePath })),
+    boundMoltCount,
+    boundNeoBlockCount: sleeve?.neoBlocks.length ?? 0,
+    boundNeoStackCount: sleeve?.neoStacks.length ?? 0,
+    metaMoltToolBlockCount: moltBlocks.filter((block) => block.sourceKind === 'metamolt tool').length,
+    generatedDraftCount: moltBlocks.filter((block) => block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length,
+    unresolvedCount,
+    sourceBindingStatus: !sleeve ? 'missing' : sourceLibraryBoundCount === 0 ? 'missing' : unresolvedCount > 0 ? 'partial' : 'complete',
+    compileEligibility: compileEligible ? 'yes' : 'no',
+    reasonIfNotEligible: compileEligible ? undefined : args.reasonIfNotEligible ?? 'ActiveSessionSleeve is only compileable after live Hermes composition binds library/runtime MOLT children.'
+  };
+}
+
+export function isActiveSessionSleeveCompileEligible(sleeve?: NormalizedTemplateSleeve) {
+  return buildCompositionSourceDiagnostics({ sleeve, route: sleeve?.metadata?.generatedByHermes ? 'live Hermes' : 'intake draft' }).compileEligibility === 'yes';
 }
 
 export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
@@ -233,6 +359,14 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
     runtimeState: gate.runtimeState ?? 'inactive',
     tags: gate.tags ?? ['hermes_generated', 'runtime_session', 'gate_control']
   }));
+  const boundMoltBlocks = bindPlanMoltChildrenToNeoBlocks(plan, request, normalizedCapabilities);
+  const moltIdsByNeoBlock = boundMoltBlocks.reduce((acc, molt) => {
+    if (!molt.parentNeoBlockId) return acc;
+    const ids = acc.get(molt.parentNeoBlockId) ?? [];
+    ids.push(molt.id);
+    acc.set(molt.parentNeoBlockId, ids);
+    return acc;
+  }, new Map<string, string[]>());
   return {
     id: plan.sleeve?.id ?? `runtime.${plan.requestId}.sleeve`,
     title: normalizedTitle,
@@ -243,8 +377,11 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
     source: 'session',
     tags: Array.from(new Set(['custom_workflow', 'runtime_session', 'hermes_generated', ...(plan.sleeve?.tags ?? [])])),
     neoStacks: plan.neoStacks.map((stack, index) => ({ ...stack, ...sourceMetadataFor(stack, request, 'neostack'), stackOrder: stack.stackOrder ?? index + 1, tags: stack.tags ?? [] })),
-    neoBlocks: plan.neoBlocks.map((block, index) => ({ ...block, ...sourceMetadataFor(block, request, 'neoblock'), blockOrder: block.blockOrder ?? index + 1, tags: block.tags ?? [], gateIds: block.gateIds ?? [], defaultState: block.defaultState ?? 'off' })),
-    moltBlocks: plan.moltBlocks.map((block, index) => ({ ...block, ...sourceMetadataFor(block, request, 'molt'), tags: block.tags ?? [], stackOrder: block.stackOrder ?? index + 1, defaultState: block.defaultState ?? 'off' })),
+    neoBlocks: plan.neoBlocks.map((block, index) => {
+      const boundIds = moltIdsByNeoBlock.get(block.id) ?? [];
+      return { ...block, ...sourceMetadataFor(block, request, 'neoblock'), blockOrder: block.blockOrder ?? index + 1, tags: block.tags ?? [], moltBlockIds: Array.from(new Set([...(block.moltBlockIds ?? []), ...boundIds])), gateIds: block.gateIds ?? [], defaultState: block.defaultState ?? 'off' };
+    }),
+    moltBlocks: boundMoltBlocks,
     gates: normalizedGates,
     governanceBlockIds: plan.sleeve?.governanceBlockIds ?? [],
     defaultExecutionMode: plan.sleeve?.defaultExecutionMode ?? 'approvalRequired',
@@ -268,7 +405,11 @@ export function adaptHermesCustomSleevePlanToRuntimeSessionSleeve(
         libraryCandidateCount: request.libraryCandidates.length,
         reuseDecisionCount: plan.reuseDecisions.length,
         generatedGlueDecisionCount: plan.generatedDecisions.length,
-        unresolved: 0
+        boundMoltCount: boundMoltBlocks.length,
+        boundNeoBlockCount: plan.neoBlocks.length,
+        boundNeoStackCount: plan.neoStacks.length,
+        metaMoltToolBlockCount: boundMoltBlocks.filter((block) => block.sourceKind === 'metamolt tool').length,
+        unresolved: boundMoltBlocks.filter((block) => block.sourceKind === 'unresolved').length
       },
       createdAt: now
     }

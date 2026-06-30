@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createBusinessInputFromPublicIntake, analyzeBusinessInput } from '../lib/umg/businessAnalyzer';
@@ -215,6 +216,189 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(adapted.gates[0].id).toBe('gate.refund.approval');
   });
 
+  it('binds selected source-library MOLT candidates and MetaMOLT tool blocks into NeoBlock children before compile', async () => {
+    const { buildCompositionSourceDiagnostics, buildHermesCustomSleeveGenerationRequest, adaptHermesCustomSleevePlanToRuntimeSessionSleeve } = await import('../lib/umg/hermesCustomSleeveGeneration');
+    const request = buildHermesCustomSleeveGenerationRequest({
+      userPrompt: 'A workflow for creating desktop notes that always incorporates Greek philosophy into any note prompted',
+      userContext: '',
+      requestId: 'req.s1c.bound.test'
+    });
+    const sourceCandidate = request.libraryCandidates.find((candidate) => candidate.blockType === 'molt' && candidate.sourcePath);
+    expect(sourceCandidate).toBeTruthy();
+    const plan = {
+      schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1',
+      source: 'hermes_custom_workflow_generation',
+      mode: 'runtime_session_draft',
+      generationSource: 'live_hermes_cli',
+      requestId: 'req.s1c.bound.test',
+      title: 'Greek Desktop Note Sleeve',
+      summary: 'Create desktop notes with Greek philosophy framing.',
+      decompositionSummary: 'Retrieve source MOLT blocks, compose the note, then prepare a desktop note artifact.',
+      reuseDecisions: [{ id: 'reuse.philosophy', sourceId: sourceCandidate.id, title: sourceCandidate.title, targetNeoBlockId: 'block.apply.lens', reason: 'Bind library philosophy/source MOLT into the note lens NeoBlock.' }],
+      generatedDecisions: [{ id: 'draft.note.directive', title: 'Draft Note Directive', runtimeSessionOnly: true, sourceLibraryWrite: false, reason: 'Glue needed for this runtime session.' }],
+      neoStacks: [{ id: 'stack.compose', title: 'Composition Stack', description: 'Compose the Greek-infused note.', stackOrder: 1, tags: [], neoBlockIds: ['block.apply.lens'] }],
+      neoBlocks: [{ id: 'block.apply.lens', title: 'Apply Greek Philosophy Lens', description: 'Apply the selected philosophy block and prepare persistence.', neoStackId: 'stack.compose', blockOrder: 1, tags: [], moltBlockIds: ['draft.note.directive'], gateIds: [], defaultState: 'off' }],
+      moltBlocks: [{ id: 'draft.note.directive', title: 'Note Creation Directive', role: 'directive', content: 'Draft a note from the prompt.', parentNeoBlockId: 'block.apply.lens', parentNeoStackId: 'stack.compose', tags: [], defaultState: 'off' }],
+      gates: [],
+      capabilities: [{ capabilityId: 'umg.capability.local_note_file_write', label: 'Prepare desktop note artifact', riskLevel: 'medium', requiresConnector: false, safeForAppLocalExecution: false }],
+      warnings: []
+    };
+    const adapted = adaptHermesCustomSleevePlanToRuntimeSessionSleeve(plan, request);
+    const boundLibraryMolt = adapted.moltBlocks.find((block) => block.matchedCandidateId === sourceCandidate.id);
+    expect(boundLibraryMolt).toBeTruthy();
+    expect(boundLibraryMolt.sourceKind).toBe('source-library reused');
+    expect(boundLibraryMolt.sourcePath).toBe(sourceCandidate.sourcePath);
+    expect(boundLibraryMolt.parentNeoBlockId).toBe('block.apply.lens');
+    expect(adapted.neoBlocks[0].moltBlockIds).toContain(sourceCandidate.id);
+    const toolBlock = adapted.moltBlocks.find((block) => block.id === 'TOOL.HERMES.NOTE_CREATE.v0.1' || block.id === 'TOOL.HERMES.FILE_WRITE.v0.1');
+    expect(toolBlock).toBeTruthy();
+    expect(toolBlock.sourceKind).toBe('metamolt tool');
+    expect(adapted.neoBlocks[0].moltBlockIds).toContain(toolBlock.id);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve: adapted, request, route: 'live Hermes' });
+    expect(diagnostics.libraryRetrieval).toBe('ran');
+    expect(diagnostics.candidateCount).toBeGreaterThan(0);
+    expect(diagnostics.boundMoltCount).toBeGreaterThanOrEqual(3);
+    expect(diagnostics.boundNeoBlockCount).toBe(1);
+    expect(diagnostics.boundNeoStackCount).toBe(1);
+    expect(diagnostics.metaMoltToolBlockCount).toBeGreaterThanOrEqual(1);
+    expect(diagnostics.compileEligibility).toBe('yes');
+  });
+
+  it('marks intake drafts/offline placeholders as not compileable and exposes composition source diagnostics', async () => {
+    const { buildCompositionSourceDiagnostics, buildHermesCustomSleeveGenerationRequest } = await import('../lib/umg/hermesCustomSleeveGeneration');
+    const request = buildHermesCustomSleeveGenerationRequest({ userPrompt: ecommercePrompt, userContext: '', requestId: 'req.s1c.intake.test' });
+    const diagnostics = buildCompositionSourceDiagnostics({ request, route: 'intake draft', reasonIfNotEligible: 'Hermes generation required.' });
+    expect(diagnostics.libraryRetrieval).toBe('ran');
+    expect(diagnostics.candidateCount).toBeGreaterThan(0);
+    expect(diagnostics.boundMoltCount).toBe(0);
+    expect(diagnostics.sourceBindingStatus).toBe('missing');
+    expect(diagnostics.compileEligibility).toBe('no');
+    expect(diagnostics.reasonIfNotEligible).toContain('Hermes generation required');
+  });
+
+  it('renders composition source diagnostics and disables compile before an active Sleeve exists', () => {
+    const noop = () => undefined;
+    const input = createBusinessInputFromPublicIntake({ goal: ecommercePrompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const html = renderToStaticMarkup(React.createElement(HackathonLandingPage, {
+      goal: ecommercePrompt,
+      context: '',
+      selectedChip: 'Custom Workflow',
+      selectedFiles: [],
+      intakeSubmitted: true,
+      businessMapReady: true,
+      templateSelected: true,
+      sleeveInstantiated: false,
+      blockMatched: false,
+      missingGenerated: false,
+      assemblyReady: false,
+      compilerComplete: false,
+      hermesRunComplete: false,
+      traceComplete: false,
+      hermesEndpointConfigured: true,
+      quickChips: ['Custom Workflow'],
+      onGoalChange: noop,
+      onContextChange: noop,
+      onChipSelect: noop,
+      onFilesAdd: noop,
+      onFileRemove: noop,
+      onFilesClear: noop,
+      onSubmit: noop,
+      onOpenStudio: noop,
+      onOpenActiveSleeve: noop,
+      onOpenRuntime: noop,
+      onOpenDebug: noop
+    }, React.createElement('div', null, 'Composition Source')));
+    expect(html).toContain('Composition Source');
+  });
+
+  it('uses explicit build-flow status labels instead of Sleeve plan ready for intake/failure states', () => {
+    const noop = () => undefined;
+    const baseProps = {
+      goal: ecommercePrompt,
+      context: '',
+      selectedChip: 'Custom Workflow',
+      selectedFiles: [],
+      intakeSubmitted: true,
+      businessMapReady: true,
+      templateSelected: true,
+      sleeveInstantiated: false,
+      blockMatched: false,
+      missingGenerated: false,
+      assemblyReady: false,
+      compilerComplete: false,
+      hermesRunComplete: false,
+      traceComplete: false,
+      hermesEndpointConfigured: true,
+      quickChips: ['Custom Workflow'],
+      onGoalChange: noop,
+      onContextChange: noop,
+      onChipSelect: noop,
+      onFilesAdd: noop,
+      onFileRemove: noop,
+      onFilesClear: noop,
+      onSubmit: noop,
+      onOpenStudio: noop,
+      onOpenActiveSleeve: noop,
+      onOpenRuntime: noop,
+      onOpenDebug: noop
+    };
+    const failedHtml = renderToStaticMarkup(React.createElement(HackathonLandingPage, { ...baseProps, intakeStatusOverride: 'Hermes generation failed' }, React.createElement('div', null, 'Hermes generation failed')));
+    expect(failedHtml).toContain('Hermes generation failed');
+    expect(failedHtml).not.toContain('Sleeve plan ready');
+    const intakeHtml = renderToStaticMarkup(React.createElement(HackathonLandingPage, { ...baseProps, intakeStatusOverride: 'Intake analyzed' }, React.createElement('div', null, 'Intake Draft')));
+    expect(intakeHtml).toContain('Intake analyzed');
+    expect(intakeHtml).not.toContain('Sleeve plan ready');
+  });
+
+  it('keeps Basic surface judge-facing: no internal counters, stale business capabilities, or redundant runtime buttons', () => {
+    const noop = () => undefined;
+    const input = createBusinessInputFromPublicIntake({ goal: 'Create Greek philosophy desktop notes.', context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    const plan = buildSleeveArchitectPlan({ businessInput: input, businessMap: map, availableBlocks: sampleBlocks() });
+    const activeSleeve = {
+      id: 'sleeve.greek.notes', title: 'Greek-Infused Desktop Note Creator', version: 'runtime-session.v1', description: 'Create desktop notes enriched with Greek philosophy.', source: 'session', templateKind: 'custom', tags: ['greek', 'desktop', 'notes'],
+      metadata: { generatedByHermes: true, runtimeSessionOnly: true, sourceLibraryWrite: false, sourceStatusSummary: { libraryCandidateCount: 12, reuseDecisionCount: 2, nodeLevelReusedCount: 2, generatedGlueCount: 0, unresolved: 0 }, capabilities: [
+        { capabilityId: 'umg.capability.local_text_composition', label: 'Local text composition', reason: 'Compose the note text.', riskLevel: 'low', safeForAppLocalExecution: true, requiresConnector: false },
+        { capabilityId: 'umg.capability.local_note_file_write', label: 'Prepare desktop note artifact', reason: 'Prepare the desktop note artifact.', riskLevel: 'medium', safeForAppLocalExecution: false, requiresConnector: false }
+      ] },
+      neoStacks: [
+        { id: 'stack.intake', title: 'Prompt Intake and Note Triggering', description: 'Capture the note request.', stackOrder: 1, neoBlockIds: ['block.intake'], tags: [] },
+        { id: 'stack.greek', title: 'Greek Philosophical Semantic Enrichment', description: 'Apply Greek concepts.', stackOrder: 2, neoBlockIds: ['block.greek'], tags: [] },
+        { id: 'stack.emit', title: 'Desktop Note Draft Emission', description: 'Prepare the note artifact.', stackOrder: 3, neoBlockIds: ['block.emit'], tags: [] }
+      ],
+      neoBlocks: [
+        { id: 'block.intake', title: 'Capture Note Prompt', description: 'Capture prompt.', neoStackId: 'stack.intake', blockOrder: 1, moltBlockIds: ['molt.dir'], gateIds: [], tags: [], defaultState: 'off' },
+        { id: 'block.greek', title: 'Apply Greek Philosophy Lens', description: 'Apply lens.', neoStackId: 'stack.greek', blockOrder: 1, moltBlockIds: ['molt.phil'], gateIds: [], tags: [], defaultState: 'off' },
+        { id: 'block.emit', title: 'Prepare Desktop Note Artifact', description: 'Prepare artifact.', neoStackId: 'stack.emit', blockOrder: 1, moltBlockIds: ['molt.inst', 'TOOL.HERMES.NOTE_CREATE.v0.1', 'TOOL.HERMES.FILE_WRITE.v0.1'], gateIds: [], tags: [], defaultState: 'off' }
+      ],
+      moltBlocks: [
+        { id: 'molt.dir', title: 'Note Directive', role: 'directive', content: 'Create a note.', parentNeoBlockId: 'block.intake', parentNeoStackId: 'stack.intake', tags: [], defaultState: 'off', sourceKind: 'source-library reused', matchedCandidateId: 'DIR.NOTE.001', sourcePath: 'library/dir.json' },
+        { id: 'molt.phil', title: 'Aristotelian Lens', role: 'philosophy', content: 'Use Greek philosophy.', parentNeoBlockId: 'block.greek', parentNeoStackId: 'stack.greek', tags: [], defaultState: 'off', sourceKind: 'source-library reused', matchedCandidateId: 'PHIL.002', sourcePath: 'library/phil.json' },
+        { id: 'molt.inst', title: 'Desktop Note Instruction', role: 'instruction', content: 'Prepare a desktop note.', parentNeoBlockId: 'block.emit', parentNeoStackId: 'stack.emit', tags: [], defaultState: 'off', sourceKind: 'runtime-session draft' },
+        { id: 'TOOL.HERMES.NOTE_CREATE.v0.1', title: 'Hermes Native Note Create', role: 'tool', content: 'Create note.', parentNeoBlockId: 'block.emit', parentNeoStackId: 'stack.emit', tags: ['tool'], defaultState: 'off', sourceKind: 'metamolt tool' },
+        { id: 'TOOL.HERMES.FILE_WRITE.v0.1', title: 'Hermes Native File Write', role: 'tool', content: 'Write file.', parentNeoBlockId: 'block.emit', parentNeoStackId: 'stack.emit', tags: ['tool'], defaultState: 'off', sourceKind: 'metamolt tool' }
+      ],
+      gates: [], governanceBlockIds: []
+    };
+    const palette = buildBasicCapabilityPalette({ activeSessionSleeve: activeSleeve, resolutions: [], content: [] });
+    expect(palette.map((card) => card.label)).toEqual(['Local text composition', 'Prepare desktop note artifact']);
+    expect(palette.map((card) => card.label)).not.toEqual(expect.arrayContaining(['Generate executive summary', 'Create financial assumptions']));
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('Open Runtime Graph');
+    expect(appSource).not.toContain('Open Runtime Observer');
+    expect(appSource).not.toContain('Open Runtime Geometry');
+    expect(appSource).not.toContain('Generated glue');
+    expect(appSource).not.toContain('Runtime drafts');
+    expect(appSource).not.toContain('Node-level reused');
+    expect(appSource).toContain('runtimeDetailRows');
+    expect(appSource).toContain('lastNativeActionResult || hermesRuntimeVisualState?.timeline.length');
+    expect(appSource).toContain('Noncanonical dev route.');
+    expect(appSource).toContain('Advanced Diagnostics');
+    expect(appSource).toContain('Intake Intelligence Diagnostics · Composition Source · bridge debug');
+  });
+
   it('keeps general canvas separate and only exposes Inspect Active Sleeve when session state exists', () => {
     const noop = () => undefined;
     const baseProps = {
@@ -244,11 +428,11 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
       onOpenDebug: noop
     };
     const generalOnly = renderToStaticMarkup(React.createElement(HackathonLandingPage, baseProps));
-    expect(generalOnly).toContain('Open Studio Editor (general canvas)');
+    expect(generalOnly).toContain('Open Studio Editor');
     expect(generalOnly).not.toContain('Inspect Active Sleeve');
     const withActive = renderToStaticMarkup(React.createElement(HackathonLandingPage, { ...baseProps, hasActiveSessionSleeve: true }));
-    expect(withActive).toContain('Open Studio Editor (general canvas)');
-    expect(withActive).toContain('Inspect Active Sleeve');
+    expect(withActive).toContain('Open Studio Editor');
+    expect(withActive).not.toContain('Inspect Active Sleeve');
     expect(withActive).toContain('Custom Workflow');
     expect(withActive).toContain('Business Automation · coming soon');
   });

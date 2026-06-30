@@ -962,16 +962,57 @@ export function buildCustomSleeveGenerationPrompt(request) {
   ].join('\n\n');
 }
 
-function parseJsonObjectFromText(text) {
+export function parseJsonObjectFromText(text) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw new Error('Hermes returned empty output.');
   try { return JSON.parse(trimmed); } catch {}
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) return JSON.parse(fenced[1]);
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start >= 0 && end > start) return JSON.parse(trimmed.slice(start, end + 1));
-  throw new Error('Hermes output did not contain a JSON object.');
+  const fencedBlocks = [...trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+  for (const fenced of fencedBlocks) {
+    try { return JSON.parse(fenced[1]); } catch {}
+  }
+  const candidates = extractJsonObjectCandidates(trimmed);
+  for (const candidate of candidates) {
+    try { return JSON.parse(candidate); } catch {}
+  }
+  throw new Error('Hermes output did not contain a valid JSON object.');
+}
+
+function extractJsonObjectCandidates(text) {
+  const candidates = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (char === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        candidates.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return candidates;
 }
 
 function hasObject(value) {
@@ -1064,10 +1105,26 @@ export async function buildCustomSleeveGenerationResponse(request, env = process
   try {
     const timeoutMs = Number(env.HERMES_CUSTOM_SLEEVE_TIMEOUT_MS || env.HERMES_RUNTIME_TIMEOUT_MS || 90000);
     const hermes = await runtimePost(prompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
-    const plan = parseJsonObjectFromText(hermes.text || '');
+    let plan;
+    let parseRetryUsed = false;
+    try {
+      plan = parseJsonObjectFromText(hermes.text || '');
+    } catch (parseError) {
+      parseRetryUsed = true;
+      const strictPrompt = `${prompt}
+
+STRICT_RETRY_INSTRUCTION: Return only the JSON object. No prose. No markdown.`;
+      const strictHermes = await runtimePost(strictPrompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
+      try {
+        plan = parseJsonObjectFromText(strictHermes.text || '');
+      } catch (strictParseError) {
+        const reason = `Hermes output did not contain a valid JSON object after strict JSON retry. ${strictParseError?.message || parseError?.message || ''}`.trim();
+        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_json_parse_failed', fallbackUsed: false, fallbackReason: reason, parseRetryUsed: true, rawFirstOutputPreview: truncateText(hermes.text || '', 400), rawRetryOutputPreview: truncateText(strictHermes.text || '', 400) } }, undefined);
+      }
+    }
     const planValidation = validateCustomSleevePlan(plan);
     if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_validation_failed', fallbackUsed: false, fallbackReason: planValidation.errors.join(' '), responseSleeveTitle: plan?.title } }, undefined);
-    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, responseSleeveTitle: plan.title } }, undefined);
+    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, responseSleeveTitle: plan.title, parseRetryUsed } }, undefined);
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : undefined;
     const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';

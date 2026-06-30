@@ -1,7 +1,7 @@
 import { UMGGateRecord } from './cognitiveRuntimeTypes';
 import { MOLTRole, Sleeve } from './types';
 
-export type NormalizedTemplateSourceKind = 'source-library reused' | 'runtime-session draft' | 'generated glue' | 'unresolved';
+export type NormalizedTemplateSourceKind = 'source-library reused' | 'reuse decision' | 'runtime-session draft' | 'generated glue' | 'metamolt tool' | 'unresolved';
 
 export type NormalizedTemplateSourceMetadata = {
   sourceKind?: NormalizedTemplateSourceKind;
@@ -85,6 +85,7 @@ export function summarizeNormalizedTemplateSourceStatus(sleeve: NormalizedTempla
   const nodeLevelReusedCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'source-library reused').length;
   const generatedGlueCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'generated glue').length;
   const runtimeDraftCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'runtime-session draft').length;
+  const metaMoltToolBlockCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'metamolt tool' || entry.tags?.some((tag) => tag === 'metamolt' || tag === 'tool')).length;
   const unresolvedCount = hierarchyNodes.filter((entry) => entry.sourceKind === 'unresolved').length;
   const sourceStatusSummary = (sleeve.metadata?.sourceStatusSummary ?? {}) as Record<string, unknown>;
   const reuseDecisionCount = numberFromMetadata(sourceStatusSummary.reuseDecisionCount);
@@ -105,6 +106,7 @@ export function summarizeNormalizedTemplateSourceStatus(sleeve: NormalizedTempla
     generatedGlueCount,
     generatedGlueDecisionCount,
     runtimeDraftCount,
+    metaMoltToolBlockCount,
     unresolvedCount,
     sourceBindingStatus,
     sourceBindingWarning
