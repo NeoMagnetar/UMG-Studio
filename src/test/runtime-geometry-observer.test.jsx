@@ -105,15 +105,31 @@ describe('RuntimeGeometryObserver', () => {
     expect(html).not.toContain('Promote to Source Library');
   });
 
-  it('System Sleeve hides context-resource blocks by default and exposes them only behind the toggle', () => {
+  it('System Sleeve view does not render source library/compiler manifest/Hermes runtime/resource graph nodes', () => {
     renderInteractiveObserver();
-    expect(screen.getByRole('button', { name: 'Show context resources' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show context resources' })).toBeNull();
     expect(screen.queryByRole('button', { name: /source library/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /compiler manifest/i })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show context resources' }));
-    expect(screen.getByRole('button', { name: /source library/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /compiler manifest/i })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Hide context resources' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Hermes runtime/i })).toBeNull();
+    expect(screen.queryByText(/context resource/i)).toBeNull();
+    expect(document.querySelectorAll('.runtime-node--resource, .runtime-node--context, .runtime-foundation-item')).toHaveLength(0);
+  });
+
+  it('NeoStack Map renders NeoStack nodes only', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoStack Map' }));
+    expect(screen.getByLabelText('NeoStack-only runtime graph')).toBeTruthy();
+    expect(document.querySelectorAll('.runtime-stack-node')).toHaveLength(1);
+    expect(document.querySelectorAll('.runtime-neoblock-tile, .runtime-neoblock-module, .runtime-molt-layer, .runtime-node--resource, .runtime-node--context')).toHaveLength(0);
+  });
+
+  it('NeoBlock Map renders NeoBlock nodes only and does not render MOLT rows as graph cards', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    expect(screen.getByLabelText('All NeoBlocks by NeoStack')).toBeTruthy();
+    expect(document.querySelectorAll('.runtime-neoblock-module')).toHaveLength(1);
+    expect(document.querySelectorAll('.runtime-stack-node, .runtime-molt-layer, .runtime-node--molt_layer, .runtime-node--resource, .runtime-node--context')).toHaveLength(0);
+    expect(screen.queryByText('Instruction')).toBeNull();
   });
 
   it('NeoBlock Map renders the structural NeoBlock route without runtime trace', () => {
@@ -133,6 +149,17 @@ describe('RuntimeGeometryObserver', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Runtime Path' }));
     expect(screen.getByText('No runtime trace yet. Send a task to Hermes to activate the route.')).toBeTruthy();
     expect(screen.getByText('Planned route skeleton is shown idle until a real Hermes trace arrives.')).toBeTruthy();
+    expect(document.querySelectorAll('.runtime-node--active, .runtime-map-edge--glow')).toHaveLength(0);
+  });
+
+  it('left Sleeve hierarchy is collapsed by default and resources remain in diagnostics drawer', () => {
+    renderInteractiveObserver();
+    expect(screen.getByRole('button', { name: 'Open hierarchy' })).toBeTruthy();
+    expect(screen.queryByText('Sleeve hierarchy')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    expect(screen.getByText(/source library/i)).toBeTruthy();
+    expect(screen.getByText(/compiler manifest/i)).toBeTruthy();
+    expect(screen.getByText(/Hermes runtime/i)).toBeTruthy();
   });
 
   it('applies real runtime statuses, attaches artifacts, and leaves unmapped events unactivated', () => {
