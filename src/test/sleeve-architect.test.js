@@ -35,8 +35,20 @@ import { planWorkflowSlots } from '../lib/umg/umgWorkflowSlots';
 import { resolveWorkflowSlots } from '../lib/umg/umgBlockResolver';
 import { composeSleeveFromResolvedSlots } from '../lib/umg/umgSleeveComposer';
 import { BasicCompileDiagnosticsDisclosure } from '../components/BasicCompileDiagnosticsDisclosure';
+import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from '../lib/umg/umgBlockAuthoring';
+import { deleteWorkspaceBlock, getWorkspaceBlockById, listWorkspaceBlocks, saveWorkspaceBlock, searchWorkspaceBlocks } from '../lib/umg/umgWorkspaceBlockRegistry';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
+
+function createMemoryStorage() {
+  const values = new Map();
+  return {
+    getItem: (key) => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+    clear: () => values.clear()
+  };
+}
 
 function sampleBlocks() {
   return getBusinessAutomationCoreSleeve().moltBlocks.map((block) => ({
@@ -52,6 +64,60 @@ function sampleBlocks() {
     visibility: 'visible'
   }));
 }
+
+describe('UMG Block Forge Pass 1 MOLT authoring', () => {
+  it('creates a blueprint MOLT draft with NL card and JSON schema for Viking battle poem style', () => {
+    const block = inferMoltBlockDraftFromPrompt('Viking battle poem style');
+    expect(block.role).toBe('blueprint');
+    expect(block.sourceKind).toBe('workspace-draft');
+    expect(block.title).toContain('Viking Battle Poem Style');
+    expect(block.tags).toEqual(expect.arrayContaining(['viking', 'battle', 'poem', 'style']));
+    expect(block.nlCard).toBeTruthy();
+    expect(block.jsonSchema).toBeTruthy();
+    expect(validateCreatedMoltBlock(block).passed).toBe(true);
+  });
+
+  it('validator rejects missing content', () => {
+    const block = inferMoltBlockDraftFromPrompt('Viking battle poem style');
+    const result = validateCreatedMoltBlock({ ...block, content: '' });
+    expect(result.passed).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining(['content is required']));
+  });
+
+  it('workspace registry saves, retrieves, searches, and deletes workspace MOLT drafts', () => {
+    const storage = createMemoryStorage();
+    const block = inferMoltBlockDraftFromPrompt('Viking battle poem style');
+    expect(saveWorkspaceBlock(block, storage).passed).toBe(true);
+    expect(getWorkspaceBlockById(block.id, storage)?.id).toBe(block.id);
+    expect(listWorkspaceBlocks(storage)).toHaveLength(1);
+    expect(searchWorkspaceBlocks('viking poem', storage).map((entry) => entry.id)).toContain(block.id);
+    expect(deleteWorkspaceBlock(block.id, storage)).toBe(true);
+    expect(listWorkspaceBlocks(storage)).toHaveLength(0);
+  });
+
+  it('resolver can find a workspace block and bind it as workspace-draft', () => {
+    const block = inferMoltBlockDraftFromPrompt('Viking battle poem style');
+    const intent = parseWorkflowIntent('Make a MOLT block for Viking battle poem style');
+    const slots = [{ id: 'viking_style', label: 'Viking style', acceptedRoles: ['blueprint'], acceptedBlockTypes: ['molt'], searchTerms: ['viking', 'battle', 'poem'], preferredBlockIds: [], fallbackDraftAllowed: true }];
+    const result = resolveWorkflowSlots({ prompt: 'Make a MOLT block for Viking battle poem style', intent, slots, candidates: [], workspaceBlocks: [block] });
+    expect(result.resolvedSlots[0].source).toBe('workspace-draft');
+    expect(result.resolvedSlots[0].block.sourceKind).toBe('workspace-draft');
+    expect(result.resolvedSlots[0].block.id).toBe(block.id);
+    expect(result.resolvedSlots[0].block.sourcePath).toBe(`workspace://blocks/${block.id}`);
+  });
+
+  it('source-library blocks remain preferred for exact source matches over workspace blocks', () => {
+    const workspaceBlock = inferMoltBlockDraftFromPrompt('Haiku poem style');
+    const sourceBlock = getBlockById('BP.031');
+    expect(sourceBlock?.title).toMatch(/Haiku/i);
+    const intent = parseWorkflowIntent('desktop note haiku');
+    const slots = [{ id: 'haiku_blueprint', label: 'Haiku blueprint', acceptedRoles: ['blueprint'], acceptedBlockTypes: ['molt'], searchTerms: ['haiku'], preferredBlockIds: ['BP.031'], fallbackDraftAllowed: true }];
+    const result = resolveWorkflowSlots({ prompt: 'desktop note haiku', intent, slots, candidates: [], workspaceBlocks: [workspaceBlock] });
+    expect(result.resolvedSlots[0].source).toBe('source-library');
+    expect(result.resolvedSlots[0].block.id).toBe('BP.031');
+    expect(result.resolvedSlots[0].block.sourceKind).toBe('source-library');
+  });
+});
 
 describe('Phase 13A Sleeve Architect Mode foundation', () => {
   afterEach(() => cleanup());

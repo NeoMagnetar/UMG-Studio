@@ -61,9 +61,42 @@ import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './l
 import { buildUploadedContextText, createMetadataMoltBlock, extractKeywordsFromText, itemMatchesLiveTagQuery, itemMatchesSelectedTags, matchesPrefixFirstBlockSearch, normalizeLibraryText, sortMatchingTags, sortPrefixFirstBlockSearchItems, summarizeUploadedText, UploadedIntakeContext } from './lib/umg/libraryBrowserSemantics';
 import { HERMES_NATIVE_META_MOLT_TOOL_BLOCKS } from './lib/umg/nativeHermesToolBlocks';
 import { createReadErrorUploadedIntakeContext, createUnsupportedUploadedIntakeContext, createUploadedIntakeContext } from './lib/umg/intakeSemanticExtraction';
+import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
+import type { UMGCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
+import { listWorkspaceBlocks, saveWorkspaceBlock } from './lib/umg/umgWorkspaceBlockRegistry';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+
+function createdMoltBlockToUMGBlock(block: UMGCreatedMoltBlock): UMGBlock {
+  const safeRole = block.role === 'meta' ? 'instruction' : block.role;
+  return {
+    id: block.id,
+    title: block.title,
+    type: 'molt_block',
+    role: safeRole,
+    displayType: safeRole,
+    content: block.content,
+    description: block.description,
+    category: block.category,
+    tags: block.tags,
+    defaultState: 'on',
+    visibility: 'visible',
+    sourcePath: `workspace://blocks/${block.id}`,
+    sourceLayer: 'workspace-draft',
+    status: 'runnable',
+    presentationStatus: 'runnable',
+    source: { origin: 'workspace', sourceId: block.id, version: '0.1' },
+    createdAt: block.createdAt,
+    updatedAt: block.updatedAt,
+    legacy: {
+      sourceRepo: 'workspace-local-state',
+      original: block,
+      sourcePath: `workspace://blocks/${block.id}`,
+      migrationWarnings: ['workspace-draft Block Forge MOLT; not source-library']
+    }
+  };
+}
 const statuses = ['all', 'runnable', 'warning-bearing', 'meta', 'reference-only', 'unsupported'];
 const defaultStatusFilter = 'runnable';
 const inspectorTabs = ['Card', 'Runtime', 'Runtime Preview', 'NL', 'JSON', 'Legacy Source', 'Attach / Placement Preview', 'Trace / IR Preview', 'Trace', 'IR Row'] as const;
@@ -187,6 +220,7 @@ type StudioEntryMode = 'general_canvas' | 'active_session_sleeve';
 type ShelfMode = AssetShelfId;
 type WorkspaceMode = 'compose' | 'canvas' | 'runtime' | 'debug';
 type GraphViewMode = 'full_sleeve' | 'neostack' | 'neoblock' | 'molt_builder';
+type BlockForgeValidationState = ReturnType<typeof validateCreatedMoltBlock> | undefined;
 type RuntimeDrawerTab = 'RuntimeSpec' | 'Trace' | 'IR Matrix' | 'Glyph Matrix' | 'Output';
 type PlacementTargetIds = { neostackId?: string; neoblockId?: string };
 type PlacementTargetChoice = { id: string; label: string; detail?: string; neostackId?: string; neoblockId?: string };
@@ -299,7 +333,11 @@ export default function App() {
   const [selectedActiveSessionNeoStackId, setSelectedActiveSessionNeoStackId] = useState<string | undefined>();
   const [selectedActiveSessionNeoBlockId, setSelectedActiveSessionNeoBlockId] = useState<string | undefined>();
   const [library] = useState<UMGBlock[]>(() => normalizedBlocks.length ? (normalizedBlocks as UMGBlock[]) : normalizeImportedBlocks(rawBlocks as unknown[]));
-  const [sessionMoltBlocks, setSessionMoltBlocks] = useState<UMGBlock[]>([]);
+  const [sessionMoltBlocks, setSessionMoltBlocks] = useState<UMGBlock[]>(() => listWorkspaceBlocks().map(createdMoltBlockToUMGBlock));
+  const [blockForgePrompt, setBlockForgePrompt] = useState('');
+  const [blockForgeDraft, setBlockForgeDraft] = useState<UMGCreatedMoltBlock | undefined>();
+  const [blockForgeValidation, setBlockForgeValidation] = useState<BlockForgeValidationState>();
+  const [blockForgeNotice, setBlockForgeNotice] = useState('Workspace Block Forge saves only to local app state. Source library unchanged.');
   const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
   const [sessionNeoStacks, setSessionNeoStacks] = useState<NeoStack[]>([]);
   const [sessionSleeves, setSessionSleeves] = useState<Sleeve[]>([]);
@@ -1108,6 +1146,51 @@ export default function App() {
   const inspectAsset = (item: ShelfAsset) => {
     setInspected(item.asset);
     setInspectorTab('Card');
+  };
+
+  const draftForgeMoltBlock = () => {
+    const draft = inferMoltBlockDraftFromPrompt(blockForgePrompt);
+    const validation = validateCreatedMoltBlock(draft);
+    setBlockForgeDraft(draft);
+    setBlockForgeValidation(validation);
+    setBlockForgeNotice(`Draft MOLT Block ready: ${draft.title} · role ${draft.role} · sourceKind ${draft.sourceKind}`);
+  };
+
+  const validateForgeMoltBlock = () => {
+    if (!blockForgeDraft) {
+      setBlockForgeNotice('Draft a MOLT block before validating.');
+      return;
+    }
+    const validation = validateCreatedMoltBlock(blockForgeDraft);
+    setBlockForgeValidation(validation);
+    setBlockForgeDraft({ ...blockForgeDraft, status: validation.passed ? 'validated' : 'needs_review', updatedAt: new Date().toISOString() });
+    setBlockForgeNotice(validation.passed ? 'Block validation passed. Ready to save to workspace.' : `Block validation failed: ${validation.errors.join(', ')}`);
+  };
+
+  const saveForgeMoltBlockToWorkspace = () => {
+    if (!blockForgeDraft) {
+      setBlockForgeNotice('Draft a MOLT block before saving.');
+      return;
+    }
+    const validation = saveWorkspaceBlock(blockForgeDraft);
+    setBlockForgeValidation(validation);
+    if (!validation.passed) {
+      setBlockForgeNotice(`Workspace save blocked: ${validation.errors.join(', ')}`);
+      return;
+    }
+    const workspaceBlock = createdMoltBlockToUMGBlock({ ...blockForgeDraft, status: 'validated', updatedAt: new Date().toISOString() });
+    setSessionMoltBlocks((current) => current.some((block) => block.id === workspaceBlock.id) ? current.map((block) => block.id === workspaceBlock.id ? workspaceBlock : block) : [...current, workspaceBlock]);
+    setActiveShelf('molt_blocks');
+    setRoleFilter(workspaceBlock.role);
+    setBlockForgeNotice('Workspace block saved · sourceKind: workspace-draft · can be used in current Sleeve composition');
+    setStatus(`Workspace block saved: ${workspaceBlock.title}. Source library unchanged.`);
+  };
+
+  const clearForgeMoltBlock = () => {
+    setBlockForgePrompt('');
+    setBlockForgeDraft(undefined);
+    setBlockForgeValidation(undefined);
+    setBlockForgeNotice('Workspace Block Forge cleared. Source library unchanged.');
   };
 
   const setActivePlacementChoice = (choice: PlacementTargetChoice) => {
@@ -2805,6 +2888,18 @@ export default function App() {
             setStatusFilter(defaultStatusFilter);
           }}
         />
+        <BlockForgePanel
+          prompt={blockForgePrompt}
+          onPromptChange={setBlockForgePrompt}
+          draft={blockForgeDraft}
+          validation={blockForgeValidation}
+          notice={blockForgeNotice}
+          workspaceBlocks={sessionMoltBlocks.filter((block) => block.sourceLayer === 'workspace-draft' || block.sourcePath?.startsWith('workspace://blocks/'))}
+          onDraft={draftForgeMoltBlock}
+          onValidate={validateForgeMoltBlock}
+          onSave={saveForgeMoltBlockToWorkspace}
+          onClear={clearForgeMoltBlock}
+        />
         {activeShelf === 'source_audit' && isDebugMode && <AuditShelfBanner total={currentShelf.items.length} />}
         {activeShelf === 'control_sources' && isDebugMode && <ControlSourcesBanner total={currentShelf.items.length} />}
         {activeShelf === 'source_audit'
@@ -2934,6 +3029,35 @@ export default function App() {
       </section>
     </main>
   </div>;
+}
+
+function BlockForgePanel({ prompt, onPromptChange, draft, validation, notice, workspaceBlocks, onDraft, onValidate, onSave, onClear }: { prompt: string; onPromptChange: (value: string) => void; draft?: UMGCreatedMoltBlock; validation: BlockForgeValidationState; notice: string; workspaceBlocks: UMGBlock[]; onDraft: () => void; onValidate: () => void; onSave: () => void; onClear: () => void }) {
+  return <details className="blockForgePanel" open>
+    <summary><b>Create MOLT Block</b><span>Deterministic workspace-draft authoring; source library is read-only.</span></summary>
+    <label>prompt/request<textarea aria-label="Create MOLT Block request" placeholder="Viking battle poem style" value={prompt} onChange={(event) => onPromptChange(event.target.value)} /></label>
+    <div className="templateActionRow">
+      <button type="button" className="publicPrimaryCta" onClick={onDraft}>Draft MOLT Block</button>
+      <button type="button" className="publicSecondaryCta" onClick={onValidate} disabled={!draft}>Validate Block</button>
+      <button type="button" className="publicSecondaryCta" onClick={onSave} disabled={!draft || validation?.passed === false}>Save to Workspace</button>
+      <button type="button" className="publicSecondaryCta" onClick={onClear}>Clear</button>
+    </div>
+    {draft && <div className="blockForgeFields">
+      <label>inferred title<input value={draft.title} readOnly /></label>
+      <label>role<input value={draft.role} readOnly /></label>
+      <label>category<input value={draft.category} readOnly /></label>
+      <label>tags<input value={draft.tags.join(', ')} readOnly /></label>
+      <label>description<textarea value={draft.description} readOnly /></label>
+      <label>content<textarea value={draft.content} readOnly /></label>
+      <SummaryRows rows={[
+        ['sourceKind', draft.sourceKind],
+        ['validation status', validation?.passed ? 'passed' : validation ? 'failed' : draft.status],
+        ['nlCard', draft.nlCard ? 'present' : 'missing'],
+        ['jsonSchema', draft.jsonSchema ? 'present' : 'missing']
+      ]} />
+    </div>}
+    <div className="analysisWarnings"><b>{notice}</b>{validation?.errors.map((error) => <span key={error}>{error}</span>)}{validation?.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div>
+    <div className="workspaceBlockList"><b>Workspace/local block list</b>{workspaceBlocks.length ? workspaceBlocks.map((block) => <span key={block.id}>{block.title} · sourceKind: workspace-draft · can be used in current Sleeve composition</span>) : <span>No workspace-draft blocks saved yet.</span>}</div>
+  </details>;
 }
 
 function PublicLandingShell({

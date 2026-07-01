@@ -13,7 +13,7 @@ export type UmgLibraryCandidateBase = {
   domain?: string;
   category?: string;
   sourcePath?: string;
-  sourceKind: 'source-library';
+  sourceKind: 'source-library' | 'workspace-draft';
   compatibility?: string[];
   nlCard?: Record<string, unknown>;
   jsonSchema?: Record<string, unknown>;
@@ -109,7 +109,7 @@ export function hydrateUmgLibraryCandidate(candidate: UmgLibraryCandidateBase | 
       title: { type: 'string' },
       role: { type: 'string', const: candidate.role ?? candidate.blockType },
       content: { type: 'string' },
-      sourceKind: { type: 'string', const: 'source-library reused' },
+      sourceKind: { type: 'string', const: candidate.sourceKind },
       sourcePath: { type: 'string' },
       matchedCandidateId: { type: 'string', const: candidate.id }
     }
