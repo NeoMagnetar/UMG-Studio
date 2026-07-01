@@ -723,6 +723,7 @@ export function RuntimeGeometryObserver({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<'JSON' | 'Trace' | 'Manifest' | 'Artifacts' | 'Diagnostics'>('JSON');
   const [graphScale, setGraphScale] = useState(1);
+  const [showContextResources, setShowContextResources] = useState(false);
   const model = useMemo(() => buildRuntimeVisualViewModel({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
   const graph = useMemo(() => buildRuntimeGeometryObserverGraph({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode === 'runtime_path' ? 'runtime' : 'structure' }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
   const grouped = useMemo(() => groupByParent(graph.nodes), [graph.nodes]);
@@ -822,13 +823,15 @@ export function RuntimeGeometryObserver({
         <div><h2>System Sleeve</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} neostack nodes · {model.neoBlocks.length} neoblock nodes · {summary ? `${summary.totalMoltBindings} molt layers · ${summary.totalGates} gate nodes · ${summary.totalToolEndpoints + model.capabilities.length} capability nodes` : 'manifest pending'}</small></div>
       </div>
       <div className="runtime-neostack-clusters runtime-map-centered">
-        {model.neoStacks.map((stack) => <article key={stack.id} className="runtime-neostack-cluster runtime-map-card">
+        {model.neoStacks.map((stack, stackIndex) => <article key={stack.id} className="runtime-neostack-cluster runtime-map-card">
+          {stackIndex > 0 && renderCompactEdge(model.edges.find((edge) => edge.kind === 'routes' && (edge.from === stack.id || edge.to === stack.id)), 'runtime-map-edge--down')}
           {renderVisualNode(stack, 'runtime-stack-title')}
           <div className="runtime-neoblock-tile-grid">{childBlocksForStack(stack.id).slice(0, 4).map((block) => renderVisualNode(block, 'runtime-neoblock-tile'))}{childBlocksForStack(stack.id).length > 4 && <small>+ {childBlocksForStack(stack.id).length - 4} more NeoBlocks</small>}</div>
         </article>)}
       </div>
+      <small>Default System Sleeve view hides context/resource blocks. Use the toggle for diagnostics resources.</small>
     </section>
-    <section className="runtime-foundation-rail" aria-label="Runtime foundation rail">{foundationItems.map((item) => <button key={item.id} type="button" className="runtime-foundation-item" onClick={() => { selectVisualNode(item); setDrawerTab(item.kind === 'resource' && item.id.includes('compiler') ? 'Manifest' : 'Diagnostics'); }}><span>{item.icon}</span><b>{item.label}</b></button>)}{model.capabilities.map((capability) => <button key={`foundation-${capability.id}`} type="button" className="runtime-foundation-item" onClick={() => selectVisualNode(capability)}><span>⚙</span><b>{capability.label}</b></button>)}</section>
+    <section className="runtime-foundation-rail" aria-label="Runtime foundation rail"><button type="button" className="runtime-foundation-toggle" onClick={() => setShowContextResources((current) => !current)}>{showContextResources ? 'Hide context resources' : 'Show context resources'}</button>{showContextResources && <div className="runtime-foundation-items">{foundationItems.map((item) => <button key={item.id} type="button" className="runtime-foundation-item" onClick={() => { selectVisualNode(item); setDrawerTab(item.kind === 'resource' && item.id.includes('compiler') ? 'Manifest' : 'Diagnostics'); }}><span>{item.icon}</span><b>{item.label}</b></button>)}{model.capabilities.map((capability) => <button key={`foundation-${capability.id}`} type="button" className="runtime-foundation-item" onClick={() => selectVisualNode(capability)}><span>⚙</span><b>{capability.label}</b></button>)}</div>}</section>
   </div>;
 
   const renderNeoStackView = () => <div className="runtime-neostack-view runtime-map-centered" style={graphViewportStyle}>
@@ -846,11 +849,19 @@ export function RuntimeGeometryObserver({
 
   const renderNeoBlockView = () => <div className="runtime-neoblock-view runtime-map-centered" style={graphViewportStyle}>
     <h2>NeoBlock Map</h2>
-    <div className="runtime-neoblock-module-map" aria-label="Compact NeoBlock modules">
-      {tieredBlocksForStack(selectedStack?.id).map((tier, tierIndex) => tier.length ? <div key={tierIndex} className={`runtime-neoblock-tier runtime-neoblock-tier--${tierIndex}`}>
-        {tierIndex > 0 && renderCompactEdge(undefined, 'runtime-map-edge--tier')}
-        {tier.map((block) => renderVisualNode(block, 'runtime-neoblock-module'))}
-      </div> : undefined)}
+    <small>Structural route of all NeoBlocks across all NeoStacks. Runtime trace is not required.</small>
+    <div className="runtime-neoblock-module-map runtime-neoblock-all-lanes" aria-label="All NeoBlocks by NeoStack">
+      {model.neoStacks.map((stack) => {
+        const blocks = childBlocksForStack(stack.id);
+        return <section key={stack.id} className="runtime-neoblock-stack-lane" aria-label={`NeoStack lane ${stack.label}`}>
+          <header><b>{stack.shortLabel ?? stack.label}</b><small>{blocks.length} NeoBlocks</small></header>
+          {blocks.map((block, index) => {
+            const previous = blocks[index - 1];
+            const edge = previous ? model.edges.find((entry) => entry.kind === 'routes' && ((entry.from === previous.id && entry.to === block.id) || entry.to === block.id || entry.from === block.id)) : model.edges.find((entry) => entry.kind === 'routes' && (entry.from === block.id || entry.to === block.id));
+            return <div key={block.id} className="runtime-neoblock-lane-step">{index > 0 && renderCompactEdge(edge, 'runtime-map-edge--tier')}{renderVisualNode(block, 'runtime-neoblock-module')}</div>;
+          })}
+        </section>;
+      })}
     </div>
     {selectedBlock ? <article className="runtime-neoblock-cube runtime-node runtime-node--available">
       <header><span>◈</span><div><b>{selectedBlock.label}</b><small>Parent NeoStack: {model.neoStacks.find((stack) => stack.id === selectedBlock.parentId)?.label ?? 'unknown'}</small></div></header>
@@ -869,7 +880,8 @@ export function RuntimeGeometryObserver({
 
   const renderRuntimePathView = () => <div className="runtime-path-view runtime-map-centered" style={graphViewportStyle}>
     <h2>Runtime Path View</h2>
-    {traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace has been captured yet. Nodes remain idle/available; this screen does not fabricate activation.</div>}
+    {traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace yet. Send a task to Hermes to activate the route.</div>}
+    {traceEvents.length === 0 && <small>Planned route skeleton is shown idle until a real Hermes trace arrives.</small>}
     <div className="runtime-path-map" aria-label="Compact active runtime route map">
       {model.pathNodes.map((node, index) => {
         const previous = model.pathNodes[index - 1];
@@ -927,13 +939,20 @@ export function RuntimeGeometryObserver({
 }
 
 function RuntimeNodeInspectorCard({ node, layers, onOpenNeoBlock, onSelect }: { node: RuntimeVisualNode; layers: RuntimeVisualNode[]; onOpenNeoBlock: () => void; onSelect: (node: RuntimeVisualNode) => void }) {
-  const rows: [string, string][] = [
-    ['node kind', node.kind.replace('_', ' ')],
-    ['node id', node.id],
-    ['status', node.status],
-    ['parentNeoBlockId', String(node.metadata?.parentNeoBlockId ?? node.neoBlockId ?? node.parentId?.replace(/^neoblock:/, '') ?? 'n/a')],
-    ['matchedCandidateId', String(node.metadata?.matchedCandidateId ?? 'not linked')],
-    ['sourcePath', String(node.metadata?.sourcePath ?? 'not linked')]
-  ];
-  return <aside className="runtime-node-inspector-card" aria-label="Runtime node inspector card"><h3>{node.kind === 'neoblock' ? 'NeoBlock inspector' : 'Selected node inspector'}</h3><b>{node.label}</b><p>{String(node.metadata?.description ?? node.rawNode?.subtitle ?? 'Compressed runtime node')}</p><div className="runtime-inspector-rows">{rows.map(([key, value]) => <span key={key}><b>{key}</b>{value}</span>)}</div>{node.kind !== 'neoblock' && node.neoBlockId && <button type="button" onClick={onOpenNeoBlock}>Open parent NeoBlock Map</button>}{node.kind === 'neoblock' && <button type="button" onClick={onOpenNeoBlock}>Open NeoBlock Map</button>}<div>{layers.map((layer) => <button key={layer.id} type="button" onClick={() => onSelect(layer)}>{layer.label}<small>{String(layer.metadata?.matchedCandidateId ?? 'not linked')} · {String(layer.metadata?.sourcePath ?? 'not linked')}</small></button>)}</div></aside>;
+  const parentStack = String(node.metadata?.parentNeoStackId ?? node.parentId?.replace(/^neostack:/, '') ?? 'n/a');
+  const sourceBoundLayers = layers.filter((layer) => layer.sourceStatus === 'source-library-reused' || Boolean(layer.metadata?.matchedCandidateId));
+  const rows: [string, string][] = node.kind === 'neoblock'
+    ? [
+      ['title', node.label],
+      ['parent NeoStack', parentStack],
+      ['MOLT child count', String(layers.length)],
+      ['source-bound count', String(sourceBoundLayers.length)]
+    ]
+    : [
+      ['title', node.label],
+      ['node type', node.kind.replace('_', ' ')],
+      ['status', node.status],
+      ['parent', node.parentId ?? 'n/a']
+    ];
+  return <aside className="runtime-node-inspector-card" aria-label="Runtime node inspector card"><h3>{node.kind === 'neoblock' ? 'NeoBlock inspector' : 'Selected node summary'}</h3><b>{node.label}</b><p>{String(node.metadata?.description ?? node.rawNode?.subtitle ?? 'Compressed runtime node')}</p><div className="runtime-inspector-rows">{rows.map(([key, value]) => <span key={key}><b>{key}</b>{value}</span>)}</div>{node.kind !== 'neoblock' && node.neoBlockId && <button type="button" onClick={onOpenNeoBlock}>Open parent NeoBlock Map</button>}{node.kind === 'neoblock' && <button type="button" onClick={onOpenNeoBlock}>Open NeoBlock Map</button>}<details className="runtime-inspector-molt-list"><summary>{node.kind === 'neoblock' ? 'View all MOLT' : 'Related MOLT'} ({layers.length})</summary><div>{layers.slice(0, 3).map((layer) => <button key={layer.id} type="button" onClick={() => onSelect(layer)}>{layer.label}<small>{String(layer.metadata?.matchedCandidateId ?? 'not linked')} · {String(layer.metadata?.sourcePath ?? 'not linked')}</small></button>)}{layers.length > 3 && <small>+ {layers.length - 3} more MOLT children</small>}</div></details></aside>;
 }

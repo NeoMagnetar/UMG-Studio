@@ -6,6 +6,7 @@ import { RuntimeGeometryPreview } from './components/RuntimeGeometryPreview';
 import { SleeveArchitectReviewPanel } from './components/SleeveArchitectReviewPanel';
 import { ActiveSessionSleeveStudioInspector } from './components/ActiveSessionSleeveStudioInspector';
 import { RuntimeGeometryObserver } from './components/RuntimeGeometryObserver';
+import { BasicCompileDiagnosticsDisclosure } from './components/BasicCompileDiagnosticsDisclosure';
 import './components/HierarchicalRuntimeVisualizer.css';
 import rawBlocks from '../data/library/blocks.json';
 import normalizedBlocks from '../data/library/normalized-blocks.json';
@@ -3283,46 +3284,22 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{activeSessionSleeve.neoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {block.moltBlockIds.length} · Gates {block.gateIds.length}</small><div className="compactCandidatePreview">{block.moltBlockIds.slice(0, 6).map((moltId) => activeSessionSleeve.moltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>)}</ol>}</details>)}</div>
       <small>Runtime-session only. This Sleeve is not saved to the source library.</small>
     </div>}
-    {hasGeneratedSleeve && palette.length > 0 && <div className="analysisPanel basicCapabilityPalette">
-      <div className="publicSectionTitle"><span>03</span><div><b>Capability Palette</b><small>Actions derived from the active Sleeve and registry status.</small></div></div>
-      <div className="phase5CardGrid">{palette.map((card) => <div key={card.capabilityId} className={`capabilityCard risk-${card.riskLevel}`}><b>{card.label}</b><small>{card.capabilityId} · {card.status} · risk {card.riskLevel}</small><p>{card.description}</p><span>{card.sourceNeoBlock ?? card.sourceNeoStack ?? 'Sleeve-level action'}</span><span>externalActionTaken: false</span><span className="capabilityStatusChip">{card.safeAction ? 'Available after compile' : 'Needs connector/setup'}</span></div>)}</div>
-    </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicCompilePanel">
       <div className="publicSectionTitle"><span>04</span><div><b>Compile</b><small>{compileStatus}</small></div></div>
       <p>{compileCardCopy}</p>
       {compilerUiStatus === 'disconnected' && <small>npm run umg:compiler-bridge</small>}
       {compileError && <div className="analysisWarnings"><b>Compile error</b><span>{compileError}</span></div>}
       {compilerResult?.errors?.length ? <div className="analysisWarnings"><b>Compiler response</b>{compilerResult.errors.map((error) => <span key={`${error.code}:${error.message}`}>{error.code}: {error.message}</span>)}</div> : null}
-      {Boolean(compileDiagnostics?.compileResponseBody || compilerResult?.raw) && <details className="compilerJsonPreview" open><summary>Compile diagnostics: response body / failing field</summary><pre>{JSON.stringify({ compileEndpoint: compileDiagnostics?.compileEndpoint, compileRequestBytes: compileDiagnostics?.compileRequestBytes, compileRequestBodyPreview: compileDiagnostics?.compileRequestBodyPreview, compileResponseStatus: compileDiagnostics?.compileResponseStatus, compileResponseBody: compileDiagnostics?.compileResponseBody, compilerValidationErrors: compileDiagnostics?.compilerValidationErrors, failingFieldPath: compileDiagnostics?.failingFieldPath }, null, 2)}</pre></details>}
+      <BasicCompileDiagnosticsDisclosure compileDiagnostics={compileDiagnostics as unknown as Record<string, unknown> | undefined} compilerRaw={compilerResult?.raw} />
       {!hasGeneratedSleeve && <small>Generate a Sleeve before compiling.</small>}
       <button type="button" className={`publicPrimaryCta ${isCompilingSleeve ? 'is-working' : ''}`} onClick={onCompileWithUMGCompiler} disabled={compileButtonDisabled}>{compileButtonLabel}</button>
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicRuntimeObserver">
-      <div className="publicSectionTitle"><span>05</span><div><b>Runtime</b><small>{runtimeStatus}</small></div></div>
-      <SummaryRows rows={[["Hermes", hermesEndpointConfigured ? 'configured' : 'not connected'], ["Native tools", 'available'], ["Runtime Graph", activeSessionSleeve ? 'structure available' : 'waiting for Sleeve'], ["Action mode", nativeActionMode === 'observe' ? 'Observe' : nativeActionMode === 'approval' ? 'Approval' : 'Direct'], ["Current task", runtimeTaskText || 'none typed'], ["Send readiness", sendDisabledReason], ...runtimeDetailRows]} />
-      <div className="nativeActionModePanel" aria-label="Native action mode">
-        <b>Selected action mode: {nativeActionMode === 'observe' ? 'Observe' : nativeActionMode === 'approval' ? 'Approval' : 'Direct'}</b>
-        <div className="nativeActionModeChoices">
-          {(['observe', 'approval', 'direct'] as Exclude<UMGNativeActionMode, 'blocked'>[]).map((mode) => <button key={mode} type="button" className={nativeActionMode === mode ? 'hot' : ''} onClick={() => onNativeActionModeChange(mode)}>{mode === 'observe' ? 'Observe' : mode === 'approval' ? 'Approval' : 'Direct'}</button>)}
-        </div>
-        <small>{nativeActionModeHelp.observe}</small>
-        <small>{nativeActionModeHelp.approval}</small>
-        <small>{nativeActionModeHelp.direct}</small>
-        <small>For note-file demos, choose Direct mode or continue an approval boundary before expecting a desktop file.</small>
-      </div>
-      <div className="basicRuntimeTaskCard" aria-label="Runtime task log">
-        <label><span>Current task</span><textarea value={runtimeObserverPrompt} onChange={(event) => onRuntimeObserverPromptChange(event.target.value)} placeholder="Type a task, then send it through this active Sleeve…" disabled={isHermesRunning} /></label>
-        <div className="templateActionRow"><button type="button" className={`publicPrimaryCta ${isHermesRunning && !isGeneratingSleeve && !isCompilingSleeve ? 'is-working' : ''}`} onClick={onRunHermesRuntime} disabled={isHermesRunning}>{isHermesRunning && !isGeneratingSleeve && !isCompilingSleeve ? 'Hermes working…' : 'Send to Hermes'}</button><span>{sendDisabledReason}</span></div>
-        <small>Task log: {runtimeTaskText ? `ready/current task — ${runtimeTaskText}` : 'waiting for typed task'}</small>
-      </div>
-      <small>{activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.' : 'Generate a Sleeve first.'}</small>
+      <div className="publicSectionTitle"><span>05</span><div><b>Runtime Graph</b><small>{activeSessionSleeve ? compiledRuntimeManifest ? 'ready after compile' : 'structure preview available' : 'waiting for Sleeve'}</small></div></div>
+      <p>{compiledRuntimeManifest ? 'Runtime Graph is ready. Send tasks and inspect live execution inside the Runtime Graph.' : activeSessionSleeve ? 'Open Runtime Graph for structural preview. Compile before live Hermes execution.' : 'Generate a Sleeve first.'}</p>
       <div className="templateActionRow"><button type="button" className={activeSessionSleeve ? 'publicPrimaryCta action-success' : 'publicPrimaryCta action-blocked'} onClick={onOpenRuntimeGeometry}>Open Runtime Graph</button></div>
       {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
-      {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}
-      {hermesRuntimeVisualState?.timeline.length ? <ol className="basicTraceList">{hermesRuntimeVisualState.timeline.map((event) => <li key={`${event.traceId}:${event.timestamp}`}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol> : <small>No runtime trace yet. Basic mode does not fabricate activation.</small>}
-      {geometryManifest && <RuntimeGeometryPreview manifest={geometryManifest} />}
-      {hermesRuntimeWarnings.length > 0 && <div className="analysisWarnings"><b>Runtime warnings</b>{hermesRuntimeWarnings.map((warning) => <span key={warning}>{warning}</span>)}</div>}
-      {hermesRuntimeErrors.length > 0 && <div className="analysisWarnings"><b>Runtime error</b><span>Hermes runtime error. Open Advanced Details for raw diagnostics.</span></div>}
+      {hermesRuntimeErrors.length > 0 && <div className="analysisWarnings"><b>Runtime error</b><span>Hermes runtime error. Open Runtime Graph for execution details.</span></div>}
     </div>}
   </section>;
 }

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import { RuntimeGeometryObserver, buildRuntimeGeometryObserverGraph, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
 import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 import { runNativeHermesAction } from '../lib/umg/hermesRuntimeExecution';
@@ -75,8 +76,24 @@ function renderObserver(extra = {}) {
   />);
 }
 
+function renderInteractiveObserver(extra = {}) {
+  return rtlRender(<RuntimeGeometryObserver
+    activeSessionSleeve={makeSleeve()}
+    runtimePrompt="write a note on my desktop about apples"
+    onRuntimePromptChange={() => {}}
+    onRunHermesRuntime={() => {}}
+    onContinueRuntimeApproval={() => {}}
+    onBackToBuilder={() => {}}
+    compileStatus="Compile succeeded"
+    runtimeStatus="Hermes ready"
+    isHermesRunning={false}
+    {...extra}
+  />);
+}
+
 describe('RuntimeGeometryObserver', () => {
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
   });
   it('renders the active Sleeve title and Runtime Graph warning without source-library controls', () => {
@@ -88,16 +105,34 @@ describe('RuntimeGeometryObserver', () => {
     expect(html).not.toContain('Promote to Source Library');
   });
 
-  it('Structure View shows Sleeve, NeoStack, NeoBlock, MOLT, Gate, and Capability nodes without trace', () => {
-    const html = renderObserver();
-    expect(html).toContain('sleeve');
-    expect(html).toContain('neostack');
-    expect(html).toContain('neoblock');
-    expect(html).toContain('molt');
-    expect(html).toContain('gate');
-    expect(html).toContain('capability');
-    expect(html).toContain('umg.capability.local_text_composition');
-    expect(html).toContain('umg.capability.local_note_file_write');
+  it('System Sleeve hides context-resource blocks by default and exposes them only behind the toggle', () => {
+    renderInteractiveObserver();
+    expect(screen.getByRole('button', { name: 'Show context resources' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /source library/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /compiler manifest/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show context resources' }));
+    expect(screen.getByRole('button', { name: /source library/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /compiler manifest/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide context resources' })).toBeTruthy();
+  });
+
+  it('NeoBlock Map renders the structural NeoBlock route without runtime trace', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    expect(screen.getByText('Structural route of all NeoBlocks across all NeoStacks. Runtime trace is not required.')).toBeTruthy();
+    expect(screen.getByLabelText('All NeoBlocks by NeoStack')).toBeTruthy();
+    expect(screen.getAllByText('Capture and Draft Note').length).toBeGreaterThan(0);
+    expect(screen.getByText('NeoBlock inspector')).toBeTruthy();
+    expect(screen.getByText('MOLT child count')).toBeTruthy();
+    expect(screen.getByText('source-bound count')).toBeTruthy();
+    expect(screen.getByText(/View all MOLT/)).toBeTruthy();
+  });
+
+  it('Runtime Path stays idle and shows the no-trace message until Hermes emits a trace', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'Runtime Path' }));
+    expect(screen.getByText('No runtime trace yet. Send a task to Hermes to activate the route.')).toBeTruthy();
+    expect(screen.getByText('Planned route skeleton is shown idle until a real Hermes trace arrives.')).toBeTruthy();
   });
 
   it('applies real runtime statuses, attaches artifacts, and leaves unmapped events unactivated', () => {

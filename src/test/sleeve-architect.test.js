@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import { createBusinessInputFromPublicIntake, analyzeBusinessInput } from '../lib/umg/businessAnalyzer';
 import { SleeveArchitectReviewPanel, summarizeArchitectReview } from '../components/SleeveArchitectReviewPanel';
 import { getBusinessAutomationCoreSleeve } from '../lib/umg/businessAutomationCoreSleeve';
@@ -33,6 +34,7 @@ import { parseWorkflowIntent } from '../lib/umg/umgWorkflowIntent';
 import { planWorkflowSlots } from '../lib/umg/umgWorkflowSlots';
 import { resolveWorkflowSlots } from '../lib/umg/umgBlockResolver';
 import { composeSleeveFromResolvedSlots } from '../lib/umg/umgSleeveComposer';
+import { BasicCompileDiagnosticsDisclosure } from '../components/BasicCompileDiagnosticsDisclosure';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
 
@@ -52,6 +54,7 @@ function sampleBlocks() {
 }
 
 describe('Phase 13A Sleeve Architect Mode foundation', () => {
+  afterEach(() => cleanup());
   it('keeps Business Automation available as Seed Template Mode for terse demo prompts', () => {
     const input = createBusinessInputFromPublicIntake({ goal: 'customer lead follow-up', context: '', selectedChip: 'Business Automation' });
     const map = analyzeBusinessInput(input);
@@ -411,7 +414,7 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     const compilerUiSource = readFileSync(`${process.cwd()}/src/lib/umg/compilerUiStatus.ts`, 'utf8');
     expect(appSource).toContain('Open Runtime Graph');
-    expect(appSource).toContain('Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.');
+    expect(appSource).toContain('Open Runtime Graph for structural preview. Compile before live Hermes execution.');
     expect(appSource).toContain('Generate a Sleeve first.');
     expect(appSource).not.toContain('Generate a source-bound Sleeve first.');
     expect(appSource).toContain('Generate a Sleeve before compiling.');
@@ -422,8 +425,9 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(appSource).not.toContain('Generated glue');
     expect(appSource).not.toContain('Runtime drafts');
     expect(appSource).not.toContain('Node-level reused');
-    expect(appSource).toContain('runtimeDetailRows');
-    expect(appSource).toContain('lastNativeActionResult || hermesRuntimeVisualState?.timeline.length');
+    const basicDiagnosticsSource = readFileSync(`${process.cwd()}/src/components/BasicCompileDiagnosticsDisclosure.tsx`, 'utf8');
+    expect(appSource).not.toContain('basicRuntimeTaskCard');
+    expect(basicDiagnosticsSource).toContain('Show compile diagnostics');
     expect(appSource).toContain('Noncanonical dev route.');
     expect(appSource).toContain('Advanced Diagnostics');
     expect(appSource).toContain('Intake Intelligence Diagnostics · Composition Source · bridge debug');
@@ -459,19 +463,26 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(getCompileReadiness({ activeSessionSleeve: sleeve, compilerHealth: 'connected_compiled', isCompilingSleeve: false, compileStatus: 'compiled' })).toMatchObject({ label: 'Recompile Sleeve', disabled: false, helper: 'Compile succeeded. Runtime Graph ready.', reason: 'compiled' });
   });
 
-  it('keeps Basic failure/action-mode UI explicit without duplicate retry source strings', () => {
+  it('collapses compile diagnostics by default and expands only on explicit click', () => {
+    rtlRender(React.createElement(BasicCompileDiagnosticsDisclosure, {
+      compileDiagnostics: { compileEndpoint: 'http://127.0.0.1:8787/compile', compileRequestBytes: 1200, compileResponseStatus: 200, compileResponseBody: { ok: true } },
+      compilerRaw: { response: { ok: true, compiler: 'umg' } }
+    }));
+    expect(screen.getByRole('button', { name: 'Show compile diagnostics' })).toBeTruthy();
+    expect(screen.queryByText(/compileEndpoint/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show compile diagnostics' }));
+    expect(screen.getByRole('button', { name: 'Hide compile diagnostics' })).toBeTruthy();
+    expect(screen.getByText(/compileEndpoint/)).toBeTruthy();
+  });
+
+  it('keeps Basic failure/runtime UI compact without duplicate retry source strings', () => {
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     expect((appSource.match(/Retry Generate Sleeve/g) ?? []).length).toBe(1);
     expect(appSource).not.toContain('Retry Hermes Generation');
-    expect(appSource).toContain('Observe: prepares route only; no external action');
-    expect(appSource).toContain('Approval: prepares action and waits');
-    expect(appSource).toContain('Direct: executes allowed native Hermes actions');
-    expect(appSource).toContain('For note-file demos, choose Direct mode or continue an approval boundary');
-    expect(appSource).toContain('Current task');
-    expect(appSource).toContain('Task log:');
-    expect(appSource).toContain('Compile required before Send to Hermes.');
+    expect(appSource).toContain('Runtime Graph is ready. Send tasks and inspect live execution inside the Runtime Graph.');
     expect(appSource).toContain('Task received. Compile required before Hermes can run.');
-    expect(appSource).toContain('Send to Hermes');
+    expect(appSource).not.toContain('Task log:');
+    expect(appSource).not.toContain('No runtime trace yet. Basic mode does not fabricate activation.');
   });
 
   it('adds ship-mode loading states, status strip, and visible no-op prevention copy', () => {
