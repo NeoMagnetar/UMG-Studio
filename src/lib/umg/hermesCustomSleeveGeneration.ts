@@ -451,13 +451,17 @@ function bindPlanMoltChildrenToNeoBlocks(plan: HermesCustomSleevePlanV01, reques
   return Array.from(existing.values()).sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0));
 }
 
-export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTemplateSleeve; request?: HermesCustomSleeveGenerationRequest; route: 'live Hermes' | 'offline template' | 'intake draft' | 'calibrated_library_backed_sleeve'; reasonIfNotEligible?: string }) {
+export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTemplateSleeve; request?: HermesCustomSleeveGenerationRequest; route: 'live Hermes' | 'offline template' | 'intake draft' | 'calibrated_library_backed_sleeve' | 'imported_legacy_sleeve_package'; reasonIfNotEligible?: string }) {
   const sleeve = args.sleeve;
   const moltBlocks = sleeve?.moltBlocks ?? [];
-  const boundMoltCount = moltBlocks.filter((block) => block.sourceKind === 'source-library reused' || block.sourceKind === 'metamolt tool' || block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length;
+  const isImportedLegacyPackage = args.route === 'imported_legacy_sleeve_package' || sleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || sleeve?.metadata?.importedPackage === true;
+  const boundMoltCount = isImportedLegacyPackage
+    ? moltBlocks.length
+    : moltBlocks.filter((block) => block.sourceKind === 'source-library reused' || block.sourceKind === 'metamolt tool' || block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length;
   const sourceLibraryBoundCount = moltBlocks.filter((block) => block.sourceKind === 'source-library reused').length;
   const unresolvedCount = moltBlocks.filter((block) => block.sourceKind === 'unresolved').length;
-  const compileEligible = (args.route === 'live Hermes' && Boolean(sleeve?.metadata?.generatedByHermes) || args.route === 'calibrated_library_backed_sleeve' && sleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve' && sleeve?.metadata?.compileEligible === true) && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length);
+  const structurallyValidImport = isImportedLegacyPackage && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length) && (sleeve?.metadata?.compileEligible === true || sleeve?.metadata?.mode === 'runtime_session_draft' || sleeve?.metadata?.sourceKind === 'imported-legacy-package');
+  const compileEligible = (args.route === 'live Hermes' && Boolean(sleeve?.metadata?.generatedByHermes) || args.route === 'calibrated_library_backed_sleeve' && sleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve' && sleeve?.metadata?.compileEligible === true || structurallyValidImport) && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length);
   return {
     generationRoute: args.route,
     libraryIndex: {
@@ -482,14 +486,20 @@ export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTem
     metaMoltToolBlockCount: moltBlocks.filter((block) => block.sourceKind === 'metamolt tool').length,
     generatedDraftCount: moltBlocks.filter((block) => block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length,
     unresolvedCount,
-    sourceBindingStatus: !sleeve ? 'missing' : sourceLibraryBoundCount === 0 ? 'missing' : unresolvedCount > 0 ? 'partial' : 'complete',
+    sourceBindingStatus: !sleeve ? 'missing' : isImportedLegacyPackage ? 'optional_import_not_resolved' : sourceLibraryBoundCount === 0 ? 'missing' : unresolvedCount > 0 ? 'partial' : 'complete',
     compileEligibility: compileEligible ? 'yes' : 'no',
     reasonIfNotEligible: compileEligible ? undefined : args.reasonIfNotEligible ?? 'ActiveSessionSleeve is only compileable after live Hermes composition binds library/runtime MOLT children.'
   };
 }
 
 export function isActiveSessionSleeveCompileEligible(sleeve?: NormalizedTemplateSleeve) {
-  const route = sleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve' ? 'calibrated_library_backed_sleeve' : sleeve?.metadata?.generatedByHermes ? 'live Hermes' : 'intake draft';
+  const route = sleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || sleeve?.metadata?.importedPackage === true
+    ? 'imported_legacy_sleeve_package'
+    : sleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve'
+      ? 'calibrated_library_backed_sleeve'
+      : sleeve?.metadata?.generatedByHermes
+        ? 'live Hermes'
+        : 'intake draft';
   return buildCompositionSourceDiagnostics({ sleeve, route }).compileEligibility === 'yes';
 }
 

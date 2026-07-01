@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -27,7 +27,7 @@ import { deriveCompilerUiStatus, getCompileButtonLabel, getCompileReadiness, get
 import { ActiveSessionSleeveStudioInspector, MoltDetailPanel } from '../components/ActiveSessionSleeveStudioInspector';
 import { summarizeNormalizedTemplateSourceStatus } from '../lib/umg/templateSleeveStructures';
 import { buildCalibratedHaikuDesktopNoteSleeve } from '../lib/umg/calibratedDemoSleeves';
-import { compactCandidateForHermesPrompt, isActiveSessionSleeveCompileEligible } from '../lib/umg/hermesCustomSleeveGeneration';
+import { buildCompositionSourceDiagnostics, compactCandidateForHermesPrompt, isActiveSessionSleeveCompileEligible } from '../lib/umg/hermesCustomSleeveGeneration';
 import { hydrateUmgLibraryCandidate, retrieveRoleTargetedUmgLibraryCandidates } from '../lib/umg/umgLibraryCandidateRetrieval';
 import { getBlockById } from '../lib/umg/umgLibraryRegistry';
 import { parseWorkflowIntent } from '../lib/umg/umgWorkflowIntent';
@@ -37,8 +37,133 @@ import { composeSleeveFromResolvedSlots } from '../lib/umg/umgSleeveComposer';
 import { BasicCompileDiagnosticsDisclosure } from '../components/BasicCompileDiagnosticsDisclosure';
 import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from '../lib/umg/umgBlockAuthoring';
 import { deleteWorkspaceBlock, getWorkspaceBlockById, listWorkspaceBlocks, saveWorkspaceBlock, searchWorkspaceBlocks } from '../lib/umg/umgWorkspaceBlockRegistry';
+import { detectUmgPackage, disseminateUploadedFile } from '../lib/umg/import/umgArchiveDisseminator';
+import { parseTextLikeFile } from '../lib/umg/import/umgFileClassifier';
+import { importLegacySleevePackage } from '../lib/umg/import/umgLegacySleevePackageImporter';
+import { buildHermesImportBrief } from '../lib/umg/import/umgHermesImportBrief';
+import { AppErrorBoundary } from '../components/AppErrorBoundary';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
+
+function buildLegacyUoStructureFixture() {
+  const stacks = Array.from({ length: 8 }, (_, stackIndex) => {
+    const stackNo = stackIndex + 1;
+    const bullets = Array.from({ length: 6 }, (_, blockIndex) => `- UO C# workflow block ${stackNo}.${blockIndex + 1}: ServUO ModernUO behavior ${blockIndex + 1}.`).join('\n');
+    return `### S.${stackNo} - UO Developer Stack ${stackNo} (6 NeoBlocks)\n${bullets}`;
+  }).join('\n\n');
+  const molts = Array.from({ length: 4 }, (_, index) => `### PRIM.UO.${String(index + 1).padStart(3, '0')} - Governance Primary ${index + 1}\n**Content:** Keep UO / ServUO / ModernUO C# server changes reviewed and source-library-safe.`).join('\n\n');
+  return `# UO Server Developer Sleeve\nSleeve ID: SLV.UO.SERVER.DEVELOPER.v1.0\nVersion: 1.0.0\n\n## NeoStacks\n${stacks}\n\n## MOLT Governance\n${molts}`;
+}
+
+describe('UMG universal import dissemination engine pass 1', () => {
+  it('detects and imports a legacy UO Sleeve package into review-only workspace blocks', () => {
+    const structure = buildLegacyUoStructureFixture();
+    const files = [
+      parseTextLikeFile('COMPLETE_UO_SLEEVE_STRUCTURE.md', structure),
+      parseTextLikeFile('system-prompt.txt', 'You are an Ultima Online C# coder agent for ServUO and ModernUO.'),
+      parseTextLikeFile('openclaw-config.json', JSON.stringify({ sleeveId: 'SLV.UO.SERVER.DEVELOPER.v1.0' }))
+    ];
+    const detection = detectUmgPackage(files);
+    expect(detection.detected).toBe(true);
+    expect(detection.packageType).toBe('legacy_umg_sleeve_package');
+    expect(detection.sleeveId).toBe('SLV.UO.SERVER.DEVELOPER.v1.0');
+    const imported = importLegacySleevePackage(files);
+    expect(imported.ok).toBe(true);
+    expect(imported.sleeve.id).toBe('SLV.UO.SERVER.DEVELOPER.v1.0');
+    expect(imported.sleeve.neoStacks).toHaveLength(8);
+    expect(imported.sleeve.neoBlocks).toHaveLength(48);
+    expect(imported.sleeve.moltBlocks.length).toBeGreaterThanOrEqual(48 * 3);
+    expect(imported.sleeve.metadata.protectedSourceLibraryWrite).toBe(false);
+    expect(imported.sleeve.neoBlocks.every((block) => block.gates.length === 0 && block.capabilities.length === 0 && block.nlCard && block.jsonSchema)).toBe(true);
+    expect(imported.report.filesSkipped).toBe(0);
+    expect(imported.report.packageDetection.packageType).toBe('legacy_umg_sleeve_package');
+    expect(imported.report.extractedCounts.neoStacks).toBe(8);
+    expect(imported.report.extractedCounts.neoBlocks).toBe(48);
+    expect(imported.report.compileEligibility).toBe('yes');
+  });
+
+  it('marks imported legacy packages as first-class compile-eligible sleeves without live Hermes/source-library binding', () => {
+    const files = [parseTextLikeFile('COMPLETE_UO_SLEEVE_STRUCTURE.md', buildLegacyUoStructureFixture())];
+    const imported = importLegacySleevePackage(files);
+    expect(imported.ok).toBe(true);
+    const sleeve = imported.sleeve;
+    expect(sleeve.metadata).toMatchObject({
+      generationRoute: 'imported_legacy_sleeve_package',
+      importedPackage: true,
+      liveHermesGenerated: false,
+      generatedByHermes: false,
+      compileEligible: true,
+      protectedSourceLibraryWrite: false
+    });
+    expect(isActiveSessionSleeveCompileEligible(sleeve)).toBe(true);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve, route: 'imported_legacy_sleeve_package' });
+    expect(diagnostics).toMatchObject({
+      generationRoute: 'imported_legacy_sleeve_package',
+      compileEligibility: 'yes',
+      sourceBindingStatus: 'optional_import_not_resolved'
+    });
+    expect(diagnostics.reasonIfNotEligible).toBeUndefined();
+  });
+
+  it('keeps imported package Basic/Compile UI copy isolated from stale Hermes generation failure copy', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('Imported legacy UMG Sleeve package ready. Compile next.');
+    expect(appSource).toContain("generationRoute: 'imported_legacy_sleeve_package'");
+    expect(appSource).toContain('importedPackage: true');
+    expect(appSource).toContain('stale_live_hermes_response_ignored');
+    expect(appSource).toContain('Try Live Hermes Generation');
+    expect(appSource).toContain('Source-library matches: not resolved yet / optional');
+    expect(appSource).toContain('isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b>');
+  });
+
+  it('dedupes repeated governance content and produces a compact Hermes import brief', () => {
+    const repeatedGovernance = `# Duplicate Governance Sleeve\nSleeve ID: SLV.UO.SERVER.DEVELOPER.v1.0\n### S.1 - Stack (1 NeoBlock)\n- Build C# shard behavior.\n### PRIM.UO.001 - Duplicate Rule\n**Content:** Same content.\n### PRIM.UO.002 - Duplicate Rule\n**Content:** Same content.`;
+    const files = [parseTextLikeFile('COMPLETE_UO_SLEEVE_STRUCTURE.md', repeatedGovernance)];
+    const imported = importLegacySleevePackage(files);
+    expect(imported.ok).toBe(true);
+    expect(imported.report.duplicates.merged).toBeGreaterThan(0);
+    const brief = buildHermesImportBrief(imported.report, files, imported.sleeve);
+    expect(brief.instruction).toMatch(/Do not invent source-library IDs/);
+    expect(brief.normalizedCandidatePreview.sourceLibraryWrite).toBe(false);
+    expect(brief.fileSummaries[0].preview).toContain('Duplicate Governance Sleeve');
+  });
+
+  it('returns a safe failed report for malformed zip uploads instead of throwing', async () => {
+    const malformedZip = new File([new Uint8Array([1, 2, 3, 4])], 'broken-legacy-package.zip', { type: 'application/zip' });
+    await expect(disseminateUploadedFile(malformedZip)).resolves.toMatchObject({
+      report: {
+        sourceKind: 'uploaded-zip',
+        packageDetection: { detected: false, packageType: 'unknown' },
+        compileEligibility: 'no'
+      }
+    });
+    const result = await disseminateUploadedFile(malformedZip);
+    expect(result.files[0].parseStatus).toBe('failed');
+    expect(result.report.schemaIssues[0].message).toMatch(/Import failed safely/);
+  });
+
+  it('normalized imported blocks include current render-safe array defaults', () => {
+    const structure = buildLegacyUoStructureFixture();
+    const imported = importLegacySleevePackage([parseTextLikeFile('COMPLETE_UO_SLEEVE_STRUCTURE.md', structure)]);
+    expect(imported.ok).toBe(true);
+    expect(imported.sleeve.neoBlocks).toHaveLength(48);
+    expect(imported.sleeve.neoBlocks.every((block) => Array.isArray(block.gateIds))).toBe(true);
+    expect(imported.sleeve.neoBlocks.every((block) => Array.isArray(block.moltBlockIds))).toBe(true);
+    expect(JSON.stringify(buildHermesImportBrief(imported.report, [], imported.sleeve))).not.toContain('/home/neomagnetar/umg-block-library');
+  });
+
+  it('AppErrorBoundary renders recovery UI for a thrown child error', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ThrowingChild = () => { throw new Error('synthetic import render crash'); };
+    rtlRender(React.createElement(AppErrorBoundary, null, React.createElement(ThrowingChild)));
+    expect(screen.getAllByText('UMG Studio recovered from a UI crash.').length).toBeGreaterThan(0);
+    expect(screen.getByText('synthetic import render crash')).toBeTruthy();
+    expect(screen.getByText('Back to Sleeve Builder')).toBeTruthy();
+    expect(screen.getByText('Clear current import session')).toBeTruthy();
+    expect(screen.getByText('Reload app')).toBeTruthy();
+    consoleError.mockRestore();
+  });
+});
 
 function createMemoryStorage() {
   const values = new Map();

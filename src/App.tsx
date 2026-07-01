@@ -61,6 +61,8 @@ import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './l
 import { buildUploadedContextText, createMetadataMoltBlock, extractKeywordsFromText, itemMatchesLiveTagQuery, itemMatchesSelectedTags, matchesPrefixFirstBlockSearch, normalizeLibraryText, sortMatchingTags, sortPrefixFirstBlockSearchItems, summarizeUploadedText, UploadedIntakeContext } from './lib/umg/libraryBrowserSemantics';
 import { HERMES_NATIVE_META_MOLT_TOOL_BLOCKS } from './lib/umg/nativeHermesToolBlocks';
 import { createReadErrorUploadedIntakeContext, createUnsupportedUploadedIntakeContext, createUploadedIntakeContext } from './lib/umg/intakeSemanticExtraction';
+import { disseminateUploadedFile } from './lib/umg/import/umgArchiveDisseminator';
+import { buildHermesImportBrief } from './lib/umg/import/umgHermesImportBrief';
 import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import type { UMGCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import { listWorkspaceBlocks, saveWorkspaceBlock } from './lib/umg/umgWorkspaceBlockRegistry';
@@ -405,6 +407,8 @@ export default function App() {
   const [publicTemplateSelection, setPublicTemplateSelection] = useState<TemplateSelectionResult | undefined>();
   const [sleeveArchitectPlan, setSleeveArchitectPlan] = useState<SleeveArchitectPlan | undefined>();
   const [activeSessionSleeve, setActiveSessionSleeve] = useState<NormalizedTemplateSleeve | undefined>();
+  const [importReviewReport, setImportReviewReport] = useState<Record<string, unknown> | undefined>();
+  const [hermesImportBrief, setHermesImportBrief] = useState<Record<string, unknown> | undefined>();
   const [hermesCustomGenerationStatus, setHermesCustomGenerationStatus] = useState<string | undefined>();
   const [hermesCustomGenerationDiagnostics, setHermesCustomGenerationDiagnostics] = useState<Record<string, unknown> | undefined>();
   const [businessAutomationCoreBuild, setBusinessAutomationCoreBuild] = useState<InstantiatedTemplateSleeve | undefined>();
@@ -1984,6 +1988,23 @@ export default function App() {
     setPublicBusinessMap(businessMap);
     setPublicTemplateSelection(templateSelection);
     setSleeveArchitectPlan(architectPlan);
+    if (importReviewReport && activeSessionSleeve) {
+      setPublicIntakeSubmitted(true);
+      setHermesCustomGenerationStatus('ok: imported UMG package · review workspace ready · live Hermes generation skipped');
+      setHermesCustomGenerationDiagnostics({
+        generationRoute: 'imported_legacy_sleeve_package',
+        importedPackage: true,
+        liveHermesGenerated: false,
+        packageDetected: true,
+        importReviewReport,
+        hermesImportBrief,
+        fallbackUsed: false,
+        genericArchitectDraftShown: false,
+        sourceLibraryWrite: false
+      });
+      setStatus('Imported legacy UMG Sleeve package ready. Compile next.');
+      return;
+    }
     setActiveSessionSleeve(undefined);
     setHermesCustomGenerationStatus(undefined);
     setHermesCustomGenerationDiagnostics(undefined);
@@ -2116,6 +2137,10 @@ export default function App() {
         const generation = await requestHermesCustomSleevePlan({ endpoint: generationEndpoint || undefined, runtimeEndpoint: hermesConfig.endpoint, request: generationRequest });
         const rawDebug = (generation.raw as Record<string, unknown> | undefined)?.debug as Record<string, unknown> | undefined;
         if (!generation.ok || !generation.plan) {
+          if (generationRunId !== sleeveActivationVersionRef.current) {
+            setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'stale_live_hermes_response_ignored' }));
+            return;
+          }
           const errors = generation.validation.errors.join(' ');
           setHermesCustomGenerationStatus(`failed: ${errors}`);
           setHermesCustomGenerationDiagnostics({ ...preflightDiagnostics, generationRoute: 'intake draft', fallbackUsed: false, fallbackReason: errors || 'validation failed', responseRawDebug: rawDebug, failureStage: rawDebug?.failureStage, requestPayloadBytes: rawDebug?.requestPayloadBytes, payloadTransport: rawDebug?.payloadTransport, compactingApplied: rawDebug?.compactingApplied, compositionSource: buildCompositionSourceDiagnostics({ request: generationRequest, route: 'intake draft', reasonIfNotEligible: errors || 'Hermes generation unavailable; intake draft is not compileable.' }) });
@@ -2166,6 +2191,10 @@ export default function App() {
         setStatus('Sleeve ready. Compile next.');
         return;
       } catch (error) {
+        if (generationRunId !== sleeveActivationVersionRef.current) {
+          setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'stale_live_hermes_response_ignored' }));
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         const failureStage = /E2BIG|too large/i.test(message) ? 'spawn_e2big' : 'client_exception';
         setHermesCustomGenerationStatus(`failed: ${message}`);
@@ -2766,6 +2795,66 @@ export default function App() {
         files.forEach(async (file) => {
           const base = { name: file.name, size: file.size, lastModified: file.lastModified, type: file.type };
           const intakeBase = { fileName: file.name, mimeType: file.type, sizeBytes: file.size, lastModified: file.lastModified };
+          try {
+            const disseminated = await disseminateUploadedFile(file);
+            if (disseminated.report.packageDetection.detected) {
+              const brief = buildHermesImportBrief(disseminated.report, disseminated.files, disseminated.normalizedSleeveCandidate);
+              const summary = `Package detected: ${disseminated.report.packageDetection.packageType}; Sleeve ID: ${disseminated.report.packageDetection.sleeveId ?? disseminated.normalizedSleeveCandidate?.id ?? 'unknown'}; files parsed: ${disseminated.report.filesParsed}/${disseminated.report.filesTotal}; NeoStacks imported: ${disseminated.report.extractedCounts.neoStacks}; NeoBlocks imported: ${disseminated.report.extractedCounts.neoBlocks}; MOLT imported/generated: ${disseminated.report.extractedCounts.moltBlocks}; duplicates merged: ${disseminated.report.duplicates.merged}; compile eligibility: ${disseminated.report.compileEligibility}.`;
+              const parsed: UploadedIntakeContext = createUploadedIntakeContext({ ...intakeBase, text: JSON.stringify(brief, null, 2) });
+              setImportReviewReport(disseminated.report as unknown as Record<string, unknown>);
+              setHermesImportBrief(brief as unknown as Record<string, unknown>);
+              if (disseminated.normalizedSleeveCandidate) {
+                sleeveActivationVersionRef.current += 1;
+                const runtimeSleeve = {
+                  ...(disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve),
+                  metadata: {
+                    ...((disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve).metadata ?? {}),
+                    generationRoute: 'imported_legacy_sleeve_package',
+                    importedPackage: true,
+                    liveHermesGenerated: false,
+                    generatedByHermes: false,
+                    compileEligible: true,
+                    sourceLibraryBacked: false
+                  }
+                } as NormalizedTemplateSleeve;
+                const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: [], sourceLabel: 'imported_legacy_package' });
+                setActiveSessionSleeve(runtimeSleeve);
+                resetCompileStateForActiveSleeve(runtimeSleeve);
+                setBlockMatchPlan(artifacts.blockMatchPlan);
+                setDraftReviewState([]);
+                setSleeveAssemblyPlan(artifacts.assemblyPlan);
+                setCompileCandidate(artifacts.compileCandidate);
+                setCompilerRequestPreview(undefined);
+              }
+              setHermesCustomGenerationStatus('ok: imported UMG package · live Hermes generation skipped');
+              setHermesCustomGenerationDiagnostics({ generationRoute: 'imported_legacy_sleeve_package', importedPackage: true, liveHermesGenerated: false, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
+              setCompilerResult(undefined);
+              setCompileError(null);
+              setStatus('Imported legacy UMG Sleeve package ready. Compile next.');
+              setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...parsed, summary, status: 'parsed_text' }]);
+              setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'parsed_text', textPreview: summary, keywords: ['umg', 'imported', disseminated.report.packageDetection.packageType], syntaxSignals: ['zip parsed', 'schema proximity analyzed'], semanticSignals: ['package detected', 'import review workspace'], domainSignals: disseminated.report.packageDetection.sleeveId ? [disseminated.report.packageDetection.sleeveId] : [], suggestedMoltRoles: ['primary', 'directive', 'instruction', 'subject'] }]);
+              return;
+            }
+            if (disseminated.files.some((entry) => entry.parseStatus === 'failed') || disseminated.report.schemaIssues.some((issue) => issue.severity === 'error')) {
+              const firstError = disseminated.files.find((entry) => entry.parseStatus === 'failed')?.parseError ?? disseminated.report.schemaIssues.find((issue) => issue.severity === 'error')?.message ?? 'Unknown import parse failure.';
+              const failed = createReadErrorUploadedIntakeContext({ ...intakeBase, error: `Import failed safely: ${firstError}` });
+              setImportReviewReport(disseminated.report as unknown as Record<string, unknown>);
+              setHermesImportBrief(undefined);
+              setHermesCustomGenerationStatus('failed: import failed safely');
+              setHermesCustomGenerationDiagnostics({ generationRoute: 'safe import failure', packageDetected: false, importReviewReport: disseminated.report, firstError, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
+              setStatus('Import failed safely. No live Hermes generation or generic Architect fallback was run automatically.');
+              setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), failed]);
+              setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'read_error', textPreview: failed.summary, keywords: ['import-failed-safely'] }]);
+              return;
+            }
+          } catch (error) {
+            if (/\.zip$/i.test(file.name)) {
+              const failed: UploadedIntakeContext = createReadErrorUploadedIntakeContext({ ...intakeBase, error: error instanceof Error ? error.message : String(error) });
+              setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), failed]);
+              setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'read_error', textPreview: failed.summary }]);
+              return;
+            }
+          }
           if (!supportedIntakeTextFile(file)) {
             const unsupported: UploadedIntakeContext = createUnsupportedUploadedIntakeContext(intakeBase);
             setUploadedIntakeContexts((current) => current.some((entry) => publicFileKey(entry) === publicFileKey(base)) ? current : [...current, unsupported]);
@@ -2784,8 +2873,8 @@ export default function App() {
           }
         });
       }}
-      onFileRemove={(file) => { setPublicSelectedFiles((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); setUploadedIntakeContexts((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); }}
-      onFilesClear={() => { setPublicSelectedFiles([]); setUploadedIntakeContexts([]); }}
+      onFileRemove={(file) => { setPublicSelectedFiles((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); setUploadedIntakeContexts((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); setImportReviewReport(undefined); setHermesImportBrief(undefined); }}
+      onFilesClear={() => { setPublicSelectedFiles([]); setUploadedIntakeContexts([]); setImportReviewReport(undefined); setHermesImportBrief(undefined); }}
       onSubmit={submitPublicIntake}
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onRunBlockMatching={runBusinessAutomationBlockMatching}
@@ -3314,21 +3403,26 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       return undefined;
     }
   }, [compiledRuntimeManifest, hermesRuntimeVisualState]);
+  const safeActiveNeoStacks = Array.isArray(activeSessionSleeve?.neoStacks) ? activeSessionSleeve.neoStacks : [];
+  const safeActiveNeoBlocks = Array.isArray(activeSessionSleeve?.neoBlocks) ? activeSessionSleeve.neoBlocks : [];
+  const safeActiveMoltBlocks = Array.isArray(activeSessionSleeve?.moltBlocks) ? activeSessionSleeve.moltBlocks : [];
+  const safeActiveGates = Array.isArray(activeSessionSleeve?.gates) ? activeSessionSleeve.gates : [];
   const activeSleeveTitle = activeSessionSleeve?.title;
-  const activeSourceStatus = activeSessionSleeve ? summarizeNormalizedTemplateSourceStatus(activeSessionSleeve) : undefined;
+  const activeSourceStatus = activeSessionSleeve ? summarizeNormalizedTemplateSourceStatus({ ...activeSessionSleeve, neoStacks: safeActiveNeoStacks, neoBlocks: safeActiveNeoBlocks, moltBlocks: safeActiveMoltBlocks, gates: safeActiveGates } as NormalizedTemplateSleeve) : undefined;
   const activeSleeveCounts = activeSessionSleeve ? {
-    neoStacks: activeSessionSleeve.neoStacks.length,
-    neoBlocks: activeSessionSleeve.neoBlocks.length,
-    moltBlocks: activeSessionSleeve.moltBlocks.length,
-    gates: activeSessionSleeve.gates.length,
+    neoStacks: safeActiveNeoStacks.length,
+    neoBlocks: safeActiveNeoBlocks.length,
+    moltBlocks: safeActiveMoltBlocks.length,
+    gates: safeActiveGates.length,
     reused: activeSourceStatus?.nodeLevelReusedCount ?? 0,
     reuseDecisions: activeSourceStatus?.reuseDecisionCount ?? 0,
     unresolved: activeSourceStatus?.unresolvedCount ?? 0,
     sourceBindingStatus: activeSourceStatus?.sourceBindingStatus ?? 'missing',
     sourceBindingWarning: activeSourceStatus?.sourceBindingWarning
   } : undefined;
-  const activeStackPreview = activeSessionSleeve?.neoStacks.map((stack) => ({ id: stack.id, title: stack.title, reason: stack.description })) ?? [];
-  const activeGenerationRoute = activeSessionSleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve' ? 'calibrated_library_backed_sleeve' : activeSessionSleeve ? 'live Hermes' : 'intake draft';
+  const activeStackPreview = safeActiveNeoStacks.map((stack) => ({ id: stack.id, title: stack.title, reason: stack.description }));
+  const isImportedPackageRoute = activeSessionSleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || activeSessionSleeve?.metadata?.importedPackage === true;
+  const activeGenerationRoute = isImportedPackageRoute ? 'imported_legacy_sleeve_package' : activeSessionSleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve' ? 'calibrated_library_backed_sleeve' : activeSessionSleeve ? 'live Hermes' : 'intake draft';
   const compositionSource = (hermesCustomGenerationDiagnostics?.compositionSource ?? buildCompositionSourceDiagnostics({ sleeve: activeSessionSleeve, route: activeGenerationRoute })) as Record<string, unknown>;
   const compilerUiStatus = deriveCompilerUiStatus({ compilerBridgeAvailable, compiledRuntimeManifest, result: compilerResult });
   const hasGeneratedSleeve = isActiveSessionSleeveCompileEligible(activeSessionSleeve);
@@ -3351,8 +3445,8 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
   const basicCandidatePreview = getBasicCandidatePreview(hermesCustomGenerationDiagnostics?.topCandidates, businessInput.text);
   const hermesGenerationFailed = Boolean(hermesCustomGenerationStatus?.startsWith('failed') || compilerResult?.errors?.some((error) => String(error.code).startsWith('HERMES_CUSTOM_SLEEVE_GENERATION')));
   const nonCanonicalDevRoute = typeof window !== 'undefined' && ['5185', '5174', '5175', '5177'].includes(window.location.port);
-  const toolBlockCount = activeSessionSleeve?.moltBlocks.filter((block) => block.sourceKind === 'metamolt tool' || block.id.startsWith('TOOL.')).length ?? 0;
-  const libraryBlocksUsed = activeSessionSleeve?.moltBlocks.filter((block) => block.sourceKind === 'source-library reused' || block.sourceKind === 'metamolt tool') ?? [];
+  const toolBlockCount = safeActiveMoltBlocks.filter((block) => block.sourceKind === 'metamolt tool' || block.id.startsWith('TOOL.')).length;
+  const libraryBlocksUsed = safeActiveMoltBlocks.filter((block) => block.sourceKind === 'source-library reused' || block.sourceKind === 'metamolt tool');
   const libraryBlockExamples = libraryBlocksUsed.slice(0, 5).map((block) => block.title || block.matchedCandidateId || block.id);
   const candidatesReturned = Number(hermesCustomGenerationDiagnostics?.candidateCount ?? (hermesCustomGenerationDiagnostics?.compositionSource as Record<string, unknown> | undefined)?.candidatesReturned ?? 0);
   const candidatesBound = Number((hermesCustomGenerationDiagnostics?.compositionSource as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? hermesCustomGenerationDiagnostics?.candidatesBound ?? 0);
@@ -3384,8 +3478,9 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     <div className="analysisPanel basicSleevePanel">
       <div className="publicSectionTitle"><span>01</span><div><b>Generate a Sleeve</b><small>Hermes-first runtime-session Sleeve; no source library write.</small></div></div>
       <p className="analysisSummary">{businessInput.text}</p>
-      <div className="templateActionRow"><button type="button" className={`publicPrimaryCta ${isGeneratingSleeve ? 'is-working' : ''}`} onClick={onRunArchitectExecution} disabled={isGeneratingSleeve}>{generationButtonLabel}</button>{showCalibratedFastPath && <button type="button" className="publicSecondaryCta" onClick={onUseCalibratedHaikuNoteSleeve}>Use Calibrated Haiku Note Sleeve</button>}</div>
-      {hermesCustomGenerationStatus && <small>Hermes custom generation: {hermesCustomGenerationStatus}</small>}
+      <div className="templateActionRow"><button type="button" className={`publicPrimaryCta ${isGeneratingSleeve ? 'is-working' : ''}`} onClick={onRunArchitectExecution} disabled={isGeneratingSleeve}>{generationButtonLabel}</button>{showCalibratedFastPath && <button type="button" className="publicSecondaryCta" onClick={onUseCalibratedHaikuNoteSleeve}>Use Calibrated Haiku Note Sleeve</button>}{isImportedPackageRoute && <button type="button" className="publicSecondaryCta" onClick={onRunArchitectExecution} disabled={isGeneratingSleeve}>Try Live Hermes Generation</button>}</div>
+      {hermesCustomGenerationStatus && !isImportedPackageRoute && <small>Hermes custom generation: {hermesCustomGenerationStatus}</small>}
+      {isImportedPackageRoute && <small>Imported legacy UMG Sleeve package ready. Compile next.</small>}
       {classifications.some((entry) => entry.sensitive) && <div className="analysisWarnings"><b>Sensitive material detected</b><span>It will not be shown in prompts, trace, or artifacts.</span></div>}
       <div className="basicClassificationChips">{classifications.map((entry) => <span key={entry.kind}>{entry.label}{entry.sensitive ? ' · protected' : ''}</span>)}</div>
     </div>
@@ -3400,12 +3495,13 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     {activeSessionSleeve && <div className="analysisPanel basicSleevePreview">
       <div className="publicSectionTitle"><span>02</span><div><b>Sleeve ready</b><small>Hermes structure available for Basic drill-down.</small></div></div>
       {activeSessionSleeve.metadata?.generationRoute === 'calibrated_library_backed_sleeve' && <small>Calibrated UMG Sleeve</small>}
+      {isImportedPackageRoute && <small>Imported legacy UMG Sleeve package</small>}
       <h3>{activeSleeveTitle}</h3>
       <p>{activeSessionSleeve.description}</p>
       {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT layers</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{toolBlockCount}</b><span>Tool Blocks</span></div><div><b>{palette.length}</b><span>Capabilities</span></div>{activeSleeveCounts.unresolved > 0 && <div><b>{activeSleeveCounts.unresolved}</b><span>Needs attention</span></div>}</div></>}
-      <small>Library candidates bound: {String((activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? (activeSessionSleeve.moltBlocks ?? []).filter((block) => block.sourceKind === 'source-library reused').length)}</small>
-      <div className="compactCandidatePreview"><b>Library blocks used: {libraryBlocksUsed.length}</b>{libraryBlockExamples.map((title) => <span key={String(title)}>{String(title)}</span>)}</div>
-      <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{activeSessionSleeve.neoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {block.moltBlockIds.length} · Gates {block.gateIds.length}</small><div className="compactCandidatePreview">{block.moltBlockIds.slice(0, 6).map((moltId) => activeSessionSleeve.moltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>)}</ol>}</details>)}</div>
+      {isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b><span>NeoStacks imported: {safeActiveNeoStacks.length}</span><span>NeoBlocks imported: {safeActiveNeoBlocks.length}</span><span>MOLT imported/generated: {safeActiveMoltBlocks.length}</span><span>Source-library matches: not resolved yet / optional</span><span>Duplicates merged: {String(((activeSessionSleeve.metadata?.duplicateDiagnostics as Record<string, unknown> | undefined)?.merged ?? (hermesCustomGenerationDiagnostics?.importReviewReport as { duplicates?: { merged?: unknown } } | undefined)?.duplicates?.merged ?? 0))}</span><span>Schema adjustments: {String((hermesCustomGenerationDiagnostics?.importReviewReport as { normalizationAdjustments?: unknown[] } | undefined)?.normalizationAdjustments?.length ?? 0)}</span></div> : <><small>Library candidates bound: {String((activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? safeActiveMoltBlocks.filter((block) => block.sourceKind === 'source-library reused').length)}</small>
+      <div className="compactCandidatePreview"><b>Library blocks used: {libraryBlocksUsed.length}</b>{libraryBlockExamples.map((title) => <span key={String(title)}>{String(title)}</span>)}</div></>}
+      <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{safeActiveNeoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => { const moltBlockIds = Array.isArray(block.moltBlockIds) ? block.moltBlockIds : []; const gateIds = Array.isArray(block.gateIds) ? block.gateIds : Array.isArray((block as unknown as { gates?: unknown[] }).gates) ? (block as unknown as { gates: unknown[] }).gates : []; return <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {moltBlockIds.length} · Gates {gateIds.length}</small><div className="compactCandidatePreview">{moltBlockIds.slice(0, 6).map((moltId) => safeActiveMoltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>; })}</ol>}</details>)}</div>
       <small>Runtime-session only. This Sleeve is not saved to the source library.</small>
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicCompilePanel">
