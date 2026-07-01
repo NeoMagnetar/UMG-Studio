@@ -21,9 +21,12 @@ import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, redactSensitiveText } from '../lib/umg/basicModeScaffolds';
 import { HackathonLandingPage } from '../components/HackathonLandingPage';
-import { deriveCompilerUiStatus, getCompileButtonLabel, getCompilerCardCopy, getCompilerTopCopy } from '../lib/umg/compilerUiStatus';
+import { deriveCompilerUiStatus, getCompileButtonLabel, getCompileReadiness, getCompilerCardCopy, getCompilerTopCopy } from '../lib/umg/compilerUiStatus';
 import { ActiveSessionSleeveStudioInspector, MoltDetailPanel } from '../components/ActiveSessionSleeveStudioInspector';
 import { summarizeNormalizedTemplateSourceStatus } from '../lib/umg/templateSleeveStructures';
+import { buildCalibratedHaikuDesktopNoteSleeve } from '../lib/umg/calibratedDemoSleeves';
+import { compactCandidateForHermesPrompt, isActiveSessionSleeveCompileEligible } from '../lib/umg/hermesCustomSleeveGeneration';
+import { hydrateUmgLibraryCandidate, retrieveRoleTargetedUmgLibraryCandidates } from '../lib/umg/umgLibraryCandidateRetrieval';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
 
@@ -400,11 +403,14 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(palette.map((card) => card.label)).toEqual(['Local text composition', 'Prepare desktop note artifact']);
     expect(palette.map((card) => card.label)).not.toEqual(expect.arrayContaining(['Generate executive summary', 'Create financial assumptions']));
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    const compilerUiSource = readFileSync(`${process.cwd()}/src/lib/umg/compilerUiStatus.ts`, 'utf8');
     expect(appSource).toContain('Open Runtime Graph');
     expect(appSource).toContain('Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.');
-    expect(appSource).toContain('Generate a source-bound Sleeve first.');
+    expect(appSource).toContain('Generate a Sleeve first.');
+    expect(appSource).not.toContain('Generate a source-bound Sleeve first.');
+    expect(appSource).toContain('Generate a Sleeve before compiling.');
     expect(appSource).toContain('npm run umg:compiler-bridge');
-    expect(appSource).toContain('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
+    expect(compilerUiSource).toContain('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
     expect(appSource).not.toContain('Open Runtime Observer');
     expect(appSource).not.toContain('Open Runtime Geometry');
     expect(appSource).not.toContain('Generated glue');
@@ -421,14 +427,15 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     const connected = deriveCompilerUiStatus({ compilerBridgeAvailable: true, result: { status: 'error', errors: [], warnings: [] } });
     expect(connected).toBe('connected_not_compiled');
     expect(getCompilerTopCopy(connected)).toBe('Compiler connected · not compiled');
-    expect(getCompilerCardCopy(connected)).toBe('Compiler connected. Compile Sleeve.');
+    expect(getCompilerCardCopy(connected)).toBe('Compiler connected. Ready to compile.');
     expect(getCompileButtonLabel({ status: connected, hasSourceBoundSleeve: true, isHermesRunning: false })).toBe('Compile Sleeve');
+    expect(getCompileButtonLabel({ status: connected, hasSourceBoundSleeve: true, isHermesRunning: false, isCompiling: true })).toBe('Compiling…');
 
     const disconnected = deriveCompilerUiStatus({ compilerBridgeAvailable: false, result: { status: 'not_configured', errors: [], warnings: [] } });
     expect(disconnected).toBe('disconnected');
     expect(getCompilerTopCopy(disconnected)).toBe('Compiler bridge not connected');
     expect(getCompilerCardCopy(disconnected)).toBe('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
-    expect(getCompileButtonLabel({ status: disconnected, hasSourceBoundSleeve: true, isHermesRunning: false })).toBe('Start compiler bridge, then Compile Sleeve');
+    expect(getCompileButtonLabel({ status: disconnected, hasSourceBoundSleeve: true, isHermesRunning: false })).toBe('Compile Sleeve');
 
     const compiled = deriveCompilerUiStatus({ compilerBridgeAvailable: true, compiledRuntimeManifest: { sleeveId: 'sleeve.demo', sleeveTitle: 'Demo', compiledAt: 'now', compiledStructure: {}, runtimeInstructions: [], executionPlan: [], gates: [], toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'manual', executionMode: 'direct', registry: [] }, sourceBlocks: [], traceMetadata: {} } });
     expect(compiled).toBe('connected_compiled');
@@ -436,13 +443,63 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(getCompilerCardCopy(compiled)).toBe('Compile succeeded');
   });
 
+  it('keeps compile readiness helper consistent across ready, compiling, failed retry, disconnected, no Sleeve, and compiled states', () => {
+    const sleeve = { id: 'calibrated.haiku', title: 'Desktop Note Haiku Workflow Sleeve' };
+    expect(getCompileReadiness({ activeSessionSleeve: undefined, compilerHealth: 'connected_not_compiled', isCompilingSleeve: false, compileStatus: 'idle' })).toMatchObject({ label: 'Compile Sleeve', disabled: true, helper: 'Generate a Sleeve before compiling.', reason: 'no_sleeve' });
+    expect(getCompileReadiness({ activeSessionSleeve: sleeve, compilerHealth: 'disconnected', isCompilingSleeve: false, compileStatus: 'idle' })).toMatchObject({ label: 'Compile Sleeve', disabled: true, helper: 'Compiler bridge not connected.', reason: 'compiler_disconnected' });
+    expect(getCompileReadiness({ activeSessionSleeve: sleeve, compilerHealth: 'connected_not_compiled', isCompilingSleeve: false, compileStatus: 'idle' })).toMatchObject({ label: 'Compile Sleeve', disabled: false, helper: 'Compiler connected. Ready to compile.', reason: 'ready' });
+    expect(getCompileReadiness({ activeSessionSleeve: sleeve, compilerHealth: 'connected_not_compiled', isCompilingSleeve: true, compileStatus: 'compiling' })).toMatchObject({ label: 'Compiling…', disabled: true, helper: 'Compiling Sleeve…', reason: 'compiling' });
+    expect(getCompileReadiness({ activeSessionSleeve: sleeve, compilerHealth: 'connected_not_compiled', isCompilingSleeve: false, compileStatus: 'failed', compileError: 'real compiler error' })).toMatchObject({ label: 'Retry Compile', disabled: false, helper: 'Previous compile failed. Retry compile.', reason: 'previous_compile_failed' });
+    expect(getCompileReadiness({ activeSessionSleeve: sleeve, compilerHealth: 'connected_compiled', isCompilingSleeve: false, compileStatus: 'compiled' })).toMatchObject({ label: 'Recompile Sleeve', disabled: false, helper: 'Compile succeeded. Runtime Graph ready.', reason: 'compiled' });
+  });
+
   it('keeps Basic failure/action-mode UI explicit without duplicate retry source strings', () => {
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
-    expect((appSource.match(/Retry Hermes Generation/g) ?? []).length).toBe(1);
+    expect((appSource.match(/Retry Generate Sleeve/g) ?? []).length).toBe(1);
+    expect(appSource).not.toContain('Retry Hermes Generation');
     expect(appSource).toContain('Observe: prepares route only; no external action');
     expect(appSource).toContain('Approval: prepares action and waits');
     expect(appSource).toContain('Direct: executes allowed native Hermes actions');
     expect(appSource).toContain('For note-file demos, choose Direct mode or continue an approval boundary');
+    expect(appSource).toContain('Current task');
+    expect(appSource).toContain('Task log:');
+    expect(appSource).toContain('Compile required before Send to Hermes.');
+    expect(appSource).toContain('Task received. Compile required before Hermes can run.');
+    expect(appSource).toContain('Send to Hermes');
+  });
+
+  it('adds ship-mode loading states, status strip, and visible no-op prevention copy', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    const styleSource = readFileSync(`${process.cwd()}/src/style.css`, 'utf8');
+    const compilerUiSource = readFileSync(`${process.cwd()}/src/lib/umg/compilerUiStatus.ts`, 'utf8');
+    expect(appSource).toContain('Generating Sleeve…');
+    expect(appSource).toContain('Generating…');
+    expect(appSource).toContain('Sleeve ready. Compile next.');
+    expect(appSource).toContain('Hermes generation failed. Retry available.');
+    expect(compilerUiSource).toContain('Compile Sleeve');
+    expect(compilerUiSource).toContain('Compiling…');
+    expect(appSource).toContain('Compile succeeded. Runtime Graph ready.');
+    expect(appSource).toContain('compile_click_received');
+    expect(appSource).toContain('lastCompileGuardResult');
+    expect(appSource).toContain('compileRequestBytes');
+    expect(appSource).toContain('Compiler bridge not connected.');
+    expect(appSource).toContain('Compile failed. See error.');
+    expect(appSource).toContain('Open Runtime Graph');
+    expect(appSource).toContain('Send to Hermes');
+    expect(appSource).toContain('basicActionStatusStrip');
+    expect(appSource).toContain('Generation is already running.');
+    expect(appSource).toContain('Missing prompt. Enter an intake prompt before generating a Sleeve.');
+    expect(appSource).toContain('Generate a Sleeve before opening the Runtime Graph.');
+    expect(appSource).toContain('Hermes disconnected. Configure Hermes before sending.');
+    expect(styleSource).toContain('.is-working');
+    expect(styleSource).toContain('@keyframes umgWorkingPulse');
+  });
+
+  it('keeps generation failure to one Basic retry button source and no source-bound Basic blocker', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect((appSource.match(/Retry Generate Sleeve/g) ?? []).length).toBe(1);
+    expect(appSource).not.toContain('Generate a source-bound Sleeve first');
+    expect(appSource).toContain('Hermes did not return a valid Sleeve.');
   });
 
   it('keeps general canvas separate and only exposes Inspect Active Sleeve when session state exists', () => {
@@ -825,6 +882,103 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(classified.find((entry) => entry.kind === 'credential_or_secret')?.warnings.join(' ')).toMatch(/Sensitive material detected/);
     expect(redactSensitiveText(text)).not.toContain('sk-testsecret123456789');
     expect(classified.map((entry) => entry.redactedPreview).join('\n')).not.toContain('sk-testsecret123456789');
+  });
+
+  it('builds a guaranteed calibrated library-backed haiku desktop note rescue Sleeve', () => {
+    const sleeve = buildCalibratedHaikuDesktopNoteSleeve({
+      sourcePrompt: 'Create a haiku note about apples and save it to my desktop.',
+      generationFailureReason: 'neoStacks must be non-empty. neoBlocks must be non-empty. moltBlocks must be non-empty.',
+      retrievedLibraryCandidates: [
+        { id: 'BP.031', title: 'Haiku', blockType: 'molt', role: 'blueprint', tags: ['haiku', 'poetry', 'verse', 'poetic form'], description: 'Haiku poetic form blueprint.', sourcePath: 'AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json#BP.031', sourceKind: 'source-library', score: 40, matchReasons: ['forced-haiku-domain-style'] },
+        { id: 'SUBJ.016', title: 'Text documents', blockType: 'molt', role: 'subject', tags: ['text', 'document'], description: 'Text document artifact source block.', sourcePath: 'HUMAN/MOLT/SUBJ.016.json', sourceKind: 'source-library', score: 20, matchReasons: ['title:text'], jsonSchema: { type: 'object', properties: { document: { type: 'string' } } } },
+        { id: 'SUBJ.020', title: 'Documentation', blockType: 'molt', role: 'subject', tags: ['documentation'], description: 'Documentation and output artifact.', sourcePath: 'HUMAN/MOLT/SUBJ.020.json', sourceKind: 'source-library', score: 18, matchReasons: ['title:documentation'] },
+        { id: 'BLUEPRINT.NOTE_OUTPUT', title: 'Document Output Process', blockType: 'molt', role: 'blueprint', tags: ['document', 'output', 'process'], description: 'Document output process blueprint.', sourcePath: 'HUMAN/MOLT/BLUEPRINT.NOTE_OUTPUT.json', sourceKind: 'source-library', score: 16, matchReasons: ['tag:document'] },
+        { id: 'INST.WRITE_CONTENT', title: 'Write Content', blockType: 'molt', role: 'instruction', tags: ['write', 'content'], description: 'Write or create content.', sourcePath: 'HUMAN/MOLT/INST.WRITE_CONTENT.json', sourceKind: 'source-library', score: 15, matchReasons: ['tag:write'] },
+        { id: 'TRACE.RUNTIME', title: 'UMG RuntimeSpec Trace', blockType: 'molt', role: 'meta', tags: ['trace'], description: 'Runtime trace support only.', sourcePath: 'HUMAN/MOLT/TRACE.RUNTIME.json', sourceKind: 'source-library', score: 1, matchReasons: ['runtime'] },
+        { id: 'LANGCHAIN.BRIDGE', title: 'LangChain Bridge', blockType: 'molt', role: 'instruction', tags: ['langchain'], description: 'External competitor bridge.', sourcePath: 'EXTERNAL/LANGCHAIN.json', sourceKind: 'source-library', score: 99, matchReasons: ['bridge'] }
+      ]
+    });
+    expect(sleeve.title).toBe('Desktop Note Haiku Workflow Sleeve');
+    expect(sleeve.metadata.generationRoute).toBe('calibrated_library_backed_sleeve');
+    expect(sleeve.metadata.liveHermesGenerated).toBe(false);
+    expect(sleeve.metadata.generatedByHermes).toBe(false);
+    expect(sleeve.metadata.compileEligible).toBe(true);
+    expect(isActiveSessionSleeveCompileEligible(sleeve)).toBe(true);
+    expect(sleeve.neoStacks).toHaveLength(4);
+    expect(sleeve.neoStacks.every((stack) => stack.neoBlockIds.length > 0)).toBe(true);
+    expect(sleeve.neoBlocks).toHaveLength(10);
+    expect(sleeve.neoBlocks.every((block) => block.moltBlockIds.length > 0)).toBe(true);
+    expect(sleeve.moltBlocks.map((block) => block.id)).toEqual(expect.arrayContaining(['MERGE.INTENT_WITH_HAIKU_FRAME', 'MERGE.DRAFT_SEMANTIC_CONSTRAINTS', 'MERGE.ACTION_PAYLOAD', 'TOOL.HERMES.NOTE_CREATE.v0.1', 'TOOL.HERMES.FILE_WRITE.v0.1']));
+    expect(sleeve.gates.map((gate) => gate.id)).toEqual(expect.arrayContaining(['NOTE_REQUEST_TRIGGER_GATE', 'HAIKU_POLICY_GATE', 'DESKTOP_WRITE_ACTION_GATE', 'OUTPUT_VERIFICATION_GATE']));
+    const sourceBound = sleeve.moltBlocks.filter((block) => block.sourceKind === 'source-library reused');
+    expect(sourceBound.length).toBeGreaterThan(4);
+    expect(sourceBound.map((block) => block.matchedCandidateId)).toEqual(expect.arrayContaining(['BP.031', 'SUBJ.016', 'SUBJ.020', 'BLUEPRINT.NOTE_OUTPUT', 'INST.WRITE_CONTENT']));
+    const haikuBound = sourceBound.find((block) => block.matchedCandidateId === 'BP.031');
+    expect(['CAL.HAIKU.BLOCK.RESOLVE_FORM', 'CAL.HAIKU.BLOCK.CONSTRAINT_MODEL']).toContain(haikuBound?.parentNeoBlockId);
+    expect(sourceBound.map((block) => block.matchedCandidateId)).not.toContain('LANGCHAIN.BRIDGE');
+    expect(sourceBound.find((block) => block.matchedCandidateId === 'SUBJ.020')?.jsonSchema).toMatchObject({ type: 'object' });
+    expect(sleeve.moltBlocks.filter((block) => block.sourceKind === 'runtime-session draft').length).toBeGreaterThan(0);
+    expect(sleeve.moltBlocks.find((block) => block.sourceKind === 'runtime-session draft')?.generationReason).toMatch(/runtime|source|library|draft/i);
+    expect(sleeve.moltBlocks.find((block) => block.sourceKind === 'runtime-session draft')?.rejectedCandidateIds).toEqual(expect.any(Array));
+    expect(sleeve.metadata.sourceStatusSummary).toMatchObject({ candidatesByRole: expect.any(Object), candidatesBoundIntoSleeve: expect.any(Number), rejectedCandidateIds: expect.any(Array) });
+    expect(sleeve.metadata.sourceBindingCoverage).toMatchObject({ subject: true, blueprintOrHaikuForm: true, instructionOrWriting: true, toolBlock: true, artifactDocumentOutput: true });
+    expect(sleeve.metadata.structuralIR).toMatchObject({ mergeOps: expect.any(Array), toolBlocks: expect.any(Array), gates: expect.any(Array), routes: expect.any(Array) });
+    expect(sleeve.metadata.auditResult).toMatchObject({ passed: true, revisionRequired: false });
+  });
+
+  it('retrieves and hydrates role-targeted Haiku desktop note candidates', () => {
+    const result = retrieveRoleTargetedUmgLibraryCandidates('a sleeve for creating, writing, and saving notes on my desktop that when text generation is prompted it always outputs in a haiku form', { combinedLimit: 48, perRoleLimit: 8 });
+    expect(result.candidatesByRole.subject.length).toBeGreaterThan(0);
+    expect(result.candidatesByRole.instruction.length).toBeGreaterThan(0);
+    expect(result.candidatesByRole.blueprint.length).toBeGreaterThan(0);
+    expect(result.candidatesByRole.domainStyle.some((candidate) => /haiku|poetry|verse|poetic/i.test(`${candidate.id} ${candidate.title} ${candidate.category} ${candidate.tags.join(' ')}`))).toBe(true);
+    const hydrated = hydrateUmgLibraryCandidate(result.candidatesByRole.domainStyle[0]);
+    expect(hydrated).toMatchObject({ id: expect.any(String), title: expect.any(String), content: expect.any(String), nlCard: expect.any(Object), jsonSchema: expect.any(Object), sourcePath: expect.any(String) });
+  });
+
+  it('keeps calibrated rescue UI and compile guard distinct from fake live Hermes success', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('Use Calibrated Haiku Note Sleeve');
+    expect(appSource).toContain('Hermes generation failed. Live generation did not return a usable Sleeve.');
+    expect(appSource).toContain("generationRoute: 'calibrated_library_backed_sleeve'");
+    expect(appSource).toContain('setActiveSessionSleeve(runtimeSleeve)');
+    expect(appSource).toContain('isActiveSessionSleeveCompileEligible(activeSessionSleeve)');
+    expect(appSource).toContain('Library blocks used:');
+    expect(appSource).toContain('source-library reused');
+    expect(appSource).toContain('Library candidates were found, but none were bound into the Sleeve.');
+    expect(appSource).toContain('candidatesByRole');
+    expect(appSource).toContain('rejectedCandidateIds');
+    expect(appSource).not.toContain('offline fake scaffold');
+  });
+
+  it('keeps Generate Sleeve as primary button and calibrated fallback secondary in Basic source', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('<b>Generate a Sleeve</b>');
+    expect(appSource).toContain('>{generationButtonLabel}</button>{showCalibratedFastPath');
+    expect(appSource).toContain('className="publicSecondaryCta" onClick={onUseCalibratedHaikuNoteSleeve}>Use Calibrated Haiku Note Sleeve');
+    expect(appSource).toContain('Live Hermes generation request was too large. Use calibrated Sleeve or retry with compact request.');
+  });
+
+  it('compacts candidate payloads before sending to Hermes prompt', () => {
+    const compact = compactCandidateForHermesPrompt({
+      id: 'SUBJ.016',
+      title: 'Text documents',
+      blockType: 'molt',
+      role: 'subject',
+      tags: Array.from({ length: 20 }, (_, index) => `tag-${index}`),
+      description: 'Document candidate',
+      content: 'A'.repeat(2000),
+      sourcePath: 'AI/MOLT-BLOCKS/subjects/library.json#SUBJ.016',
+      sourceKind: 'source-library',
+      nlCard: { title: 'Text documents', role: 'subject', category: 'documents', tags: ['text'], description: 'D'.repeat(500), content: 'C'.repeat(1000) },
+      jsonSchema: { type: 'object' }
+    });
+    expect(compact.contentPreview.length).toBeLessThanOrEqual(520);
+    expect(compact.tags).toHaveLength(10);
+    expect(compact.hasJsonSchema).toBe(true);
+    expect(compact.hasNlCard).toBe(true);
+    expect(compact.jsonSchema).toBeUndefined();
+    expect(compact.nlCard.content.length).toBeLessThanOrEqual(320);
   });
 
 });

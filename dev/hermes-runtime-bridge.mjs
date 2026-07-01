@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
 
@@ -68,8 +69,17 @@ function truncateText(text, limit) {
   return text.length > limit ? `${text.slice(0, limit)}\n...[truncated]` : text;
 }
 
+function jsonByteLength(value) {
+  return Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value ?? null), 'utf8');
+}
+
 function uniqueStrings(values) {
   return Array.from(new Set(values.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim())));
+}
+
+function cleanupPayloadFile(payloadTempFile) {
+  if (!payloadTempFile) return;
+  try { fs.rmSync(path.dirname(payloadTempFile), { recursive: true, force: true }); } catch {}
 }
 
 function countByScope(sourceBlocks, scopeKind) {
@@ -378,7 +388,23 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
     const provider = env.HERMES_INFERENCE_PROVIDER || HERMES_DEFAULT_PROVIDER;
     const model = env.HERMES_INFERENCE_MODEL || HERMES_DEFAULT_MODEL;
     const toolsets = env.HERMES_RUNTIME_TOOLSETS || SAFE_TOOLSETS;
-    const args = ['-z', prompt, '--provider', provider, '--model', model, '--toolsets', toolsets];
+    const requestPayloadBytes = jsonByteLength(prompt);
+    const requestedTransport = env.HERMES_PAYLOAD_TRANSPORT || 'argv';
+    const useTempFile = requestedTransport === 'temp-file' || requestPayloadBytes > Number(env.HERMES_ARGV_PROMPT_BYTE_LIMIT || 12000);
+    let payloadTempFile;
+    let promptForCli = prompt;
+    if (useTempFile) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'umg-hermes-payload-'));
+      payloadTempFile = path.join(tempDir, 'request-prompt.txt');
+      fs.writeFileSync(payloadTempFile, prompt, 'utf8');
+      promptForCli = [
+        'Read the full UMG/Hermes request prompt from this local temp file, then follow it exactly.',
+        `Temp file: ${payloadTempFile}`,
+        'Return only the final response required by the file. Do not modify source libraries.'
+      ].join('\n');
+    }
+    const payloadTransport = useTempFile ? 'temp-file' : 'argv';
+    const args = ['-z', promptForCli, '--provider', provider, '--model', model, '--toolsets', toolsets];
     const childEnv = {
       PATH: env.PATH,
       HOME: env.HOME,
@@ -403,7 +429,8 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
       if (child?.kill) child.kill('SIGKILL');
       if (!settled) {
         settled = true;
-        reject(Object.assign(new Error('Hermes runtime CLI timed out.'), { code: 'ETIMEDOUT', stderr }));
+        cleanupPayloadFile(payloadTempFile);
+        reject(Object.assign(new Error('Hermes runtime CLI timed out.'), { code: 'ETIMEDOUT', stderr, requestPayloadBytes, payloadTransport }));
       }
     }, timeoutMs);
 
@@ -422,14 +449,16 @@ export function runHermesRuntimeCli(prompt, env = process.env, spawnFn = spawn, 
       if (settled) return;
       clearTimeout(timer);
       settled = true;
-      reject(error);
+      cleanupPayloadFile(payloadTempFile);
+      reject(Object.assign(error, { requestPayloadBytes, payloadTransport }));
     });
     child.on('close', (code, signal) => {
       if (settled) return;
       clearTimeout(timer);
       settled = true;
-      if (code === 0 && !signal) resolve({ ok: true, status: 200, text: stdout.trim() });
-      else reject(Object.assign(new Error(signal ? `Hermes runtime CLI exited with ${signal}` : `Hermes runtime CLI exited with status ${code}`), { code: signal || code, stderr }));
+      cleanupPayloadFile(payloadTempFile);
+      if (code === 0 && !signal) resolve({ ok: true, status: 200, text: stdout.trim(), requestPayloadBytes, payloadTransport });
+      else reject(Object.assign(new Error(signal ? `Hermes runtime CLI exited with ${signal}` : `Hermes runtime CLI exited with status ${code}`), { code: signal || code, stderr, requestPayloadBytes, payloadTransport }));
     });
   });
 }
@@ -960,8 +989,67 @@ export function validateCustomSleeveGenerationRequest(request) {
   return { ok: true };
 }
 
+export function compactCustomSleeveGenerationRequestForPrompt(request, { topKPerRole = 5, previewChars = 480 } = {}) {
+  const compactCandidate = (candidate) => ({
+    id: candidate?.id,
+    title: candidate?.title,
+    blockType: candidate?.blockType,
+    role: candidate?.role,
+    tags: Array.isArray(candidate?.tags) ? candidate.tags.slice(0, 10) : [],
+    category: candidate?.category,
+    sourcePath: candidate?.sourcePath,
+    sourceKind: candidate?.sourceKind,
+    score: candidate?.score,
+    contentPreview: truncateText(String(candidate?.content ?? candidate?.description ?? candidate?.nlCard?.content ?? candidate?.title ?? ''), previewChars),
+    hasNlCard: Boolean(candidate?.nlCard),
+    hasJsonSchema: Boolean(candidate?.jsonSchema),
+    nlCard: candidate?.nlCard ? {
+      title: candidate.nlCard.title,
+      role: candidate.nlCard.role,
+      category: candidate.nlCard.category,
+      tags: Array.isArray(candidate.nlCard.tags) ? candidate.nlCard.tags.slice(0, 8) : [],
+      description: truncateText(String(candidate.nlCard.description ?? ''), 220),
+      content: truncateText(String(candidate.nlCard.content ?? ''), 320)
+    } : undefined
+  });
+  const candidatesByRole = isRecord(request?.candidatesByRole) ? request.candidatesByRole : {};
+  return redactSecrets({
+    requestId: request?.requestId,
+    selectedMode: request?.selectedMode,
+    userPrompt: request?.userPrompt,
+    userContextSummary: truncateText(String(request?.userContext ?? ''), 1200),
+    uploadedContextSummary: Array.isArray(request?.uploadedContexts) ? request.uploadedContexts.map((context) => ({
+      filename: context?.filename,
+      status: context?.status,
+      textPreview: truncateText(String(context?.text ?? context?.summary ?? ''), 600)
+    })).slice(0, 4) : [],
+    supportedPromptMoltRoles: request?.supportedPromptMoltRoles,
+    appLocalSkillBundle: request?.appLocalSkillBundle ? {
+      id: request.appLocalSkillBundle.id,
+      title: request.appLocalSkillBundle.title,
+      version: request.appLocalSkillBundle.version,
+      sleeveDecompositionSkill: truncateText(String(request.appLocalSkillBundle.sleeveDecompositionSkill ?? ''), 800),
+      hierarchyCardSkill: truncateText(String(request.appLocalSkillBundle.hierarchyCardSkill ?? ''), 800),
+      compilerAlignmentRules: truncateText(String(request.appLocalSkillBundle.compilerAlignmentRules ?? ''), 800),
+      supportedPromptMoltRoles: request.appLocalSkillBundle.supportedPromptMoltRoles,
+      sourceLibraryBoundaryRules: request.appLocalSkillBundle.sourceLibraryBoundaryRules,
+      capabilityBoundaryRules: request.appLocalSkillBundle.capabilityBoundaryRules
+    } : undefined,
+    gatePolicy: request?.gatePolicy,
+    sourceLibraryPolicy: request?.sourceLibraryPolicy,
+    structuralComposerRules: request?.outputContract,
+    compacting: { applied: true, topKPerRole, previewChars, fullHydrationPhase: 'app-after-hermes-selected-ids' },
+    candidatesByRole: Object.fromEntries(Object.entries(candidatesByRole).map(([role, candidates]) => [role, Array.isArray(candidates) ? candidates.slice(0, topKPerRole).map(compactCandidate) : []])),
+    libraryCandidates: Array.isArray(request?.libraryCandidates) ? request.libraryCandidates.slice(0, Math.max(12, topKPerRole * 4)).map(compactCandidate) : [],
+    metaMoltToolBlockIds: ['TOOL.HERMES.NOTE_CREATE.v0.1', 'TOOL.HERMES.FILE_WRITE.v0.1'],
+    outputSelectionContract: 'Phase A: return selected source-library candidate IDs in reuseDecisions/moltBlocks via matchedCandidateId, reusedBlockId, or sourceId. Phase B: the app hydrates full nlCard/jsonSchema/source metadata from the local index after Hermes returns selected IDs.',
+    missingRoles: request?.missingRoles,
+    rejectedCandidateIds: Array.isArray(request?.rejectedCandidateIds) ? request.rejectedCandidateIds.slice(0, 30) : []
+  });
+}
+
 export function buildCustomSleeveGenerationPrompt(request) {
-  const safeRequest = redactSecrets(request);
+  const safeRequest = compactCustomSleeveGenerationRequestForPrompt(request);
   return [
     'You are Hermes generating a UMG Studio Custom Workflow Sleeve plan.',
     'Use the app-local UMG skill bundle supplied below. Do not assume global Hermes skills are installed.',
@@ -1103,6 +1191,64 @@ export function normalizeCustomSleevePlanNlCards(plan) {
   return plan;
 }
 
+function minimalMoltJsonSchema(record = {}, fallback = {}) {
+  if (hasObject(record.jsonSchema)) return record.jsonSchema;
+  if (hasObject(fallback.jsonSchema)) return fallback.jsonSchema;
+  if (hasObject(record.schema)) return record.schema;
+  if (hasObject(fallback.schema)) return fallback.schema;
+  const role = firstNonEmpty(record.role, fallback.role, 'molt');
+  const sourceKind = firstNonEmpty(record.sourceKind, fallback.sourceKind, 'runtime-session draft');
+  return {
+    type: 'object',
+    required: ['role', 'content'],
+    properties: {
+      role: { type: 'string', const: role },
+      title: { type: 'string' },
+      content: { type: 'string' },
+      sourceKind: { type: 'string', const: sourceKind },
+      matchedCandidateId: { type: 'string' },
+      sourcePath: { type: 'string' },
+      [role]: { type: 'string' }
+    }
+  };
+}
+
+function findLibraryCandidateForMolt(molt, request) {
+  const ids = new Set([molt?.matchedCandidateId, molt?.reusedBlockId, molt?.sourceId, molt?.id, molt?.sourcePath].filter(Boolean).map(String));
+  return (request?.libraryCandidates || []).find((candidate) => candidate?.blockType === 'molt' && (ids.has(String(candidate.id)) || ids.has(String(candidate.sourcePath)) || firstNonEmpty(candidate.title).toLowerCase() === firstNonEmpty(molt?.title).toLowerCase()));
+}
+
+export function normalizeCustomSleevePlanJsonSchemas(plan, request = {}) {
+  if (!hasObject(plan)) return plan;
+  const firstBlock = (plan.neoBlocks || [])[0];
+  const firstStack = (plan.neoStacks || [])[0];
+  for (const stack of plan.neoStacks || []) {
+    if (!hasObject(stack.jsonSchema)) stack.jsonSchema = { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, neoBlockIds: { type: 'array', items: { type: 'string' } } } };
+  }
+  for (const block of plan.neoBlocks || []) {
+    if (!hasObject(block.jsonSchema)) block.jsonSchema = { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, moltBlockIds: { type: 'array', items: { type: 'string' } } } };
+  }
+  for (const [index, molt] of (plan.moltBlocks || []).entries()) {
+    const candidate = findLibraryCandidateForMolt(molt, request);
+    if (candidate) {
+      molt.sourceKind = 'source-library reused';
+      molt.matchedCandidateId = molt.matchedCandidateId || candidate.id;
+      molt.reusedBlockId = molt.reusedBlockId || candidate.id;
+      molt.sourcePath = molt.sourcePath || candidate.sourcePath;
+    }
+    if (!molt.parentNeoBlockId && firstBlock?.id) molt.parentNeoBlockId = firstBlock.id;
+    if (!molt.parentNeoStackId) molt.parentNeoStackId = firstBlock?.neoStackId || firstBlock?.parentNeoStackId || firstStack?.id;
+    if (!Number.isFinite(Number(molt.stackOrder))) molt.stackOrder = index + 1;
+    if (!molt.sourceKind) molt.sourceKind = candidate ? 'source-library reused' : 'runtime-session draft';
+    if (!molt.generationReason && (molt.role || molt.content)) molt.generationReason = candidate ? `Bound source-library MOLT ${candidate.id}.` : `Generated runtime-session MOLT ${molt.id || index + 1}.`;
+    molt.jsonSchema = minimalMoltJsonSchema(molt, candidate || {});
+  }
+  if (hasObject(plan.structuralIR)) {
+    for (const molt of plan.structuralIR.moltLayers || []) molt.jsonSchema = minimalMoltJsonSchema(molt);
+  }
+  return plan;
+}
+
 function validateNlCard(card, label, errors) {
   if (!hasObject(card)) {
     errors.push(`${label} requires nlCard.`);
@@ -1177,11 +1323,10 @@ export function validateCustomSleevePlan(plan) {
     if (!Array.isArray(block?.tags)) errors.push(`${label} requires tags array.`);
     if (!String(block?.sourceKind || '').trim()) errors.push(`${label} requires sourceKind.`);
     if (!String(block?.generationReason || block?.reason || '').trim()) errors.push(`${label} requires generationReason.`);
+    if (!String(block?.parentNeoBlockId || '').trim()) errors.push(`${label} requires parentNeoBlockId.`);
     if (!Number.isFinite(Number(block?.stackOrder))) errors.push(`${label} requires stackOrder.`);
-    if (!/source-library/i.test(String(block?.sourceKind || ''))) {
-      validateNlCard(block?.nlCard, label, errors);
-      validateJsonSchema(block?.jsonSchema, label, errors);
-    }
+    validateNlCard(block?.nlCard, label, errors);
+    validateJsonSchema(block?.jsonSchema, label, errors);
   }
   for (const decision of plan.generatedDecisions || []) {
     if (decision?.runtimeSessionOnly !== true) errors.push(`Generated decision ${decision?.id || '(unknown)'} must be runtimeSessionOnly.`);
@@ -1199,12 +1344,17 @@ export async function buildCustomSleeveGenerationResponse(request, env = process
     fallbackReason: undefined,
     responseSleeveTitle: undefined
   };
-  const validation = validateCustomSleeveGenerationRequest(request);
-  if (!validation.ok) return jsonResponse(validation.status, { ok: false, error: validation.error, validation: { valid: false, errors: [validation.error], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'rejected_request', fallbackUsed: false, fallbackReason: validation.error } }, undefined);
   const prompt = buildCustomSleeveGenerationPrompt(request);
+  const requestPayloadBytes = jsonByteLength(prompt);
+  const promptCandidateCount = Array.isArray(request?.libraryCandidates) ? request.libraryCandidates.length : 0;
+  const payloadTransport = env.HERMES_CUSTOM_SLEEVE_PAYLOAD_TRANSPORT || 'temp-file';
+  const compactingApplied = true;
+  const validation = validateCustomSleeveGenerationRequest(request);
+  if (!validation.ok) return jsonResponse(validation.status, { ok: false, error: validation.error, validation: { valid: false, errors: [validation.error], warnings: [] }, externalActionTaken: false, debug: { ...debug, requestPayloadBytes, payloadTransport, compactingApplied, promptCandidateCount, generationMode: 'rejected_request', fallbackUsed: false, fallbackReason: validation.error } }, undefined);
   try {
     const timeoutMs = Number(env.HERMES_CUSTOM_SLEEVE_TIMEOUT_MS || env.HERMES_RUNTIME_TIMEOUT_MS || 90000);
-    const hermes = await runtimePost(prompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
+    const hermesEnv = { ...env, HERMES_PAYLOAD_TRANSPORT: payloadTransport, HERMES_RUNTIME_TOOLSETS: env.HERMES_CUSTOM_SLEEVE_TOOLSETS || 'file' };
+    const hermes = await runtimePost(prompt, hermesEnv, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
     let plan;
     let parseRetryUsed = false;
     try {
@@ -1214,15 +1364,16 @@ export async function buildCustomSleeveGenerationResponse(request, env = process
       const strictPrompt = `${prompt}
 
 STRICT_RETRY_INSTRUCTION: Return only the JSON object. No prose. No markdown.`;
-      const strictHermes = await runtimePost(strictPrompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
+      const strictHermes = await runtimePost(strictPrompt, hermesEnv, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
       try {
         plan = parseJsonObjectFromText(strictHermes.text || '');
       } catch (strictParseError) {
         const reason = `Hermes output did not contain a valid JSON object after strict JSON retry. ${strictParseError?.message || parseError?.message || ''}`.trim();
-        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_json_parse_failed', failureStage: 'strict_json_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(strictHermes.text || '', 400) } }, undefined);
+        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, requestPayloadBytes, payloadTransport, compactingApplied, promptCandidateCount, generationMode: 'live_hermes_json_parse_failed', failureStage: 'strict_json_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(strictHermes.text || '', 400) } }, undefined);
       }
     }
     normalizeCustomSleevePlanNlCards(plan);
+    normalizeCustomSleevePlanJsonSchemas(plan, request);
     let planValidation = validateCustomSleevePlan(plan);
     let structuralContractRetryUsed = false;
     if (!planValidation.valid && planValidation.errors.some((error) => /structuralIR|auditResult/i.test(error))) {
@@ -1230,24 +1381,30 @@ STRICT_RETRY_INSTRUCTION: Return only the JSON object. No prose. No markdown.`;
       const contractRetryPrompt = `${prompt}
 
 STRICT_STRUCTURAL_IR_RETRY_INSTRUCTION: Return only valid JSON containing structuralIR, auditResult, and final Sleeve JSON fields. No prose. No markdown. structuralIR must contain sleeve, neoStacks, neoBlocks, moltLayers, mergeOps, gates, toolBlocks, routes. auditResult must contain passed:true, non-empty checks, revisionRequired:false. Include generationReason on every NeoStack, NeoBlock, and MOLT.`;
-      const retryHermes = await runtimePost(contractRetryPrompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
+      const retryHermes = await runtimePost(contractRetryPrompt, hermesEnv, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
       try {
         plan = parseJsonObjectFromText(retryHermes.text || '');
         normalizeCustomSleevePlanNlCards(plan);
+        normalizeCustomSleevePlanJsonSchemas(plan, request);
         planValidation = validateCustomSleevePlan(plan);
       } catch (retryParseError) {
         const reason = `Hermes structural IR retry did not return valid JSON. ${retryParseError?.message || ''}`.trim();
-        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_structural_ir_retry_parse_failed', failureStage: 'structural_ir_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed, structuralContractRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(retryHermes.text || '', 400) } }, undefined);
+        return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, requestPayloadBytes, payloadTransport, compactingApplied, promptCandidateCount, generationMode: 'live_hermes_structural_ir_retry_parse_failed', failureStage: 'structural_ir_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed, structuralContractRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(retryHermes.text || '', 400) } }, undefined);
       }
     }
-    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_validation_failed', failureStage: structuralContractRetryUsed ? 'structural_ir_retry_validation' : 'plan_validation', fallbackUsed: false, fallbackReason: planValidation.errors.join(' '), responseSleeveTitle: plan?.title, parseRetryUsed, structuralContractRetryUsed } }, undefined);
-    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, responseSleeveTitle: plan.title, parseRetryUsed, structuralContractRetryUsed } }, undefined);
+    if (!planValidation.valid) return jsonResponse(422, { ok: false, plan, validation: planValidation, externalActionTaken: false, debug: { ...debug, requestPayloadBytes, payloadTransport, compactingApplied, promptCandidateCount, generationMode: 'live_hermes_validation_failed', failureStage: structuralContractRetryUsed ? 'structural_ir_retry_validation' : 'plan_validation', fallbackUsed: false, fallbackReason: planValidation.errors.join(' '), responseSleeveTitle: plan?.title, parseRetryUsed, structuralContractRetryUsed } }, undefined);
+    return jsonResponse(200, { ok: true, plan: { ...plan, generationSource: plan.generationSource || 'live_hermes_cli' }, validation: planValidation, externalActionTaken: false, debug: { ...debug, requestPayloadBytes, payloadTransport, compactingApplied, promptCandidateCount, responseSleeveTitle: plan.title, parseRetryUsed, structuralContractRetryUsed } }, undefined);
   } catch (error) {
     const code = error && typeof error === 'object' ? error.code : undefined;
     const stderr = error && typeof error === 'object' ? String(error.stderr || '') : '';
-    const status = code === 'ETIMEDOUT' ? 504 : 502;
-    const message = code === 'ETIMEDOUT' ? 'Hermes custom Sleeve generation CLI timed out.' : `Hermes custom Sleeve generation CLI failed.${stderr ? ` ${truncateText(stderr, 220)}` : ` ${error?.message || String(error)}`}`;
-    return jsonResponse(status, { ok: false, error: message, validation: { valid: false, errors: [message], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_cli_error', fallbackUsed: false, fallbackReason: message } }, undefined);
+    const status = code === 'ETIMEDOUT' ? 504 : code === 'E2BIG' ? 413 : 502;
+    const message = code === 'ETIMEDOUT'
+      ? 'Hermes custom Sleeve generation CLI timed out.'
+      : code === 'E2BIG'
+        ? 'Live Hermes generation request was too large. Use calibrated Sleeve or retry with compact request.'
+        : `Hermes custom Sleeve generation CLI failed.${stderr ? ` ${truncateText(stderr, 220)}` : ` ${error?.message || String(error)}`}`;
+    const failureStage = code === 'E2BIG' ? 'spawn_e2big' : code === 'ETIMEDOUT' ? 'timeout' : 'cli_error';
+    return jsonResponse(status, { ok: false, error: message, validation: { valid: false, errors: [message], warnings: [] }, externalActionTaken: false, debug: { ...debug, requestPayloadBytes: error?.requestPayloadBytes ?? requestPayloadBytes, payloadTransport: error?.payloadTransport ?? payloadTransport, compactingApplied, promptCandidateCount, candidateCount: promptCandidateCount, generationMode: 'live_hermes_cli_error', failureStage, fallbackUsed: false, fallbackReason: message } }, undefined);
   }
 }
 

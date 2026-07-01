@@ -103,7 +103,7 @@ export function HackathonLandingPage({
   const hasResults = Boolean(children);
   const stageClass = hasResults ? sleeveInstantiated ? ' hasResults hasSleeve' : ' hasResults isProcessing' : '';
   const promptSummary = goal.trim() || 'No prompt entered yet.';
-  const intakeStatus = intakeStatusOverride ?? (sleeveInstantiated ? 'Sleeve ready' : templateSelected ? 'Intake analyzed' : businessMapReady ? 'Intake analyzed' : intakeSubmitted ? 'Generating Sleeve' : 'Ready for intake');
+  const intakeStatus = intakeStatusOverride ?? (sleeveInstantiated ? 'Sleeve ready' : templateSelected ? 'Generating Sleeve…' : businessMapReady ? 'Generating Sleeve…' : intakeSubmitted ? 'Generating Sleeve…' : 'Ready for intake');
 
   return <div className={`hackathonLanding${stageClass}`}>
     <header className="hackathonHeader">
@@ -159,7 +159,7 @@ export function HackathonLandingPage({
               {selectedFiles.length > 1 && <button type="button" className="hackathonClearFiles" onClick={onFilesClear}>Clear All</button>}
             </div>}
           </div>
-          <button type="button" className="hackathonPrimary" onClick={onSubmit}>Build UMG Sleeve</button>
+          <button type="button" className="hackathonPrimary" onClick={onSubmit}>Generate Sleeve</button>
         </> : <>
           <div className="hackathonCompactSource">
             <span>Source Prompt</span>

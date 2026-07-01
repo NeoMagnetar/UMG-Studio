@@ -1,3 +1,11 @@
+node_modules/
+dist/
 .env
-.env.local
-.env.*.local
+.env.*
+*.log
+.DS_Store
+.vite/
+coverage/
+.playwright/
+test-results/
+*.local

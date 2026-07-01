@@ -126,6 +126,45 @@ describe('Hermes runtime bridge helpers', () => {
     expect(captured.options.shell).toBeUndefined();
   });
 
+  it('uses temp-file payload transport for oversized Hermes CLI prompts', async () => {
+    const { runHermesRuntimeCli } = await getRuntimeBridgeModule();
+    const captured = {};
+    const spawnMock = vi.fn((command, args, options) => {
+      captured.command = command;
+      captured.args = args;
+      captured.options = options;
+      return makeMockProcess({ stdout: '{"status":"ok"}' });
+    });
+    const result = await runHermesRuntimeCli('x'.repeat(20000), { HERMES_CLI_PATH: '/home/neomagnetar/.local/bin/hermes', HERMES_INFERENCE_PROVIDER: 'openai-codex', HERMES_INFERENCE_MODEL: 'gpt-5.3-codex-spark', HERMES_ARGV_PROMPT_BYTE_LIMIT: '12000', HERMES_RUNTIME_TOOLSETS: 'file' }, spawnMock);
+    expect(result.payloadTransport).toBe('temp-file');
+    expect(result.requestPayloadBytes).toBeGreaterThan(12000);
+    expect(captured.args[1]).toContain('Temp file:');
+    expect(captured.args[1].length).toBeLessThan(500);
+    expect(captured.args).toEqual(expect.arrayContaining(['--toolsets', 'file']));
+  });
+
+  it('normalizes spawn E2BIG into friendly custom Sleeve diagnostics', async () => {
+    const { buildCustomSleeveGenerationResponse } = await getRuntimeBridgeModule();
+    const request = {
+      requestId: 'req.e2big',
+      userPrompt: 'Generate a custom haiku note Sleeve.',
+      userContext: '',
+      selectedMode: 'custom_workflow',
+      supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'],
+      appLocalSkillBundle: { sleeveDecompositionSkill: 'UMG Sleeve Decomposition Skill', hierarchyCardSkill: 'UMG hierarchy', compilerAlignmentRules: 'compiler rules', sourceLibraryBoundaryRules: 'No source-library mutation', capabilityBoundaryRules: 'capability rules', websiteBuilderBoundary: 'Website Builder future pack' },
+      gatePolicy: 'Gates are control/routing/approval records, not prompt MOLT blocks.',
+      sourceLibraryPolicy: 'No source-library mutation.',
+      libraryCandidates: [{ id: 'SUBJ.016', title: 'Text documents', blockType: 'molt', role: 'subject', tags: ['text'], sourcePath: 'source#SUBJ.016', content: 'x'.repeat(5000) }],
+      candidatesByRole: { subject: [{ id: 'SUBJ.016', title: 'Text documents', blockType: 'molt', role: 'subject', tags: ['text'], sourcePath: 'source#SUBJ.016', content: 'x'.repeat(5000) }] }
+    };
+    const response = await buildCustomSleeveGenerationResponse(request, {}, async () => { throw Object.assign(new Error('spawn E2BIG'), { code: 'E2BIG', requestPayloadBytes: 12345, payloadTransport: 'temp-file' }); });
+    expect(response.status).toBe(413);
+    expect(response.body.validation.errors[0]).toContain('request was too large');
+    expect(response.body.debug.failureStage).toBe('spawn_e2big');
+    expect(response.body.debug.payloadTransport).toBe('temp-file');
+    expect(response.body.debug.compactingApplied).toBe(true);
+  });
+
   it('normalizes real Hermes JSON into trace envelope without fabricating unmapped visual IDs', async () => {
     const { buildTraceEnvelopeFromHermesOutput } = await getRuntimeBridgeModule();
     const envelope = buildTraceEnvelopeFromHermesOutput(safeRuntimeRequest, JSON.stringify({
@@ -234,7 +273,56 @@ ${JSON.stringify(structuralHermesPlan)}
     const invalidMissingCards = { ...structuralHermesPlan, moltBlocks: [{ id: 'molt.bad', title: 'Bad Primary', role: 'primary', content: 'Missing required card/schema/source fields.', parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge' }] };
     const invalidResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(invalidMissingCards) }));
     expect(invalidResponse.status).toBe(422);
-    expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/jsonSchema|sourceKind|tags/);
+    expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/tags/);
+  });
+
+  it('normalizes MOLT jsonSchema while preserving source-library binding metadata', async () => {
+    const { buildCustomSleeveGenerationResponse } = await getRuntimeBridgeModule();
+    const request = {
+      requestId: 'req.s1r.schema',
+      userPrompt: 'Use source candidates for notes.',
+      userContext: '',
+      selectedMode: 'custom_workflow',
+      supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'],
+      libraryCandidates: [
+        { id: 'SUBJ.016', title: 'Text documents', blockType: 'molt', role: 'subject', tags: ['text'], description: 'Text documents source card.', sourcePath: 'HUMAN/MOLT/SUBJ.016.json', sourceKind: 'source-library', jsonSchema: { type: 'object', properties: { sourceText: { type: 'string' } } } },
+        { id: 'PHIL.002', title: 'Aristotelianism', blockType: 'molt', role: 'philosophy', tags: ['greek'], description: 'Greek lens.', sourcePath: 'HUMAN/MOLT/PHIL.002.json', sourceKind: 'source-library' }
+      ]
+    };
+    const plan = makeNlCardNormalizationPlan({
+      requestId: 'req.s1r.schema',
+      title: 'Source Binding Schema Sleeve',
+      moltBlocks: [
+        { id: 'SUBJ.016', title: 'Text documents', role: 'subject', content: 'Text documents source card.', description: 'Text documents source card.', tags: ['text'], sourceKind: 'source-library reused', stackOrder: 1, parentNeoBlockId: 'block.nlcard', parentNeoStackId: 'stack.nlcard', generationReason: 'Bind source-library text document candidate.' },
+        { id: 'M.01', title: 'Generated Primary', role: 'primary', content: 'Write notes in haiku form.', description: 'Haiku note generation.', tags: ['haiku'], sourceKind: 'runtime-session draft', stackOrder: 2, parentNeoBlockId: 'block.nlcard', parentNeoStackId: 'stack.nlcard', generationReason: 'Generated runtime MOLT fills missing primary role.' }
+      ]
+    });
+    plan.neoBlocks[0].moltBlockIds = ['SUBJ.016', 'M.01'];
+    plan.structuralIR.moltLayers = plan.moltBlocks;
+    const response = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(plan) }));
+    expect(response.status).toBe(200);
+    const sourceMolt = response.body.plan.moltBlocks.find((molt) => molt.id === 'SUBJ.016');
+    const draftMolt = response.body.plan.moltBlocks.find((molt) => molt.id === 'M.01');
+    expect(sourceMolt.jsonSchema.properties.sourceText.type).toBe('string');
+    expect(sourceMolt.matchedCandidateId).toBe('SUBJ.016');
+    expect(sourceMolt.sourcePath).toBe('HUMAN/MOLT/SUBJ.016.json');
+    expect(sourceMolt.parentNeoBlockId).toBe('block.nlcard');
+    expect(draftMolt.jsonSchema.required).toEqual(expect.arrayContaining(['role', 'content']));
+    expect(draftMolt.nlCard.content).toBe('Write notes in haiku form.');
+  });
+
+  it('still rejects generated MOLT drafts without inferable role or content', async () => {
+    const { buildCustomSleeveGenerationResponse } = await getRuntimeBridgeModule();
+    const request = { requestId: 'req.s1r.invalid', userPrompt: 'Generate invalid MOLT.', userContext: '', selectedMode: 'custom_workflow', supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'] };
+    const plan = makeNlCardNormalizationPlan({
+      requestId: 'req.s1r.invalid',
+      moltBlocks: [{ id: 'M.BAD', title: '', tags: [], sourceKind: 'runtime-session draft', stackOrder: 1, parentNeoBlockId: 'block.nlcard', parentNeoStackId: 'stack.nlcard' }]
+    });
+    plan.neoBlocks[0].moltBlockIds = ['M.BAD'];
+    plan.structuralIR.moltLayers = plan.moltBlocks;
+    const response = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(plan) }));
+    expect(response.status).toBe(422);
+    expect(response.body.validation.errors.join(' ')).toMatch(/Unsupported prompt MOLT role|requires content/);
   });
 
   it('normalizes sparse nlCards before final custom Sleeve validation', async () => {

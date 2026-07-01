@@ -9,6 +9,11 @@ export type NormalizedTemplateSourceMetadata = {
   sourcePath?: string;
   matchedCandidateId?: string;
   blockType?: 'molt' | 'neoblock' | 'neostack' | 'gate' | 'capability' | 'unknown';
+  jsonSchema?: Record<string, unknown>;
+  nlCard?: Record<string, unknown>;
+  generationReason?: string;
+  rejectedCandidateIds?: string[];
+  description?: string;
 };
 
 export type NormalizedTemplateNeoStack = {

@@ -41,9 +41,10 @@ export async function compileWithRealCompiler(request: UMGCompilerRequest, confi
     });
     const raw = await response.json().catch(() => undefined);
     if (!response.ok) {
-      return { status: 'error', errors: [{ code: 'UMG_COMPILER_REQUEST_FAILED', message: `Compiler endpoint returned HTTP ${response.status}.`, raw }], warnings: [], raw };
+      return { status: 'error', errors: [{ code: 'UMG_COMPILER_REQUEST_FAILED', message: `Compiler endpoint returned HTTP ${response.status}.`, raw }], warnings: [], raw: { httpStatus: response.status, response: raw } };
     }
-    return normalizeCompilerResponseToManifest(raw, request);
+    const normalized = normalizeCompilerResponseToManifest(raw, request);
+    return { ...normalized, raw: { ...(isRecord(normalized.raw) ? normalized.raw : {}), httpStatus: response.status, response: raw } };
   } catch (error) {
     return { status: 'error', errors: [{ code: 'UMG_COMPILER_REQUEST_FAILED', message: error instanceof Error ? error.message : String(error), raw: error }], warnings: [] };
   } finally {

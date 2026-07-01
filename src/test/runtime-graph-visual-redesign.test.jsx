@@ -24,8 +24,8 @@ function makeSleeve() {
       { id: 'block.output_assembly', title: 'Output Assembly NeoBlock', description: 'Draft safe local artifact.', neoStackId: 'stack.desktop_rendering', moltBlockIds: ['molt.primary', 'molt.blueprint'], gateIds: [], blockOrder: 2, tags: [] }
     ],
     moltBlocks: [
-      { id: 'molt.directive', title: 'Directive Layer', role: 'directive', summary: 'Always incorporate Greek philosophy.', content: 'Always incorporate Greek philosophy.', stackOrder: 0, tags: [] },
-      { id: 'molt.instruction', title: 'Instruction Layer', role: 'instruction', summary: 'Write a note.', content: 'Write a note.', stackOrder: 1, tags: [] },
+      { id: 'molt.directive', title: 'Directive Layer', role: 'directive', summary: 'Always incorporate Greek philosophy.', content: 'Always incorporate Greek philosophy.', stackOrder: 0, tags: [], matchedCandidateId: 'molt.source.directive', sourcePath: '/library/molt/directive.json' },
+      { id: 'molt.instruction', title: 'Instruction Layer', role: 'instruction', summary: 'Write a note.', content: 'Write a note.', stackOrder: 1, tags: [], matchedCandidateId: 'molt.source.instruction', sourcePath: '/library/molt/instruction.json' },
       { id: 'molt.subject', title: 'Subject Layer', role: 'subject', summary: 'Apples.', content: 'Apples.', stackOrder: 2, tags: [] },
       { id: 'molt.primary', title: 'Primary Layer', role: 'primary', summary: 'Coherent useful note.', content: 'Coherent useful note.', stackOrder: 3, tags: [] },
       { id: 'molt.philosophy', title: 'Philosophy Layer', role: 'philosophy', summary: 'Aristotle and Stoicism.', content: 'Aristotle and Stoicism.', stackOrder: 4, tags: [] },
@@ -105,8 +105,8 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
   it('renders graph-first tabs, rails, foundation rail, and bottom drawer without source-library controls', () => {
     renderObserver();
     expect(screen.getByRole('button', { name: 'System Sleeve' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'NeoStack View' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'NeoBlock View' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'NeoStack Map' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'NeoBlock Map' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Runtime Path' })).toBeTruthy();
     expect(screen.getByLabelText('Runtime hierarchy rail')).toBeTruthy();
     expect(screen.getByLabelText('Runtime trace and artifact rail')).toBeTruthy();
@@ -123,14 +123,14 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
     expect(surface.querySelector('.runtime-map-centered')).toBeTruthy();
     expect(surface.querySelectorAll('.runtime-compact-node').length).toBeGreaterThan(0);
     expect(within(surface).queryByText('Capture prompt and context.')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoStack View' }));
-    expect(screen.getByText('NeoStack runtime tree')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoStack Map' }));
+    expect(screen.getAllByText('NeoStack Map').length).toBeGreaterThan(1);
     expect(screen.getByLabelText('Centered NeoStack pyramid')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock View' }));
-    expect(screen.getByText('NeoBlock modules')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    expect(screen.getAllByText('NeoBlock Map').length).toBeGreaterThan(1);
     expect(screen.getByLabelText('Compact NeoBlock modules')).toBeTruthy();
     expect(screen.getByText('Directive')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /Directive Layer/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Directive Layer/ })[0]);
     expect(screen.getByText('MOLT detail')).toBeTruthy();
     expect(screen.getByText('Always incorporate Greek philosophy.')).toBeTruthy();
   });
@@ -194,7 +194,7 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
 
   it('keeps MOLT as internal layers and exposes compact MOLT rows', () => {
     renderObserver();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
     expect(screen.getByText('Directive')).toBeTruthy();
     expect(screen.getByText('Instruction')).toBeTruthy();
     expect(screen.getByText('Subject')).toBeTruthy();
@@ -204,6 +204,29 @@ describe('Phase 13I-H runtime graph visual redesign', () => {
     expect(screen.getByText('Merge')).toBeTruthy();
     expect(screen.getByText('Tool')).toBeTruthy();
     expect(screen.getByText('Gate')).toBeTruthy();
-    expect(screen.getByText(/MOLT details stay in drawer/)).toBeTruthy();
+    expect(screen.getByText(/MOLT details render in the inspector card/)).toBeTruthy();
+    expect(screen.getAllByText(/matchedCandidateId: molt.source.directive/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/sourcePath: \/library\/molt\/directive.json/).length).toBeGreaterThan(0);
+  });
+
+  it('keeps the bottom drawer closed on graph node clicks and uses the inspector card instead', () => {
+    const { container } = renderObserver();
+    expect(container.querySelector('.runtime-bottom-drawer--open')).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: /Note Capture/ }).at(-1));
+    expect(screen.getByLabelText('Runtime node inspector card')).toBeTruthy();
+    expect(screen.getByText('Selected node inspector')).toBeTruthy();
+    expect(container.querySelector('.runtime-bottom-drawer--open')).toBeNull();
+  });
+
+  it('renders graph fit reset zoom controls and capability child port ownership', () => {
+    renderObserver();
+    expect(screen.getByRole('button', { name: 'Fit graph' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset graph' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: /Desktop Note Rendering/ })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    expect(document.body.textContent).toContain('child/port');
+    expect(document.body.textContent).toContain('parentNeoBlockId');
   });
 });
