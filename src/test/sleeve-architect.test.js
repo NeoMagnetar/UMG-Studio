@@ -111,7 +111,7 @@ describe('UMG universal import dissemination engine pass 1', () => {
     expect(appSource).toContain("generationRoute: 'imported_legacy_sleeve_package'");
     expect(appSource).toContain('importedPackage: true');
     expect(appSource).toContain('stale_live_hermes_response_ignored');
-    expect(appSource).toContain('Try Live Hermes Generation');
+    expect(appSource).not.toContain('Try Live Hermes Generation');
     expect(appSource).toContain('Source-library matches: not resolved yet / optional');
     expect(appSource).toContain('isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b>');
   });

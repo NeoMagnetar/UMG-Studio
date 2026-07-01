@@ -2666,6 +2666,17 @@ export default function App() {
     }
   };
 
+  const draftRuntimeCapabilityMoltBlock = (prompt: string) => {
+    const draft = inferMoltBlockDraftFromPrompt(prompt);
+    const validation = validateCreatedMoltBlock(draft);
+    setBlockForgePrompt(prompt);
+    setBlockForgeDraft(draft);
+    setBlockForgeValidation(validation);
+    setBlockForgeNotice(`Runtime missing-capability draft prepared: ${draft.title}. Review/validate before saving to workspace.`);
+    setAppSurfaceMode('public');
+    setStatus(validation.passed ? `Workspace-draft MOLT block prepared: ${draft.title}. Review then Save to Workspace.` : `Workspace-draft MOLT block needs review: ${validation.errors.join(' ')}`);
+  };
+
   const continueHermesRuntimeAfterApproval = async (decision: 'approve' | 'deny' | 'skip') => {
     if (!pendingRuntimeApproval) {
       setStatus('No pending runtime approval is available.');
@@ -2738,10 +2749,12 @@ export default function App() {
         onBackToBuilder={() => setAppSurfaceMode('public')}
         compileStatus={activeSessionSleeve ? getCompilerCardCopy(deriveCompilerUiStatus({ compilerBridgeAvailable, compiledRuntimeManifest, result: compilerResult })) : 'Generate a Sleeve first.'}
         runtimeStatus={isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'ready' : 'compiling_required'}
+        hermesRuntimeErrors={hermesRuntimeErrors}
         isHermesRunning={isHermesRunning}
         pendingRuntimeApproval={pendingRuntimeApproval}
         toolCapabilityResolutions={toolCapabilityResolutions}
         nativeActionMode={nativeActionMode}
+        onDraftMissingMoltBlock={draftRuntimeCapabilityMoltBlock}
       />
     </div>;
   }
@@ -3478,7 +3491,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     <div className="analysisPanel basicSleevePanel">
       <div className="publicSectionTitle"><span>01</span><div><b>Generate a Sleeve</b><small>Hermes-first runtime-session Sleeve; no source library write.</small></div></div>
       <p className="analysisSummary">{businessInput.text}</p>
-      <div className="templateActionRow"><button type="button" className={`publicPrimaryCta ${isGeneratingSleeve ? 'is-working' : ''}`} onClick={onRunArchitectExecution} disabled={isGeneratingSleeve}>{generationButtonLabel}</button>{showCalibratedFastPath && <button type="button" className="publicSecondaryCta" onClick={onUseCalibratedHaikuNoteSleeve}>Use Calibrated Haiku Note Sleeve</button>}{isImportedPackageRoute && <button type="button" className="publicSecondaryCta" onClick={onRunArchitectExecution} disabled={isGeneratingSleeve}>Try Live Hermes Generation</button>}</div>
+      <div className="templateActionRow"><button type="button" className={`publicPrimaryCta ${isGeneratingSleeve ? 'is-working' : ''}`} onClick={onRunArchitectExecution} disabled={isGeneratingSleeve}>{generationButtonLabel}</button>{showCalibratedFastPath && <button type="button" className="publicSecondaryCta" onClick={onUseCalibratedHaikuNoteSleeve}>Use Calibrated Haiku Note Sleeve</button>}</div>
       {hermesCustomGenerationStatus && !isImportedPackageRoute && <small>Hermes custom generation: {hermesCustomGenerationStatus}</small>}
       {isImportedPackageRoute && <small>Imported legacy UMG Sleeve package ready. Compile next.</small>}
       {classifications.some((entry) => entry.sensitive) && <div className="analysisWarnings"><b>Sensitive material detected</b><span>It will not be shown in prompts, trace, or artifacts.</span></div>}
@@ -3498,7 +3511,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       {isImportedPackageRoute && <small>Imported legacy UMG Sleeve package</small>}
       <h3>{activeSleeveTitle}</h3>
       <p>{activeSessionSleeve.description}</p>
-      {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT layers</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{toolBlockCount}</b><span>Tool Blocks</span></div><div><b>{palette.length}</b><span>Capabilities</span></div>{activeSleeveCounts.unresolved > 0 && <div><b>{activeSleeveCounts.unresolved}</b><span>Needs attention</span></div>}</div></>}
+      {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT Blocks</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{toolBlockCount}</b><span>Tool Blocks</span></div><div><b>{palette.length}</b><span>Capabilities</span></div>{activeSleeveCounts.unresolved > 0 && <div><b>{activeSleeveCounts.unresolved}</b><span>Needs attention</span></div>}</div></>}
       {isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b><span>NeoStacks imported: {safeActiveNeoStacks.length}</span><span>NeoBlocks imported: {safeActiveNeoBlocks.length}</span><span>MOLT imported/generated: {safeActiveMoltBlocks.length}</span><span>Source-library matches: not resolved yet / optional</span><span>Duplicates merged: {String(((activeSessionSleeve.metadata?.duplicateDiagnostics as Record<string, unknown> | undefined)?.merged ?? (hermesCustomGenerationDiagnostics?.importReviewReport as { duplicates?: { merged?: unknown } } | undefined)?.duplicates?.merged ?? 0))}</span><span>Schema adjustments: {String((hermesCustomGenerationDiagnostics?.importReviewReport as { normalizationAdjustments?: unknown[] } | undefined)?.normalizationAdjustments?.length ?? 0)}</span></div> : <><small>Library candidates bound: {String((activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? safeActiveMoltBlocks.filter((block) => block.sourceKind === 'source-library reused').length)}</small>
       <div className="compactCandidatePreview"><b>Library blocks used: {libraryBlocksUsed.length}</b>{libraryBlockExamples.map((title) => <span key={String(title)}>{String(title)}</span>)}</div></>}
       <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{safeActiveNeoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => { const moltBlockIds = Array.isArray(block.moltBlockIds) ? block.moltBlockIds : []; const gateIds = Array.isArray(block.gateIds) ? block.gateIds : Array.isArray((block as unknown as { gates?: unknown[] }).gates) ? (block as unknown as { gates: unknown[] }).gates : []; return <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {moltBlockIds.length} · Gates {gateIds.length}</small><div className="compactCandidatePreview">{moltBlockIds.slice(0, 6).map((moltId) => safeActiveMoltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>; })}</ol>}</details>)}</div>

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
 import { RuntimeGeometryObserver, buildRuntimeGeometryObserverGraph, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
 import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 import { runNativeHermesAction } from '../lib/umg/hermesRuntimeExecution';
@@ -49,6 +49,23 @@ function makeSleeve() {
         { capabilityId: 'umg.capability.local_note_file_write', label: 'Local note safe artifact', sourceNeoBlock: 'block.capture' }
       ]
     }
+  };
+}
+
+
+function makeCompiledManifest(overrides = {}) {
+  return {
+    sleeveId: 'sleeve.greek_note',
+    sleeveTitle: 'Greek Note',
+    compiledAt: 'now',
+    compiledStructure: {},
+    runtimeInstructions: ['run'],
+    executionPlan: [],
+    gates: [],
+    toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'manual', executionMode: 'dryRun', registry: [] },
+    sourceBlocks: [],
+    traceMetadata: {},
+    ...overrides
   };
 }
 
@@ -105,7 +122,7 @@ describe('RuntimeGeometryObserver', () => {
     expect(html).not.toContain('Promote to Source Library');
   });
 
-  it('System Sleeve view does not render source library/compiler manifest/Hermes runtime/resource graph nodes', () => {
+  it('Sleeve Overview view does not render source library/compiler manifest/Hermes runtime/resource graph nodes', () => {
     renderInteractiveObserver();
     expect(screen.queryByRole('button', { name: 'Show context resources' })).toBeNull();
     expect(screen.queryByRole('button', { name: /source library/i })).toBeNull();
@@ -144,6 +161,41 @@ describe('RuntimeGeometryObserver', () => {
     expect(screen.getByText(/View all MOLT/)).toBeTruthy();
   });
 
+  it('uses corrected graph labels, MOLT Block terminology, and pan/zoom controls', () => {
+    renderInteractiveObserver();
+    expect(screen.getByRole('button', { name: 'Sleeve Overview' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'System Sleeve' })).toBeNull();
+    expect(screen.getByRole('complementary', { name: 'Runtime trace and artifact rail' }).textContent).toContain('Runtime Inspector');
+    expect(screen.queryByText('Runtime Rail')).toBeNull();
+    expect(screen.getByText(/3 MOLT Blocks/)).toBeTruthy();
+    expect(screen.queryByText(/MOLT Layers/i)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Fit graph' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset graph' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Zoom in/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Zoom out/i })).toBeNull();
+  });
+
+  it('NeoBlock Map cards show MOLT Block counts and share graph-card styling', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    const blockCard = document.querySelector('.runtime-neoblock-module');
+    expect(blockCard?.className).toContain('runtime-map-card');
+    expect(blockCard?.textContent).toContain('3 MOLT Blocks');
+    expect(blockCard?.textContent).not.toContain('0 NeoBlocks');
+  });
+
+  it('Runtime graph surface supports wheel zoom and drag pan state', () => {
+    renderInteractiveObserver();
+    const surface = screen.getByLabelText('Runtime graph surface');
+    fireEvent.wheel(surface, { deltaY: -100 });
+    expect(screen.getByText('108%')).toBeTruthy();
+    fireEvent.mouseDown(surface, { button: 0, clientX: 10, clientY: 10 });
+    expect(surface.className).toContain('runtime-graph-surface--dragging');
+    fireEvent.mouseMove(surface, { clientX: 40, clientY: 25 });
+    fireEvent.mouseUp(surface);
+    expect(surface.className).not.toContain('runtime-graph-surface--dragging');
+  });
+
   it('Runtime Path stays idle and shows the no-trace message until Hermes emits a trace', () => {
     renderInteractiveObserver();
     fireEvent.click(screen.getByRole('button', { name: 'Runtime Path' }));
@@ -159,7 +211,7 @@ describe('RuntimeGeometryObserver', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
     expect(screen.getByText(/source library/i)).toBeTruthy();
     expect(screen.getByText(/compiler manifest/i)).toBeTruthy();
-    expect(screen.getByText(/Hermes runtime/i)).toBeTruthy();
+    expect(screen.getAllByText(/Hermes runtime/i).length).toBeGreaterThan(0);
   });
 
   it('applies real runtime statuses, attaches artifacts, and leaves unmapped events unactivated', () => {
@@ -329,15 +381,123 @@ describe('RuntimeGeometryObserver', () => {
     expect(result.manifest.compiledStructure.stacks[0].orderedBlockIds).toEqual(['block.capture']);
   });
 
+
+  it('keeps Hermes Chat out of the Runtime Graph surface and exposes a Hermes Terminal drawer tab', () => {
+    renderInteractiveObserver({ compiledRuntimeManifest: makeCompiledManifest() });
+    const graphSurface = screen.getByLabelText('Runtime graph surface');
+    expect(graphSurface.textContent).not.toContain('Hermes Chat');
+    expect(graphSurface.textContent).not.toContain('Runtime prompt');
+    expect(graphSurface.textContent).not.toContain('Hermes Work Log / Terminal');
+    expect(screen.queryByLabelText('Hermes Chat')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Hermes Terminal' })).toBeTruthy();
+  });
+
+  it('Hermes Terminal drawer renders runtime prompt and appends a user prompt when sending', () => {
+    const onRun = vi.fn();
+    renderInteractiveObserver({ compiledRuntimeManifest: makeCompiledManifest(), onRunHermesRuntime: onRun });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.getByLabelText('Hermes Terminal drawer')).toBeTruthy();
+    expect(screen.getByLabelText('Runtime prompt')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Hermes' }));
+    expect(onRun).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText('write a note on my desktop about apples').length).toBeGreaterThan(1);
+  });
+
+  it('Hermes Terminal default view hides debug fields and premature missing capability card', () => {
+    renderInteractiveObserver({ compiledRuntimeManifest: makeCompiledManifest() });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    const drawer = screen.getByLabelText('Hermes Terminal drawer');
+    expect(drawer.textContent).toContain('No runtime request yet. Send a prompt to Hermes.');
+    expect(screen.queryByLabelText('Missing capability detected')).toBeNull();
+    const chatPanel = screen.getByLabelText('Hermes Chat');
+    expect(chatPanel.textContent).not.toContain('thought summary');
+    expect(chatPanel.textContent).not.toContain('last NL');
+    expect(chatPanel.textContent).not.toContain('last error');
+    expect(chatPanel.textContent).not.toContain('tool access');
+    expect(chatPanel.textContent).not.toContain('Visible transcript only');
+    expect(screen.getByRole('group', { name: 'Runtime Debug' })).toBeTruthy();
+  });
+
+  it('runtime response with finalOutput appends a visible Hermes message in the drawer transcript', async () => {
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'I can draft the ServUO item script, but file edit needs approval.', trace: [], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    await waitFor(() => expect(screen.getAllByText('I can draft the ServUO item script, but file edit needs approval.').length).toBeGreaterThan(0));
+  });
+
+  it('action_prepared with no natural-language response appends transparent system and Observe explanation messages in the drawer', async () => {
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      nativeActionMode: 'observe',
+      hermesRuntimeResult: { status: 'ok', finalOutput: '', trace: [{ traceId: 'trace.action', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    await waitFor(() => expect(screen.getByText('Hermes prepared an action but did not return a natural-language response.')).toBeTruthy());
+    expect(screen.getByText(/Action prepared\. Observe mode prepares the route only/)).toBeTruthy();
+    expect(screen.getByLabelText('Runtime graph surface').textContent).not.toContain('Observe mode prepares the route only');
+  });
+
+  it('Work Log shows compact trace events in the drawer without dumping raw JSON by default', () => {
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'prepared', trace: [{ traceId: 'trace.action', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.getByRole('group', { name: 'Hermes Work Log / Terminal' })).toBeTruthy();
+    expect(screen.getAllByText('action_request_created').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Action request created').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll('.runtime-work-log-rows details').length).toBeGreaterThan(0);
+    expect(document.querySelector('.runtime-work-log-rows pre')).toBeNull();
+  });
+
+  it('Missing capability card can request a workspace MOLT draft from Block Forge integration inside the drawer', () => {
+    const onDraft = vi.fn();
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      runtimePrompt: 'Make me a dagger with 1000 deadly poison charges.',
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'prepared', trace: [{ traceId: 'trace.action', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] },
+      onDraftMissingMoltBlock: onDraft
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.queryByLabelText('Missing capability detected')).toBeNull();
+    cleanup();
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      runtimePrompt: 'Make me a dagger with 1000 deadly poison charges.',
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'prepared', trace: [{ traceId: 'trace.action', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [{ toolId: 'umg.native.project_file_edit', toolName: 'project file edit', status: 'blocked', error: 'missing capability' }], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] },
+      onDraftMissingMoltBlock: onDraft
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.getByLabelText('Missing capability detected')).toBeTruthy();
+    expect(screen.getByText('ServUO Item Script Creation Tool Requirement')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Draft MOLT Block' }));
+    expect(onDraft).toHaveBeenCalledWith('Create MOLT Block: ServUO Item Script Creation Tool Requirement');
+  });
+
+  it('Graph trace remains separate from drawer chat transcript messages', async () => {
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'Hermes says hello.', trace: [{ traceId: 'trace.action', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    await waitFor(() => expect(screen.getAllByText('Hermes says hello.').length).toBeGreaterThan(0));
+    expect(screen.getByLabelText('Hermes Chat').textContent).toContain('Hermes says hello.');
+    expect(screen.getByRole('complementary', { name: 'Runtime trace and artifact rail' }).textContent).toContain('Action request created');
+    expect(screen.getByLabelText('Runtime graph surface').textContent).not.toContain('Hermes says hello.');
+  });
+
   it('keeps the Runtime bottom drawer collapsed by default', () => {
     const html = renderObserver();
     expect(html).toContain('runtime-bottom-drawer');
     expect(html).not.toContain('runtime-bottom-drawer--open');
   });
 
-  it('shows selected native action mode help in Runtime Graph', () => {
-    const html = renderObserver({ nativeActionMode: 'direct' });
-    expect(html).toContain('Selected action mode: Direct');
-    expect(html).toContain('Direct: executes allowed native Hermes actions');
+  it('shows selected native action mode help in the Hermes Terminal drawer', () => {
+    renderInteractiveObserver({ nativeActionMode: 'direct' });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.getByText(/Selected action mode: Direct/)).toBeTruthy();
+    expect(screen.getByText(/Direct: executes allowed native Hermes actions/)).toBeTruthy();
   });
 });

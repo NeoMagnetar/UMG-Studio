@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react';
 import type { NormalizedTemplateSleeve } from '../lib/umg/templateSleeveStructures';
 import type { HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeArtifact, UMGRuntimeVisualState, UMGTraceEvent } from '../lib/umg/cognitiveRuntimeTypes';
 import type { PendingRuntimeApproval, ToolCapabilityResolution } from '../lib/umg/toolCapabilityResolver';
@@ -11,6 +11,17 @@ export type RuntimeGeometryObserverMode = 'structure' | 'runtime';
 export type RuntimeExecutionState = 'idle' | 'ready' | 'compiling_required' | 'sending' | 'running' | 'action_prepared' | 'awaiting_approval' | 'completed' | 'failed';
 export type RuntimeExecutionMode = 'batch' | 'stream';
 export type RuntimeNativeActionMode = 'observe' | 'approval' | 'direct';
+export type HermesRuntimeChatMessage = {
+  id: string;
+  role: 'user' | 'hermes' | 'system' | 'tool' | 'error';
+  content: string;
+  createdAt: string;
+  relatedNodeId?: string;
+  relatedTraceId?: string;
+  mode?: RuntimeNativeActionMode;
+  metadata?: Record<string, unknown>;
+};
+
 
 type RuntimeGeometryNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'molt' | 'merge' | 'gate' | 'tool' | 'capability' | 'artifact';
 type RuntimeGeometryNodeStatus = 'idle' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error';
@@ -64,10 +75,12 @@ export type RuntimeGeometryObserverProps = {
   onBackToBuilder: () => void;
   compileStatus: string;
   runtimeStatus: string;
+  hermesRuntimeErrors?: string[];
   isHermesRunning: boolean;
   pendingRuntimeApproval?: PendingRuntimeApproval;
   toolCapabilityResolutions?: ToolCapabilityResolution[];
   nativeActionMode?: RuntimeNativeActionMode;
+  onDraftMissingMoltBlock?: (prompt: string) => void;
 };
 
 function unique(values: Array<string | undefined>) {
@@ -680,6 +693,92 @@ export function deriveRuntimeExecutionState(args: { compiledRuntimeManifest?: UM
   return args.hermesRuntimeResult.status === 'ok' && (args.traceCount ?? 0) > 0 ? 'action_prepared' : 'ready';
 }
 
+
+function runtimeResultTraceKey(result?: HermesCognitiveRuntimeResult) {
+  if (!result) return '';
+  return `${result.status}:${result.finalOutput}:${result.trace?.length ?? 0}:${result.artifacts?.length ?? 0}:${result.errors?.length ?? 0}`;
+}
+
+function resultHasActionPreparedWithoutTerminal(result?: HermesCognitiveRuntimeResult) {
+  const types = new Set((result?.trace ?? []).map((event) => event.eventType));
+  return types.has('action_request_created')
+    && !types.has('action_executed')
+    && !types.has('file_created')
+    && !types.has('file_modified')
+    && !types.has('artifact_created')
+    && !types.has('run_completed')
+    && !types.has('run_error');
+}
+
+function firstRuntimeText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (isRecord(value)) {
+    for (const key of ['naturalLanguage', 'natural_language', 'nl', 'message', 'output', 'finalOutput', 'summary']) {
+      const text = firstRuntimeText(value[key]);
+      if (text) return text;
+    }
+  }
+  return undefined;
+}
+
+function buildRuntimeChatMessagesFromResult(result: HermesCognitiveRuntimeResult | undefined, mode: RuntimeNativeActionMode): HermesRuntimeChatMessage[] {
+  if (!result) return [];
+  const createdAt = new Date().toISOString();
+  const relatedTraceId = result.trace?.[0]?.traceId;
+  const messages: HermesRuntimeChatMessage[] = [];
+  if (result.finalOutput?.trim()) {
+    messages.push({ id: `hermes-${relatedTraceId ?? 'result'}-${result.trace?.length ?? 0}`, role: result.status === 'error' ? 'error' : 'hermes', content: result.finalOutput.trim(), createdAt, relatedTraceId, mode, metadata: { source: 'finalOutput' } });
+  } else {
+    const rawText = firstRuntimeText(result.raw);
+    if (rawText) messages.push({ id: `hermes-raw-${relatedTraceId ?? 'result'}`, role: 'hermes', content: rawText, createdAt, relatedTraceId, mode, metadata: { source: 'raw' } });
+  }
+  if (!messages.length && resultHasActionPreparedWithoutTerminal(result)) {
+    messages.push({ id: `system-no-nl-${relatedTraceId ?? 'result'}`, role: 'system', content: 'Hermes prepared an action but did not return a natural-language response.', createdAt, relatedTraceId, mode, metadata: { transparentFallback: true } });
+  }
+  if (mode === 'observe' && resultHasActionPreparedWithoutTerminal(result)) {
+    messages.push({ id: `system-observe-${relatedTraceId ?? 'result'}`, role: 'system', content: 'Action prepared. Observe mode prepares the route only and does not execute external tools. Switch to Approval or Direct mode to execute, or continue in Observe to inspect the route only.', createdAt, relatedTraceId, mode, metadata: { modeExplanation: true } });
+  }
+  result.errors?.forEach((error, index) => messages.push({ id: `error-${relatedTraceId ?? 'result'}-${index}`, role: 'error', content: `${error.code}: ${error.message}`, createdAt, relatedTraceId: error.traceId ?? relatedTraceId, mode, metadata: { error } }));
+  result.blockedCalls?.forEach((call, index) => messages.push({ id: `tool-blocked-${relatedTraceId ?? 'result'}-${index}`, role: 'tool', content: `Tool blocked or missing: ${call.toolName ?? call.toolId}. ${call.error ?? 'No execution occurred.'}`, createdAt, relatedTraceId: call.traceId ?? relatedTraceId, mode, metadata: { call } }));
+  return messages;
+}
+
+function buildWorkLogRows(args: { endpoint?: string; mode: RuntimeNativeActionMode; runtimeState: RuntimeExecutionState; routeLabel: string; traceEvents: UMGTraceEvent[]; result?: HermesCognitiveRuntimeResult; status: string; errors: string[] }) {
+  const rows: Array<{ id: string; label: string; value: string; raw?: unknown }> = [
+    { id: 'endpoint', label: 'bridge endpoint', value: args.endpoint ?? 'VITE_HERMES_RUNTIME_ENDPOINT / local bridge', raw: { endpoint: args.endpoint } },
+    { id: 'mode', label: 'action mode', value: args.mode, raw: { mode: args.mode } },
+    { id: 'route', label: 'selected route', value: args.routeLabel },
+    { id: 'state', label: 'runtime state', value: args.runtimeState },
+    { id: 'status', label: 'status', value: args.status }
+  ];
+  args.traceEvents.forEach((event, index) => rows.push({ id: `trace-${index}`, label: event.eventType, value: event.label ?? event.message ?? event.state, raw: event }));
+  (args.result?.toolCalls ?? []).forEach((call, index) => rows.push({ id: `tool-${index}`, label: 'tool requested', value: `${call.toolName ?? call.toolId}: ${call.status}`, raw: call }));
+  (args.result?.approvalRequests ?? []).forEach((approval, index) => rows.push({ id: `approval-${index}`, label: 'approval boundary', value: `${approval.label}: ${approval.status}`, raw: approval }));
+  const native = args.result?.nativeActionResult;
+  if (native) rows.push({ id: 'native-result', label: 'native action result', value: `${native.status}; externalActionTaken=${native.externalActionTaken}`, raw: native });
+  args.errors.forEach((error, index) => rows.push({ id: `error-row-${index}`, label: 'error', value: error }));
+  return rows;
+}
+
+function inferMissingCapability(args: { result?: HermesCognitiveRuntimeResult; prompt: string; mode: RuntimeNativeActionMode; compiledRuntimeManifest?: UMGCompiledRuntimeManifest }) {
+  if (!args.result) return undefined;
+  const registry = args.compiledRuntimeManifest?.toolPolicy?.registry ?? [];
+  const missingRegistry = registry.find((entry) => entry.status === 'missing' || entry.availableInHermes === false);
+  const blocked = args.result?.blockedCalls?.[0];
+  const missingError = args.result?.errors?.find((error) => /missing|unavailable|capability|tool/i.test(`${error.code} ${error.message}`));
+  if (!blocked && !missingError) return undefined;
+  const projectEditNeeded = /servuo|c#|script|file|edit|dagger|poison/i.test(args.prompt);
+  const needed = blocked?.toolName ?? blocked?.toolId ?? missingRegistry?.toolName ?? missingRegistry?.toolId ?? (projectEditNeeded ? 'project file edit' : missingError?.code ?? 'runtime tool');
+  return {
+    needed,
+    why: projectEditNeeded ? 'This task appears to require creating or editing a project/server script, which is outside Observe execution and needs an active file-edit tool boundary.' : 'The runtime route identified a tool/capability that is not available for execution.',
+    suggestedMoltBlock: projectEditNeeded ? 'ServUO Item Script Creation Tool Requirement' : `Tool Requirement: ${needed}`,
+    suggestedNeoBlock: projectEditNeeded ? 'ServUO Item Script Creation' : `Capability Setup: ${needed}`,
+    prompt: projectEditNeeded ? 'Create MOLT Block: ServUO Item Script Creation Tool Requirement' : `Create MOLT Block: ${needed} Tool Requirement`,
+    mode: args.mode
+  };
+}
+
 function routeStatusLabel(state: RuntimeExecutionState, traceCount: number) {
   if (state === 'compiling_required') return 'Starting route: compile required';
   if (state === 'ready') return 'Starting route: ready · Waiting for trace';
@@ -705,16 +804,28 @@ export function RuntimeGeometryObserver({
   onBackToBuilder,
   compileStatus,
   runtimeStatus,
+  hermesRuntimeErrors = [],
   isHermesRunning,
   pendingRuntimeApproval,
-  nativeActionMode = 'observe'
+  nativeActionMode = 'observe',
+  onDraftMissingMoltBlock
 }: RuntimeGeometryObserverProps) {
   const [viewMode, setViewMode] = useState<RuntimeVisualViewMode>('system_sleeve');
   const [leftRailOpen, setLeftRailOpen] = useState(false);
   const [rightRailOpen, setRightRailOpen] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<'JSON' | 'Trace' | 'Manifest' | 'Artifacts' | 'Diagnostics'>('JSON');
+  const [drawerTab, setDrawerTab] = useState<'JSON' | 'Trace' | 'Manifest' | 'Artifacts' | 'Diagnostics' | 'Hermes Terminal'>('JSON');
+  const [runtimeChatMessages, setRuntimeChatMessages] = useState<HermesRuntimeChatMessage[]>([]);
+  const [expandedWorkLogRawIds, setExpandedWorkLogRawIds] = useState<Set<string>>(() => new Set());
+  const [activeHermesThoughtSummary, setActiveHermesThoughtSummary] = useState('No visible response yet.');
+  const [lastHermesNaturalLanguage, setLastHermesNaturalLanguage] = useState('');
+  const [lastHermesError, setLastHermesError] = useState('');
+  const [lastToolAccessStatus, setLastToolAccessStatus] = useState('not checked');
+  const lastResultKeyRef = useRef('');
   const [graphScale, setGraphScale] = useState(1);
+  const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
+  const [isGraphDragging, setIsGraphDragging] = useState(false);
+  const graphDragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
   const model = useMemo(() => buildRuntimeVisualViewModel({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
   const graph = useMemo(() => buildRuntimeGeometryObserverGraph({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode === 'runtime_path' ? 'runtime' : 'structure' }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
@@ -737,6 +848,9 @@ export function RuntimeGeometryObserver({
       : 'Runtime trace appears after Hermes runs.';
   const submitRuntimePrompt = () => {
     if (!canSendRuntimePrompt) return;
+    const now = new Date().toISOString();
+    setRuntimeChatMessages((current) => [...current, { id: `user-${Date.now()}`, role: 'user', content: runtimePrompt.trim(), createdAt: now, mode: nativeActionMode }]);
+    setActiveHermesThoughtSummary('Prompt sent to Hermes runtime bridge. Waiting for visible response or transparent execution-boundary status.');
     onRunHermesRuntime();
   };
   const handleRuntimePromptKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -744,6 +858,22 @@ export function RuntimeGeometryObserver({
     event.preventDefault();
     submitRuntimePrompt();
   };
+  useEffect(() => {
+    const key = runtimeResultTraceKey(hermesRuntimeResult);
+    if (!key || key === lastResultKeyRef.current) return;
+    lastResultKeyRef.current = key;
+    const messages = buildRuntimeChatMessagesFromResult(hermesRuntimeResult, nativeActionMode);
+    if (!messages.length) return;
+    setRuntimeChatMessages((current) => [...current, ...messages]);
+    const hermesMessage = messages.find((message) => message.role === 'hermes');
+    const errorMessage = messages.find((message) => message.role === 'error');
+    setActiveHermesThoughtSummary(resultHasActionPreparedWithoutTerminal(hermesRuntimeResult) ? 'Action route prepared; waiting at execution boundary.' : 'Hermes returned a visible runtime response.');
+    if (hermesMessage) setLastHermesNaturalLanguage(hermesMessage.content);
+    if (errorMessage) setLastHermesError(errorMessage.content);
+    const nativeStatus = hermesRuntimeResult?.nativeActionResult?.status;
+    setLastToolAccessStatus(nativeStatus ? `${nativeStatus}; externalActionTaken=${hermesRuntimeResult?.nativeActionResult?.externalActionTaken}` : `${hermesRuntimeResult?.toolCalls?.length ?? 0} tool calls; ${hermesRuntimeResult?.blockedCalls?.length ?? 0} blocked`);
+  }, [hermesRuntimeResult, nativeActionMode]);
+
   const summary = useMemo(() => {
     try { return summarizeGeometryManifest(geometryManifest ?? buildRuntimeGeometryManifest({ templateSleeve: activeSessionSleeve, compiledRuntimeManifest })); } catch { return undefined; }
   }, [activeSessionSleeve, compiledRuntimeManifest, geometryManifest]);
@@ -782,10 +912,27 @@ export function RuntimeGeometryObserver({
   const foundationItems = [...model.resources, ...model.contexts];
   const sourceBoundLayerCount = (block: RuntimeVisualNode) => layersForBlock(block).filter((layer) => layer.sourceStatus === 'source-library-reused' || Boolean(layer.metadata?.matchedCandidateId)).length;
   const sourceBoundLayerCountForStack = (stackId?: string) => childBlocksForStack(stackId).reduce((total, block) => total + sourceBoundLayerCount(block), 0);
-  const graphViewportStyle = { transform: `scale(${graphScale})`, transformOrigin: 'center center' };
-  const fitGraph = () => setGraphScale(0.9);
-  const resetGraph = () => setGraphScale(1);
+  const graphViewportStyle = { transform: `translate(${graphPan.x}px, ${graphPan.y}px) scale(${graphScale})`, transformOrigin: 'center center' };
+  const fitGraph = () => { setGraphScale(0.9); setGraphPan({ x: 0, y: 0 }); };
+  const resetGraph = () => { setGraphScale(1); setGraphPan({ x: 0, y: 0 }); };
   const zoomGraph = (delta: number) => setGraphScale((current) => Math.min(1.4, Math.max(0.7, Number((current + delta).toFixed(2)))));
+  const startGraphPan = (event: MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('button, textarea, input, select, summary, details, a')) return;
+    setIsGraphDragging(true);
+    graphDragStartRef.current = { x: event.clientX, y: event.clientY, panX: graphPan.x, panY: graphPan.y };
+  };
+  const moveGraphPan = (event: MouseEvent<HTMLElement>) => {
+    if (!isGraphDragging) return;
+    const start = graphDragStartRef.current;
+    setGraphPan({ x: start.panX + event.clientX - start.x, y: start.panY + event.clientY - start.y });
+  };
+  const stopGraphPan = () => setIsGraphDragging(false);
+  const handleGraphWheel = (event: WheelEvent<HTMLElement>) => {
+    event.preventDefault();
+    zoomGraph(event.deltaY < 0 ? 0.08 : -0.08);
+  };
 
   const renderVisualNode = (node: RuntimeVisualNode, extra = '') => <button key={node.id} type="button" title={node.label} className={`runtime-node runtime-compact-node runtime-node--${node.status} runtime-node--${node.kind} ${selectedVisualNode?.id === node.id ? 'runtime-node--selected' : ''} ${extra}`} onClick={() => selectVisualNode(node)}>
     <span className="runtime-node-icon">{node.icon}</span>
@@ -796,11 +943,11 @@ export function RuntimeGeometryObserver({
 
   const renderCompactEdge = (edge?: RuntimeVisualEdge, extra = '') => <div className={`runtime-map-edge runtime-map-edge--${edge?.status ?? 'idle'} ${edge?.traceEventIds?.length ? 'runtime-map-edge--glow' : ''} ${extra}`} aria-label="runtime connector" />;
 
-  const renderSystemSleeveView = () => <div className="runtime-system-sleeve-view">
+  const renderSystemSleeveView = () => <div className="runtime-system-sleeve-view" style={graphViewportStyle}>
     <section className="runtime-sleeve-package">
       <div className="runtime-sleeve-banner">
         <span className="runtime-sleeve-icon">⬢</span>
-        <div><h2>System Sleeve</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} neostack nodes · {model.neoBlocks.length} neoblock nodes · {summary ? `${summary.totalMoltBindings} molt layers · ${summary.totalGates} gate nodes · ${summary.totalToolEndpoints + model.capabilities.length} capability nodes` : 'manifest pending'}</small></div>
+        <div><h2>Sleeve Overview</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} NeoStacks · {model.neoBlocks.length} NeoBlocks · {summary ? `${summary.totalMoltBindings} MOLT Blocks · ${summary.totalGates} Gates · ${summary.totalToolEndpoints} Tool Blocks · ${model.capabilities.length} Capabilities` : 'manifest pending'}</small></div>
       </div>
       <div className="runtime-neostack-clusters runtime-map-centered">
         {model.neoStacks.map((stack, stackIndex) => <article key={stack.id} className="runtime-neostack-cluster runtime-map-card">
@@ -810,13 +957,13 @@ export function RuntimeGeometryObserver({
           </button>
         </article>)}
       </div>
-      <small>System Sleeve answers what major work stacks are inside the Sleeve. Diagnostics stay in the drawers/rails, not the graph canvas.</small>
+      <small>Sleeve Overview answers what major work stacks are inside the Sleeve. Diagnostics stay in the drawers/rails, not the graph canvas.</small>
     </section>
   </div>;
 
   const renderNeoStackView = () => <div className="runtime-neostack-view runtime-map-centered" style={graphViewportStyle}>
     <h2>NeoStack Map</h2>
-    <small>NeoStack Map answers what stacks exist and how they relate. NeoBlocks, MOLT layers, and resources stay out of this canvas.</small>
+    <small>NeoStack Map answers what stacks exist and how they relate. NeoBlocks, MOLT Blocks, and resources stay out of this canvas.</small>
     <div className="runtime-stack-pyramid" aria-label="NeoStack-only runtime graph">
       {centeredStackOrder.map((stack, index) => <div key={stack.id} className={`runtime-stack-pyramid-row runtime-stack-pyramid-row--${index === 0 ? 'top' : 'child'}`}>
         {index > 0 && renderCompactEdge(model.edges.find((edge) => edge.to === stack.id || edge.from === stack.id), 'runtime-map-edge--down')}
@@ -825,7 +972,7 @@ export function RuntimeGeometryObserver({
         </button>
       </div>)}
     </div>
-    {selectedStack && <div className="runtime-selected-stack-summary"><b>{selectedStack.label}</b><small>{childBlocksForStack(selectedStack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(selectedStack.id)} source-bound MOLT layers · status {selectedStack.status}</small></div>}
+    {selectedStack && <div className="runtime-selected-stack-summary"><b>{selectedStack.label}</b><small>{childBlocksForStack(selectedStack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(selectedStack.id)} source-bound MOLT Blocks · status {selectedStack.status}</small></div>}
   </div>;
 
   const renderNeoBlockView = () => <div className="runtime-neoblock-view runtime-map-centered" style={graphViewportStyle}>
@@ -839,7 +986,7 @@ export function RuntimeGeometryObserver({
           {blocks.map((block, index) => {
             const previous = blocks[index - 1];
             const edge = previous ? model.edges.find((entry) => entry.kind === 'routes' && ((entry.from === previous.id && entry.to === block.id) || entry.to === block.id || entry.from === block.id)) : model.edges.find((entry) => entry.kind === 'routes' && (entry.from === block.id || entry.to === block.id));
-            return <div key={block.id} className="runtime-neoblock-lane-step">{index > 0 && renderCompactEdge(edge, 'runtime-map-edge--tier')}<button type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-node--${block.status} runtime-neoblock-module ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} onClick={() => selectBlock(block)}><span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {stack.shortLabel ?? stack.label}</small><span className="runtime-node-chip-row"><i>{layersForBlock(block).length} MOLT</i><i>{sourceBoundLayerCount(block)} source-bound</i><i>{block.status}</i></span></button></div>;
+            return <div key={block.id} className="runtime-neoblock-lane-step">{index > 0 && renderCompactEdge(edge, 'runtime-map-edge--tier')}<button type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} runtime-neoblock-module ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} onClick={() => selectBlock(block)}><span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {stack.shortLabel ?? stack.label}</small><span className="runtime-node-chip-row"><i>{layersForBlock(block).length} MOLT Blocks</i><i>{sourceBoundLayerCount(block)} source-bound</i><i>{block.status}</i></span></button></div>;
           })}
         </section>;
       })}
@@ -870,13 +1017,42 @@ export function RuntimeGeometryObserver({
       : selectedBlock
         ? layersForBlock(selectedBlock)
         : [];
+  const runtimeWorkLogRows = buildWorkLogRows({ endpoint: toText(hermesRuntimeResult?.raw && isRecord(hermesRuntimeResult.raw) ? hermesRuntimeResult.raw.endpoint : undefined), mode: nativeActionMode, runtimeState: runtimeExecutionState, routeLabel: routeStatusLabel(runtimeExecutionState, traceEvents.length), traceEvents, result: hermesRuntimeResult, status: runtimeStatus, errors: hermesRuntimeErrors });
+  const missingCapability = inferMissingCapability({ result: hermesRuntimeResult, prompt: runtimePrompt || [...runtimeChatMessages].reverse().find((message) => message.role === 'user')?.content || '', mode: nativeActionMode, compiledRuntimeManifest });
+  const toggleWorkLogRaw = (rowId: string, open: boolean) => setExpandedWorkLogRawIds((current) => {
+    const next = new Set(current);
+    if (open) next.add(rowId); else next.delete(rowId);
+    return next;
+  });
+  const renderHermesTerminalDrawer = () => <section className="runtime-hermes-terminal-drawer" aria-label="Hermes Terminal drawer">
+    <div className="runtime-hermes-terminal-prompt-row">
+      <label className="runtime-geometry-prompt"><span>Runtime prompt</span><textarea value={runtimePrompt} onChange={(event) => onRuntimePromptChange(event.target.value)} onKeyDown={handleRuntimePromptKeyDown} placeholder="Ask Hermes to perform a task through this Sleeve…" disabled={isHermesRunning} aria-label="Runtime prompt" /></label>
+      <button type="button" className="publicPrimaryCta" disabled={!canSendRuntimePrompt} onClick={submitRuntimePrompt}>{isHermesRunning ? 'Hermes working…' : 'Send to Hermes'}</button>
+    </div>
+    <small className="runtime-action-mode-copy">Selected action mode: {nativeActionModeLabel}. {nativeActionModeCopy}</small>
+    {pendingRuntimeApproval && <div className="runtime-geometry-approval"><b>Approval boundary active</b><button type="button" onClick={() => onContinueRuntimeApproval('approve')} disabled={isHermesRunning}>Approve & Continue</button><button type="button" onClick={() => onContinueRuntimeApproval('skip')} disabled={isHermesRunning}>Skip</button></div>}
+    <section className="runtime-hermes-chat-panel" aria-label="Hermes Chat">
+      <header><h2>Hermes Chat</h2></header>
+      {nativeActionMode === 'observe' && runtimeChatMessages.length > 0 && <p className="runtime-observe-explainer">Observe mode prepares the route only. It does not execute external tools. Switch to Approval or Direct mode to cross execution boundaries.</p>}
+      <ol className="runtime-chat-transcript">{runtimeChatMessages.length ? runtimeChatMessages.map((message) => <li key={message.id} className={`runtime-chat-message runtime-chat-message--${message.role}`}><b>{message.role === 'hermes' ? 'Hermes' : message.role}</b><span>{message.content}</span><small>{message.createdAt}{message.mode ? ` · ${message.mode}` : ''}</small></li>) : <li className="runtime-chat-message runtime-chat-message--system"><b>system</b><span>No runtime request yet. Send a prompt to Hermes.</span></li>}</ol>
+      {missingCapability && <aside className="runtime-missing-capability-card" aria-label="Missing capability detected"><h3>Missing capability detected</h3><div><b>needed tool/block</b><span>{missingCapability.needed}</span></div><div><b>why it is needed</b><span>{missingCapability.why}</span></div><div><b>suggested MOLT block</b><span>{missingCapability.suggestedMoltBlock}</span></div><div><b>suggested NeoBlock</b><span>{missingCapability.suggestedNeoBlock}</span></div><button type="button" onClick={() => onDraftMissingMoltBlock?.(missingCapability.prompt)}>Draft MOLT Block</button><button type="button" onClick={() => onDraftMissingMoltBlock?.(`Create NeoBlock support block: ${missingCapability.suggestedNeoBlock}`)}>Draft NeoBlock</button><button type="button" onClick={() => onDraftMissingMoltBlock?.(`${missingCapability.prompt}. Save to Workspace when validated.`)}>Save to Workspace</button><button type="button" disabled>Cancel</button></aside>}
+    </section>
+    <details className="runtime-work-log-panel" aria-label="Hermes Work Log / Terminal">
+      <summary>Hermes Work Log / Terminal</summary>
+      <ol className="runtime-work-log-rows">{runtimeWorkLogRows.map((row) => <li key={row.id}><b>{row.label}</b><span>{row.value}</span>{row.raw !== undefined && <details open={expandedWorkLogRawIds.has(row.id)} onToggle={(event) => toggleWorkLogRaw(row.id, event.currentTarget.open)}><summary>raw JSON</summary>{expandedWorkLogRawIds.has(row.id) && <pre>{JSON.stringify(row.raw, null, 2).slice(0, 3000)}</pre>}</details>}</li>)}</ol>
+    </details>
+    <details className="runtime-debug-disclosure" aria-label="Runtime Debug">
+      <summary>Runtime Debug</summary>
+      <div className="runtime-chat-status-grid"><span><b>mode</b>{nativeActionModeLabel}</span><span><b>thought summary</b>{activeHermesThoughtSummary}</span><span><b>last NL</b>{lastHermesNaturalLanguage || 'none yet'}</span><span><b>last error</b>{lastHermesError || 'none'}</span><span><b>tool access</b>{lastToolAccessStatus}</span><span><b>runtime state</b>{runtimeExecutionState}</span><span><b>bridge endpoint</b>{runtimeWorkLogRows.find((row) => row.id === 'endpoint')?.value ?? 'local bridge'}</span></div>
+    </details>
+  </section>;
 
   return <section className="runtime-geometry-observer runtime-graph-shell" aria-label="Runtime Graph">
     <header className="runtime-geometry-header runtime-top-status">
       <div>
         <p className="runtime-geometry-eyebrow">Runtime Graph</p>
         <h1>{activeSessionSleeve.title}</h1>
-        <small>{runtimeExecutionCopy} Real trace is the only activation source; MOLT layers stay compressed inside NeoBlocks.</small>
+        <small>{runtimeExecutionCopy} Real trace is the only activation source; MOLT Blocks stay compressed inside NeoBlocks.</small>
       </div>
       <div className="runtime-geometry-status-grid">
         <span><b>compile</b>{compileStatus}</span>
@@ -893,23 +1069,19 @@ export function RuntimeGeometryObserver({
 
     <div className="runtime-geometry-controls runtime-view-tabs">
       <button type="button" onClick={onBackToBuilder}>Back to Sleeve Builder</button>
-      {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => setViewMode(tab)}>{tab === 'system_sleeve' ? 'System Sleeve' : tab === 'neostack' ? 'NeoStack Map' : tab === 'neoblock' ? 'NeoBlock Map' : 'Runtime Path'}</button>)}
-      <div className="runtime-pan-zoom-controls" aria-label="Runtime graph fit and zoom controls"><button type="button" onClick={fitGraph}>Fit graph</button><button type="button" onClick={resetGraph}>Reset graph</button><button type="button" onClick={() => zoomGraph(-0.1)}>Zoom out</button><button type="button" onClick={() => zoomGraph(0.1)}>Zoom in</button><span>{Math.round(graphScale * 100)}%</span></div>
-      <label className="runtime-geometry-prompt"><span>Runtime prompt</span><textarea value={runtimePrompt} onChange={(event) => onRuntimePromptChange(event.target.value)} onKeyDown={handleRuntimePromptKeyDown} placeholder="Ask Hermes to perform a task through this Sleeve…" disabled={isHermesRunning} aria-label="Runtime prompt" /></label>
-      <button type="button" className="publicPrimaryCta" disabled={!canSendRuntimePrompt} onClick={submitRuntimePrompt}>{isHermesRunning ? 'Hermes working…' : 'Send to Hermes'}</button>
-      <small className="runtime-action-mode-copy">Selected action mode: {nativeActionModeLabel}. {nativeActionModeCopy}</small>
-      {pendingRuntimeApproval && <div className="runtime-geometry-approval"><b>Approval boundary active</b><button type="button" onClick={() => onContinueRuntimeApproval('approve')} disabled={isHermesRunning}>Approve & Continue</button><button type="button" onClick={() => onContinueRuntimeApproval('skip')} disabled={isHermesRunning}>Skip</button></div>}
+      {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => setViewMode(tab)}>{tab === 'system_sleeve' ? 'Sleeve Overview' : tab === 'neostack' ? 'NeoStack Map' : tab === 'neoblock' ? 'NeoBlock Map' : 'Runtime Path'}</button>)}
+      <div className="runtime-pan-zoom-controls" aria-label="Runtime graph fit and zoom controls"><button type="button" onClick={fitGraph}>Fit graph</button><button type="button" onClick={resetGraph}>Reset graph</button><span>{Math.round(graphScale * 100)}%</span></div>
     </div>
 
     <div className={`runtime-main-layout ${leftRailOpen ? 'runtime-main-layout--left-open' : ''} ${rightRailOpen ? 'runtime-main-layout--right-open' : ''}`}>
       <aside className="runtime-left-rail" aria-label="Runtime hierarchy rail"><button type="button" onClick={() => setLeftRailOpen(!leftRailOpen)}>{leftRailOpen ? 'Collapse hierarchy' : 'Open hierarchy'}</button>{leftRailOpen && <><h2>Sleeve hierarchy</h2>{model.neoStacks.map((stack) => <section key={stack.id}><button type="button" onClick={() => { selectStack(stack); setViewMode('neostack'); }}><b>{stack.label}</b></button>{childBlocksForStack(stack.id).map((block) => <button key={block.id} type="button" onClick={() => { selectBlock(block); setViewMode('neoblock'); }}>{block.label}</button>)}</section>)}</>}</aside>
-      <main className="runtime-graph-surface" aria-label="Runtime graph surface">{viewMode === 'system_sleeve' && renderSystemSleeveView()}{viewMode === 'neostack' && renderNeoStackView()}{viewMode === 'neoblock' && renderNeoBlockView()}{viewMode === 'runtime_path' && renderRuntimePathView()}</main>
-      <aside className="runtime-right-rail" aria-label="Runtime trace and artifact rail"><button type="button" onClick={() => setRightRailOpen(!rightRailOpen)}>{rightRailOpen ? 'Collapse runtime rail' : 'Open runtime rail'}</button>{rightRailOpen && <><h2>Runtime Rail</h2><div className="runtime-rail-summary"><span><b>Active route</b>{routeStatusLabel(runtimeExecutionState, traceEvents.length)}</span><span><b>Current node</b>{selectedVisualNode?.shortLabel ?? selectedVisualNode?.label ?? 'none'}</span><span><b>Trace count</b>{traceEvents.length}</span><span><b>Artifact count</b>{artifactCount}</span><span><b>Unmapped count</b>{model.unmappedEvents.length}</span></div>{selectedVisualNode && <RuntimeNodeInspectorCard node={selectedVisualNode} layers={inspectorLayers} onOpenNeoBlock={() => { if (selectedVisualNode.neoBlockId) setSelectedNodeId(`neoblock:${selectedVisualNode.neoBlockId}`); setViewMode('neoblock'); }} onSelect={selectVisualNode} />}<h3>Activity Stream</h3>{traceEvents.length ? <ol className="runtime-geometry-trace-list">{traceEvents.map((event, index) => <li className="runtime-geometry-trace-event" key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span><small>{eventTargetId(event) ?? 'missing target'}</small></li>)}</ol> : <small>No real Hermes trace yet.</small>}</>}</aside>
+      <main className={`runtime-graph-surface ${isGraphDragging ? 'runtime-graph-surface--dragging' : ''}`} aria-label="Runtime graph surface" onMouseDown={startGraphPan} onMouseMove={moveGraphPan} onMouseUp={stopGraphPan} onMouseLeave={stopGraphPan} onWheel={handleGraphWheel}>{viewMode === 'system_sleeve' && renderSystemSleeveView()}{viewMode === 'neostack' && renderNeoStackView()}{viewMode === 'neoblock' && renderNeoBlockView()}{viewMode === 'runtime_path' && renderRuntimePathView()}</main>
+      <aside className="runtime-right-rail" aria-label="Runtime trace and artifact rail"><button type="button" onClick={() => setRightRailOpen(!rightRailOpen)}>{rightRailOpen ? 'Collapse runtime inspector' : 'Open runtime inspector'}</button>{rightRailOpen && <><h2>Runtime Inspector</h2><div className="runtime-rail-summary"><span><b>Active route</b>{routeStatusLabel(runtimeExecutionState, traceEvents.length)}</span><span><b>Current node</b>{selectedVisualNode?.shortLabel ?? selectedVisualNode?.label ?? 'none'}</span><span><b>Trace count</b>{traceEvents.length}</span><span><b>Artifact count</b>{artifactCount}</span><span><b>Unmapped count</b>{model.unmappedEvents.length}</span></div>{selectedVisualNode && <RuntimeNodeInspectorCard node={selectedVisualNode} layers={inspectorLayers} onOpenNeoBlock={() => { if (selectedVisualNode.neoBlockId) setSelectedNodeId(`neoblock:${selectedVisualNode.neoBlockId}`); setViewMode('neoblock'); }} onSelect={selectVisualNode} />}<h3>Activity Stream</h3>{traceEvents.length ? <ol className="runtime-geometry-trace-list">{traceEvents.map((event, index) => <li className="runtime-geometry-trace-event" key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span><small>{eventTargetId(event) ?? 'missing target'}</small></li>)}</ol> : <small>No real Hermes trace yet.</small>}</>}</aside>
     </div>
 
     <section className={`runtime-bottom-drawer ${drawerOpen ? 'runtime-bottom-drawer--open' : ''}`} aria-label="Runtime bottom drawer">
-      <div className="runtime-bottom-drawer-tabs"><button type="button" onClick={() => setDrawerOpen(!drawerOpen)}>{drawerOpen ? 'Collapse drawer' : 'Open drawer'}</button>{(['JSON', 'Trace', 'Manifest', 'Artifacts', 'Diagnostics'] as const).map((tab) => <button key={tab} type="button" className={drawerTab === tab ? 'hot' : ''} onClick={() => { setDrawerTab(tab); setDrawerOpen(true); }}>{tab}</button>)}</div>
-      {drawerOpen && <div className="runtime-bottom-drawer-body">{drawerTab === 'JSON' && <pre>{JSON.stringify(drawerPayload, null, 2)}</pre>}{drawerTab === 'Trace' && <ol>{(selectedTrace.length ? selectedTrace : traceEvents).map((event, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol>}{drawerTab === 'Manifest' && <pre>{JSON.stringify({ compileStatus, summary, manifest: compiledRuntimeManifest, resources: foundationItems.map((item) => item.label) }, null, 2).slice(0, 3000)}</pre>}{drawerTab === 'Artifacts' && <div>{selectedArtifacts.length ? selectedArtifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><pre>{JSON.stringify(artifact, null, 2)}</pre></article>) : <small>No artifacts selected.</small>}</div>}{drawerTab === 'Diagnostics' && <pre>{JSON.stringify({ runtimeStatus, resources: foundationItems.map((item) => item.label), capabilities: model.capabilities.map((capability) => capability.label), unmappedEvents: model.unmappedEvents, noFakeActivation: true, sourceLibraryWrite: false }, null, 2)}</pre>}</div>}
+      <div className="runtime-bottom-drawer-tabs"><button type="button" onClick={() => setDrawerOpen(!drawerOpen)}>{drawerOpen ? 'Collapse drawer' : 'Open drawer'}</button>{(['JSON', 'Trace', 'Manifest', 'Artifacts', 'Diagnostics', 'Hermes Terminal'] as const).map((tab) => <button key={tab} type="button" className={drawerTab === tab ? 'hot' : ''} onClick={() => { setDrawerTab(tab); setDrawerOpen(true); }}>{tab}</button>)}</div>
+      {drawerOpen && <div className="runtime-bottom-drawer-body">{drawerTab === 'JSON' && <pre>{JSON.stringify(drawerPayload, null, 2)}</pre>}{drawerTab === 'Trace' && <ol>{(selectedTrace.length ? selectedTrace : traceEvents).map((event, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol>}{drawerTab === 'Manifest' && <pre>{JSON.stringify({ compileStatus, summary, manifest: compiledRuntimeManifest, resources: foundationItems.map((item) => item.label) }, null, 2).slice(0, 3000)}</pre>}{drawerTab === 'Artifacts' && <div>{selectedArtifacts.length ? selectedArtifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><pre>{JSON.stringify(artifact, null, 2)}</pre></article>) : <small>No artifacts selected.</small>}</div>}{drawerTab === 'Diagnostics' && <pre>{JSON.stringify({ runtimeStatus, resources: foundationItems.map((item) => item.label), capabilities: model.capabilities.map((capability) => capability.label), unmappedEvents: model.unmappedEvents, noFakeActivation: true, sourceLibraryWrite: false }, null, 2)}</pre>}{drawerTab === 'Hermes Terminal' && renderHermesTerminalDrawer()}</div>}
     </section>
   </section>;
 }
