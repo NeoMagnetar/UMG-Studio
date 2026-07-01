@@ -8,6 +8,7 @@ import { getBusinessAutomationCoreSleeve } from '../lib/umg/businessAutomationCo
 import { buildSleeveArchitectPlan } from '../lib/umg/sleeveArchitectPlanner';
 import { buildArchitectRuntimeExecution, defaultArchitectExecutionPolicy } from '../lib/umg/sleeveArchitectExecution';
 import { createCompilerInputFromCompileCandidate, createCompilerRequest, validateCompilerInput } from '../lib/umg/compileCandidateAdapter';
+import { buildCompilerSleeveInput } from '../lib/umg/compilerSleeveInputBuilder';
 import { createHermesRuntimeRequestFromManifest } from '../lib/umg/hermesRuntimeExecution';
 import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from '../lib/umg/cognitiveRuntimeState';
 import { createHermesContinuationRequest, createPendingRuntimeApproval, resolveToolCapabilities } from '../lib/umg/toolCapabilityResolver';
@@ -929,6 +930,40 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(sleeve.metadata.sourceBindingCoverage).toMatchObject({ subject: true, blueprintOrHaikuForm: true, instructionOrWriting: true, toolBlock: true, artifactDocumentOutput: true });
     expect(sleeve.metadata.structuralIR).toMatchObject({ mergeOps: expect.any(Array), toolBlocks: expect.any(Array), gates: expect.any(Array), routes: expect.any(Array) });
     expect(sleeve.metadata.auditResult).toMatchObject({ passed: true, revisionRequired: false });
+  });
+
+  it('adds compiler-only primary anchors so every calibrated stack satisfies compiler-v0 primary validation', () => {
+    const sleeve = buildCalibratedHaikuDesktopNoteSleeve({
+      sourcePrompt: 'Create a haiku note about apples and save it to my desktop.',
+      generationFailureReason: 'live generation was too large',
+      retrievedLibraryCandidates: [
+        { id: 'BP.031', title: 'Haiku', blockType: 'molt', role: 'blueprint', tags: ['haiku'], description: 'Haiku poetic form blueprint.', sourcePath: 'AI/MOLT-BLOCKS/blueprints/library.v1.0.0.json#BP.031', sourceKind: 'source-library', score: 40, matchReasons: ['forced-haiku-domain-style'] },
+        { id: 'SUBJ.020', title: 'Documentation', blockType: 'molt', role: 'subject', tags: ['documentation'], description: 'Documentation and output artifact.', sourcePath: 'HUMAN/MOLT/SUBJ.020.json', sourceKind: 'source-library', score: 18, matchReasons: ['title:documentation'] },
+        { id: 'INST.WRITE_CONTENT', title: 'Write Content', blockType: 'molt', role: 'instruction', tags: ['write'], description: 'Write or create content.', sourcePath: 'HUMAN/MOLT/INST.WRITE_CONTENT.json', sourceKind: 'source-library', score: 15, matchReasons: ['tag:write'] }
+      ]
+    });
+    const { sleeve: compilerSleeve, warnings } = buildCompilerSleeveInput({
+      id: 'compiler_input_calibrated_haiku',
+      compileCandidateId: 'candidate_calibrated_haiku',
+      assemblyPlanId: 'assembly_calibrated_haiku',
+      sleeveId: sleeve.id,
+      sleeveTitle: sleeve.title,
+      normalizedStructure: sleeve,
+      selectedBlockIds: sleeve.moltBlocks.map((block) => block.id),
+      selectedGateIds: sleeve.gates.map((gate) => gate.id),
+      gates: sleeve.gates,
+      activeStates: {},
+      disabledStates: {},
+      traceMetadata: { sourceBindingSummary: sleeve.metadata.sourceBindingSummary }
+    });
+    const normalized = compilerSleeve;
+    const blocksById = new Map(normalized.blocks.map((block) => [block.id, block]));
+    for (const stack of normalized.stacks) {
+      expect(stack.blockIds.some((blockId) => blocksById.get(blockId)?.moltType === 'primary')).toBe(true);
+    }
+    expect(normalized.blocks.some((block) => block.tags?.includes('compiler-normalized-primary'))).toBe(true);
+    expect(JSON.stringify(normalized.metadata)).toMatch(/BP\.031|Haiku|sourceBindingSummary/i);
+    expect(warnings.map((warning) => warning.code)).toContain('COMPILER_PRIMARY_ANCHOR_ADDED');
   });
 
   it('retrieves and hydrates role-targeted Haiku desktop note candidates', () => {

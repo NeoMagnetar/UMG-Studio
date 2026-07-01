@@ -83,6 +83,25 @@ function buildCompilerSleeve(input) {
       .flatMap((neoBlockId) => blockIdsByNeoBlock.get(neoBlockId) || [])
       .filter((blockId) => validBlockIds.has(blockId))
     ];
+    const hasPrimary = blockIds.some((blockId) => blocks.find((block) => block.id === blockId)?.moltType === 'primary');
+    if (blockIds.length > 0 && !hasPrimary) {
+      const syntheticPrimaryId = `${stack.id}.COMPILER_PRIMARY`;
+      blocks.push({
+        id: syntheticPrimaryId,
+        title: `${stack.title || stack.id} compiler primary`,
+        moltType: 'primary',
+        role: undefined,
+        content: stack.description || `Compiler primary anchor for ${stack.title || stack.id}.`,
+        tags: ['compiler-normalized-primary', 'runtime-session', ...(Array.isArray(stack.tags) ? stack.tags : [])]
+      });
+      validBlockIds.add(syntheticPrimaryId);
+      blockIds.unshift(syntheticPrimaryId);
+      warnings.push({
+        code: 'COMPILER_PRIMARY_ANCHOR_ADDED',
+        message: `Added compiler-only primary anchor for stack ${stack.id}; source-library MOLT bindings are preserved in metadata.`,
+        details: syntheticPrimaryId
+      });
+    }
     return { id: stack.id, name: stack.title, domainKey: Array.isArray(stack.tags) ? stack.tags[0] : undefined, blockIds };
   }).filter((stack) => stack.blockIds.length > 0);
 

@@ -78,9 +78,64 @@ type CompileClickDiagnostics = {
   compileSleeveId?: string;
   compileGenerationRoute?: string;
   compileRequestBytes?: number;
+  compileRequestBodyPreview?: unknown;
   compileResponseStatus?: string | number;
+  compileResponseBody?: unknown;
+  compilerValidationErrors?: unknown;
+  failingFieldPath?: string;
   compileErrorMessage?: string;
 };
+
+function extractCompilerValidationErrors(responseBody: unknown): unknown {
+  if (!responseBody || typeof responseBody !== 'object') return undefined;
+  const body = responseBody as Record<string, unknown>;
+  const rawCompilerResult = body.rawCompilerResult as Record<string, unknown> | undefined;
+  const error = body.error as Record<string, unknown> | undefined;
+  return body.validationErrors
+    ?? body.errors
+    ?? rawCompilerResult?.validationErrors
+    ?? rawCompilerResult?.errors
+    ?? rawCompilerResult?.diagnostics
+    ?? error?.validationErrors
+    ?? error?.details;
+}
+
+function findFailingFieldPath(value: unknown): string | undefined {
+  const visited = new Set<unknown>();
+  const walk = (entry: unknown): string | undefined => {
+    if (!entry || typeof entry !== 'object' || visited.has(entry)) return undefined;
+    visited.add(entry);
+    if (Array.isArray(entry)) {
+      for (const item of entry) {
+        const found = walk(item);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    const record = entry as Record<string, unknown>;
+    for (const key of ['path', 'field', 'fieldPath', 'instancePath', 'schemaPath']) {
+      if (typeof record[key] === 'string' && record[key]) return record[key] as string;
+    }
+    for (const nested of Object.values(record)) {
+      const found = walk(nested);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return walk(value);
+}
+
+function extractCompilerFailureDiagnostics(result: UMGCompilerResult) {
+  const rawResult = result.raw as Record<string, unknown> | undefined;
+  const responseBody = rawResult?.response ?? result.errors[0]?.raw;
+  const compilerValidationErrors = extractCompilerValidationErrors(responseBody);
+  return {
+    compileResponseStatus: typeof rawResult?.httpStatus === 'number' || typeof rawResult?.httpStatus === 'string' ? rawResult.httpStatus : result.status,
+    compileResponseBody: responseBody,
+    compilerValidationErrors,
+    failingFieldPath: findFailingFieldPath(compilerValidationErrors ?? responseBody)
+  };
+}
 
 const universalLayerLabel = (rowLabel: string) => ({
   Strategy: 'Frame',
@@ -2234,7 +2289,11 @@ export default function App() {
       compileSleeveTitle: activeSessionSleeve?.title,
       compileSleeveId: activeSessionSleeve?.id,
       compileGenerationRoute: String(activeSessionSleeve?.metadata?.generationRoute ?? 'unknown'),
+      compileRequestBodyPreview: undefined,
       compileResponseStatus: undefined,
+      compileResponseBody: undefined,
+      compilerValidationErrors: undefined,
+      failingFieldPath: undefined,
       compileErrorMessage: undefined
     };
     setCompileDiagnostics((current) => ({ ...current, ...clickDiagnosticBase, compileClickCount: current.compileClickCount + 1 }));
@@ -2290,7 +2349,7 @@ export default function App() {
       setCompilerRequestPreview(request);
       setCompiledRuntimeManifest(undefined);
       setHermesRequestPreview(undefined);
-      setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'request_ready', compileRequestStartedAt: new Date().toISOString(), compileRequestBytes: requestBytes }));
+      setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'request_ready', compileRequestStartedAt: new Date().toISOString(), compileRequestBytes: requestBytes, compileRequestBodyPreview: request }));
       if (validationErrors.length) {
         const message = validationErrors.join(' ');
         setCompileStatus('failed');
@@ -2312,11 +2371,10 @@ export default function App() {
       }
       setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'compiler_request_sent', compileEndpoint: config.endpoint }));
       const result = await compileWithRealCompiler(request, config);
-      const rawResult = result.raw as Record<string, unknown> | undefined;
-      const responseStatus = typeof rawResult?.httpStatus === 'number' || typeof rawResult?.httpStatus === 'string' ? rawResult.httpStatus : result.status;
+      const failureDiagnostics = extractCompilerFailureDiagnostics(result);
       const mergedResult = { ...result, warnings: [...sleeveInputPreview.warnings, ...result.warnings] };
       setCompilerResult(mergedResult);
-      setCompileDiagnostics((current) => ({ ...current, compileResponseStatus: responseStatus }));
+      setCompileDiagnostics((current) => ({ ...current, ...failureDiagnostics }));
       if (mergedResult.status === 'ok' && mergedResult.manifest) {
         setCompileStatus('compiled');
         setCompileError(null);
@@ -2334,7 +2392,7 @@ export default function App() {
       const message = mergedResult.errors[0]?.message ?? 'Compiler did not produce a runtime manifest.';
       setCompileStatus('failed');
       setCompileError(message);
-      setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'compiler_failed', compileErrorMessage: message }));
+      setCompileDiagnostics((current) => ({ ...current, lastCompileGuardResult: 'compiler_failed', compileErrorMessage: message, ...failureDiagnostics }));
       setStatus('Compile failed. See error.');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3063,7 +3121,7 @@ function PublicLandingShell({
         <small>{studioMode === 'basic' ? 'Clean Hermes-first Sleeve Builder + Runtime Observer.' : 'Developer / Architect inspection panels.'}</small>
       </div>
       {studioMode === 'basic'
-        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compilerBridgeAvailable={compilerBridgeAvailable} compileStatus={compileStatus} compileError={compileError} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} actionStatus={status} isHermesRunning={isHermesRunning} isGeneratingSleeve={isGeneratingSleeve} isCompilingSleeve={isCompilingSleeve} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onUseCalibratedHaikuNoteSleeve={onUseCalibratedHaikuNoteSleeve} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} nativeActionMode={nativeActionMode} lastNativeActionResult={lastNativeActionResult} hermesEndpointConfigured={hermesEndpointConfigured} onNativeActionModeChange={onNativeActionModeChange} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
+        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compilerBridgeAvailable={compilerBridgeAvailable} compileStatus={compileStatus} compileError={compileError} compileDiagnostics={compileDiagnostics} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} actionStatus={status} isHermesRunning={isHermesRunning} isGeneratingSleeve={isGeneratingSleeve} isCompilingSleeve={isCompilingSleeve} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onUseCalibratedHaikuNoteSleeve={onUseCalibratedHaikuNoteSleeve} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} nativeActionMode={nativeActionMode} lastNativeActionResult={lastNativeActionResult} hermesEndpointConfigured={hermesEndpointConfigured} onNativeActionModeChange={onNativeActionModeChange} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
         : <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compileDiagnostics={compileDiagnostics} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
     </>}
   </HackathonLandingPage>;
@@ -3120,7 +3178,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, compilerBridgeAvailable = false, compileStatus: compileRunStatus = 'idle', compileError = null, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, actionStatus, isHermesRunning, isGeneratingSleeve, isCompilingSleeve, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, nativeActionMode, lastNativeActionResult, hermesEndpointConfigured, onRunArchitectExecution, onUseCalibratedHaikuNoteSleeve, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onNativeActionModeChange, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; compilerBridgeAvailable?: boolean; compileStatus?: CompileRunStatus; compileError?: string | null; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; actionStatus: string; isHermesRunning: boolean; isGeneratingSleeve: boolean; isCompilingSleeve: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>; lastNativeActionResult?: UMGNativeHermesActionResult; hermesEndpointConfigured: boolean; onRunArchitectExecution: () => void; onUseCalibratedHaikuNoteSleeve: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onNativeActionModeChange: (mode: Exclude<UMGNativeActionMode, 'blocked'>) => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
+export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, compilerBridgeAvailable = false, compileStatus: compileRunStatus = 'idle', compileError = null, compileDiagnostics, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, actionStatus, isHermesRunning, isGeneratingSleeve, isCompilingSleeve, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, nativeActionMode, lastNativeActionResult, hermesEndpointConfigured, onRunArchitectExecution, onUseCalibratedHaikuNoteSleeve, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onNativeActionModeChange, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; compilerBridgeAvailable?: boolean; compileStatus?: CompileRunStatus; compileError?: string | null; compileDiagnostics?: CompileClickDiagnostics; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; actionStatus: string; isHermesRunning: boolean; isGeneratingSleeve: boolean; isCompilingSleeve: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>; lastNativeActionResult?: UMGNativeHermesActionResult; hermesEndpointConfigured: boolean; onRunArchitectExecution: () => void; onUseCalibratedHaikuNoteSleeve: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onNativeActionModeChange: (mode: Exclude<UMGNativeActionMode, 'blocked'>) => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
   const classifications = classifyBasicContent({ text: [businessInput.text, ...businessInput.documents.map((doc) => doc.text)].join('\n'), filenames: businessInput.documents.map((doc) => doc.filename ?? '').filter(Boolean) });
   const palette = isActiveSessionSleeveCompileEligible(activeSessionSleeve) ? buildBasicCapabilityPalette({ activeSessionSleeve: activeSessionSleeve!, resolutions: toolCapabilityResolutions, content: classifications }) : [];
   const geometryManifest = useMemo(() => {
@@ -3235,6 +3293,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       {compilerUiStatus === 'disconnected' && <small>npm run umg:compiler-bridge</small>}
       {compileError && <div className="analysisWarnings"><b>Compile error</b><span>{compileError}</span></div>}
       {compilerResult?.errors?.length ? <div className="analysisWarnings"><b>Compiler response</b>{compilerResult.errors.map((error) => <span key={`${error.code}:${error.message}`}>{error.code}: {error.message}</span>)}</div> : null}
+      {Boolean(compileDiagnostics?.compileResponseBody || compilerResult?.raw) && <details className="compilerJsonPreview" open><summary>Compile diagnostics: response body / failing field</summary><pre>{JSON.stringify({ compileEndpoint: compileDiagnostics?.compileEndpoint, compileRequestBytes: compileDiagnostics?.compileRequestBytes, compileRequestBodyPreview: compileDiagnostics?.compileRequestBodyPreview, compileResponseStatus: compileDiagnostics?.compileResponseStatus, compileResponseBody: compileDiagnostics?.compileResponseBody, compilerValidationErrors: compileDiagnostics?.compilerValidationErrors, failingFieldPath: compileDiagnostics?.failingFieldPath }, null, 2)}</pre></details>}
       {!hasGeneratedSleeve && <small>Generate a Sleeve before compiling.</small>}
       <button type="button" className={`publicPrimaryCta ${isCompilingSleeve ? 'is-working' : ''}`} onClick={onCompileWithUMGCompiler} disabled={compileButtonDisabled}>{compileButtonLabel}</button>
     </div>}
@@ -3464,6 +3523,7 @@ function CompilerPhase6Panel({ requestPreview, result, manifest }: { requestPrev
     {!summary.configured && <div className="analysisWarnings"><b>Setup</b><span>npm run umg:compiler-bridge</span><span>VITE_UMG_COMPILER_ENDPOINT=http://127.0.0.1:8787/compile</span><span>No UMGCompiledRuntimeManifest is created while endpoint is missing.</span></div>}
     {requestPreview && <details className="compilerJsonPreview"><summary>Compiler Input Preview</summary><pre>{JSON.stringify(requestPreview.input, null, 2)}</pre></details>}
     {result && <div className="analysisWarnings"><b>Compiler Result</b>{result.errors.map((error) => <span key={`${error.code}:${error.message}`}>{error.code}: {error.message}</span>)}{result.warnings.map((warning) => <span key={`${warning.code}:${warning.message}`}>{warning.code}: {warning.message}</span>)}</div>}
+    {Boolean(result?.raw) && <details className="compilerJsonPreview" open><summary>Compiler Response Body / Validation Diagnostics</summary><pre>{JSON.stringify(result?.raw, null, 2)}</pre></details>}
     {manifest && <div className="compilerRuntimeSummary"><b>RuntimeSpec / Trace Summary</b><span>sleeveId: {manifest.sleeveId}</span><span>compiledAt: {manifest.compiledAt ?? 'compiler did not provide'}</span><span>executionPlan: {manifest.executionPlan.length}</span><span>sourceBlocks: {manifest.sourceBlocks.length}</span><span>selected stacks: {countScope('neostack')}</span><span>selected NeoBlocks: {countScope('neoblock')}</span><span>selected MOLT: {countScope('molt')}</span><span>gates: {manifest.gates.length}</span><span>required tools: {manifest.executionPlan.flatMap((step) => step.requiredToolIds).length}</span><span>approval points: {manifest.executionPlan.filter((step) => step.requiredGateIds.length || step.requiredToolIds.length).length}</span><span>compiler stacks: {Array.isArray(runtimeSpec?.stacks) ? runtimeSpec.stacks.length : 'unknown'}</span><span>compiler neoBlocks: {Array.isArray(runtimeSpec?.neoBlocks) ? runtimeSpec.neoBlocks.length : 'unknown'}</span><span>trace: preserved in traceMetadata.compilerTrace if compiler returned one; no execution trace fabricated.</span></div>}
   </div>;
 }
