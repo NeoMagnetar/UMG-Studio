@@ -603,7 +603,8 @@ export async function buildNativeActionBridgeResponse(inputRequest, env = proces
       nativeActionTraceEvent(request, 'action_executed', 'complete', `${request.capabilityId} executed through native Hermes CLI.`),
       ...createdFiles.map((filePath) => nativeActionTraceEvent(request, 'file_created', 'complete', `File created: ${filePath}`, { filePath })),
       ...modifiedFiles.map((filePath) => nativeActionTraceEvent(request, 'file_modified', 'complete', `File modified: ${filePath}`, { filePath })),
-      ...[...createdFiles, ...modifiedFiles].map((filePath) => nativeActionTraceEvent(request, 'artifact_created', 'complete', `Artifact recorded: ${filePath}`, { filePath }))
+      ...[...createdFiles, ...modifiedFiles].map((filePath) => nativeActionTraceEvent(request, 'artifact_created', 'complete', `Artifact recorded: ${filePath}`, { filePath })),
+      nativeActionTraceEvent(request, 'run_completed', 'complete', `Native Hermes action run completed for ${request.capabilityId}.`)
     ];
     return jsonResponse(200, {
       actionId: request.actionId,
@@ -979,6 +980,7 @@ export function buildCustomSleeveGenerationPrompt(request) {
     'Greek note calibration ground truth: S.GREEK_NOTE.01 Greek Philosophy Desktop Note Sleeve. NeoStacks: NS.01 Prompt Intake and Note Triggering with NB.01 Detect Note Generation Request and NB.02 Normalize Note Intent; NS.02 Greek Philosophical Lens Selection with NB.03 Retrieve Greek Philosophy Candidates and NB.04 Select Greek Lens; NS.03 Semantic Merge and Note Composition with NB.05 Merge Philosophy into Note Semantics / MERGE.GREEK_SEMANTIC_FRAME, NB.06 Merge Requested Form with Enriched Meaning / MERGE.FORM_WITH_SEMANTICS, NB.07 Compose Final Note Draft / MERGE.DRAFT_SYNTHESIS, NB.08 Validate Greek Integration / G.GREEK_INTEGRATION_CHECK; NS.04 Desktop Note Emission and Hermes Native Execution with NB.09 Prepare Desktop Note Action / TOOL.HERMES.NOTE_CREATE.v0.1 / TOOL.HERMES.FILE_WRITE.v0.1 / G.DESKTOP_WRITE_ACTION and NB.10 Verify Note Creation / G.OUTPUT_VERIFICATION. Route NB.01 ==> NB.02 ==> NB.03 ==> NB.04 ==> NB.05 ==> NB.06 ==> NB.07 ==> NB.08 ==> NB.09 ==> NB.10.',
     'Audit checklist ids must include: neostack_kind_of_work, stack_has_blocks, block_is_reusable_module, block_has_molt, molt_internal_layers, source_candidates_bound_as_molt_children, tool_blocks_attached, gates_are_control_objects, merge_ops_explicit, route_renderable, structure_inside_budget, runtime_graph_renderable_without_invented_geometry. If any audit item fails, revise structuralIR before returning JSON.',
     'Exact object field contract: every generated MOLT draft uses id, title, role, content, description, tags, sourceKind, stackOrder, optional jsonSchema, nlCard {title, role, category, tags, description, content}, and generationReason; every NeoBlock uses id, title, description/purpose, neoStackId or parentNeoStackId, stackOrder/blockOrder, moltBlockIds or moltBlocks, gates, capabilities, sourceKind, nlCard, jsonSchema, and generationReason; every NeoStack uses id, title, description/purpose, stackOrder, neoBlockIds or neoBlocks, sourceKind, nlCard, jsonSchema, kindOfWork, and generationReason.',
+    'Every nlCard must include title, description, content, tags, and category. For NeoStacks, nlCard.content should summarize the kind of work and why this lane exists. For NeoBlocks, nlCard.content should summarize the module runtime function. For MOLT, nlCard.content should contain the actual thought-role content.',
     'Every NeoBlock must contain meaningful MOLT layers. Every NeoStack must contain meaningful NeoBlocks. Every Sleeve must explain why each NeoStack exists. No bare NeoBlocks are allowed.',
     'Do not use alternate keys such as name, stackId, type-only blocks, id-only capability objects, or source objects without the required fields above.',
     'Use only prompt MOLT roles: directive, instruction, subject, primary, philosophy, blueprint.',
@@ -1044,6 +1046,61 @@ function extractJsonObjectCandidates(text) {
 
 function hasObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+export function normalizeNlCard(record, fallback = {}) {
+  if (!hasObject(record)) return record;
+  const title = firstNonEmpty(record.title, record.name, record.id);
+  const description = firstNonEmpty(record.description, record.purpose, record.kindOfWork, record.generationReason, record.reason, fallback.description);
+  const content = firstNonEmpty(
+    record.content,
+    record.purpose,
+    record.description,
+    record.kindOfWork,
+    record.modulePurpose,
+    record.generationReason,
+    record.reason,
+    record.title,
+    title ? `Runtime-session UMG component: ${title}` : ''
+  );
+  const current = hasObject(record.nlCard) ? record.nlCard : {};
+  record.nlCard = {
+    ...current,
+    title: firstNonEmpty(current.title, title, fallback.title),
+    role: firstNonEmpty(current.role, record.role, record.scopeKind, record.type, fallback.role, record.category, 'component'),
+    category: firstNonEmpty(current.category, record.category, record.type, fallback.category, 'runtime-session'),
+    description: firstNonEmpty(current.description, description, content, fallback.description),
+    content: firstNonEmpty(current.content, content),
+    tags: Array.isArray(current.tags) ? current.tags : Array.isArray(record.tags) ? record.tags : []
+  };
+  return record;
+}
+
+export function normalizeCustomSleevePlanNlCards(plan) {
+  if (!hasObject(plan)) return plan;
+  normalizeNlCard(plan.sleeve, { role: 'sleeve', category: 'runtime-session', title: plan.title, description: plan.summary });
+  for (const stack of plan.neoStacks || []) normalizeNlCard(stack, { role: 'neostack', category: 'runtime-session' });
+  for (const block of plan.neoBlocks || []) normalizeNlCard(block, { role: 'neoblock', category: 'runtime-session' });
+  for (const molt of plan.moltBlocks || []) normalizeNlCard(molt, { role: molt?.role || 'molt', category: 'runtime-session' });
+  for (const gate of plan.gates || []) if (hasObject(gate?.nlCard)) normalizeNlCard(gate, { role: 'gate', category: 'runtime-session' });
+  for (const capability of plan.capabilities || []) if (hasObject(capability?.nlCard)) normalizeNlCard(capability, { role: 'capability', category: 'runtime-session' });
+  if (hasObject(plan.structuralIR)) {
+    normalizeNlCard(plan.structuralIR.sleeve, { role: 'sleeve', category: 'structural-ir', title: plan.title, description: plan.summary });
+    for (const stack of plan.structuralIR.neoStacks || []) normalizeNlCard(stack, { role: 'neostack', category: 'structural-ir' });
+    for (const block of plan.structuralIR.neoBlocks || []) normalizeNlCard(block, { role: 'neoblock', category: 'structural-ir' });
+    for (const molt of plan.structuralIR.moltLayers || []) normalizeNlCard(molt, { role: molt?.role || 'molt', category: 'structural-ir' });
+    for (const gate of plan.structuralIR.gates || []) if (hasObject(gate?.nlCard)) normalizeNlCard(gate, { role: 'gate', category: 'structural-ir' });
+    for (const toolBlock of plan.structuralIR.toolBlocks || []) if (hasObject(toolBlock?.nlCard)) normalizeNlCard(toolBlock, { role: 'tool', category: 'structural-ir' });
+  }
+  return plan;
 }
 
 function validateNlCard(card, label, errors) {
@@ -1165,6 +1222,7 @@ STRICT_RETRY_INSTRUCTION: Return only the JSON object. No prose. No markdown.`;
         return jsonResponse(502, { ok: false, error: reason, validation: { valid: false, errors: [reason], warnings: [] }, externalActionTaken: false, debug: { ...debug, generationMode: 'live_hermes_json_parse_failed', failureStage: 'strict_json_retry_parse', fallbackUsed: false, fallbackReason: reason, parseRetryUsed: true, rawOutputPreview: truncateText(hermes.text || '', 400), retryOutputPreview: truncateText(strictHermes.text || '', 400) } }, undefined);
       }
     }
+    normalizeCustomSleevePlanNlCards(plan);
     let planValidation = validateCustomSleevePlan(plan);
     let structuralContractRetryUsed = false;
     if (!planValidation.valid && planValidation.errors.some((error) => /structuralIR|auditResult/i.test(error))) {
@@ -1175,6 +1233,7 @@ STRICT_STRUCTURAL_IR_RETRY_INSTRUCTION: Return only valid JSON containing struct
       const retryHermes = await runtimePost(contractRetryPrompt, env, undefined, Number.isFinite(timeoutMs) ? timeoutMs : 90000);
       try {
         plan = parseJsonObjectFromText(retryHermes.text || '');
+        normalizeCustomSleevePlanNlCards(plan);
         planValidation = validateCustomSleevePlan(plan);
       } catch (retryParseError) {
         const reason = `Hermes structural IR retry did not return valid JSON. ${retryParseError?.message || ''}`.trim();

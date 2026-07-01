@@ -65,6 +65,29 @@ function withStructuralContract(plan) {
   };
 }
 
+function makeNlCardNormalizationPlan(overrides = {}) {
+  const plan = {
+    schemaVersion: 'umg-studio.hermes-custom-sleeve-plan.v0.1',
+    source: 'hermes_custom_workflow_generation',
+    mode: 'runtime_session_draft',
+    generationSource: 'live_hermes_cli',
+    requestId: 'req.nlcard.normalize',
+    title: 'nlCard Normalization Sleeve',
+    summary: 'Valid structure with intentionally sparse cards.',
+    decompositionSummary: 'Sparse cards should be normalized before validation.',
+    reuseDecisions: [],
+    generatedDecisions: [{ id: 'generated.nlcard', title: 'nlCard normalization', runtimeSessionOnly: true, sourceLibraryWrite: false, reason: 'Needed to validate normalization.' }],
+    neoStacks: [{ id: 'stack.nlcard', title: 'Normalization Stack', purpose: 'Coordinate nlCard normalization work.', kindOfWork: 'schema normalization', description: 'Normalize returned UMG cards.', stackOrder: 1, neoBlockIds: ['block.nlcard'], sourceKind: 'runtime-session draft', nlCard: { title: 'Normalization Stack', role: 'neostack', category: 'test', tags: ['nlcard'] }, jsonSchema: { type: 'object' }, generationReason: 'Stack exists to test schema normalization.' }],
+    neoBlocks: [{ id: 'block.nlcard', title: 'Normalization Block', description: 'Normalize module card data.', modulePurpose: 'Fill nlCard content from modulePurpose.', neoStackId: 'stack.nlcard', stackOrder: 1, blockOrder: 1, moltBlockIds: ['molt.nlcard'], gates: [], capabilities: [], sourceKind: 'runtime-session draft', nlCard: { title: 'Normalization Block', role: 'neoblock', category: 'test', tags: ['nlcard'] }, jsonSchema: { type: 'object' }, generationReason: 'Block exists to test NeoBlock card normalization.' }],
+    moltBlocks: [{ id: 'molt.nlcard', title: 'Normalization MOLT', role: 'primary', content: 'Actual thought-role content.', description: 'Normalize MOLT card data.', tags: ['nlcard'], sourceKind: 'runtime-session draft', stackOrder: 1, parentNeoBlockId: 'block.nlcard', parentNeoStackId: 'stack.nlcard', nlCard: { title: 'Normalization MOLT', role: 'primary', category: 'test', tags: ['nlcard'] }, jsonSchema: { type: 'object' }, generationReason: 'MOLT exists to test thought-role content normalization.' }],
+    gates: [],
+    capabilities: [],
+    warnings: []
+  };
+  const structuralPlan = withStructuralContract(plan);
+  return { ...structuralPlan, ...overrides };
+}
+
 function makeMockProcess({ stdout = '', stderr = '', code = 0, delayMs = 1 } = {}) {
   const stdoutStream = makeMockStream();
   const stderrStream = makeMockStream();
@@ -206,10 +229,65 @@ ${JSON.stringify(structuralHermesPlan)}
     expect(response.body.plan.generationSource).toBe('live_hermes_cli');
     expect(response.body.validation.valid).toBe(true);
     expect(response.body.externalActionTaken).toBe(false);
+    expect(prompt).toContain('Every nlCard must include title, description, content, tags, and category');
+    expect(prompt).toContain('nlCard.content should summarize the kind of work');
     const invalidMissingCards = { ...structuralHermesPlan, moltBlocks: [{ id: 'molt.bad', title: 'Bad Primary', role: 'primary', content: 'Missing required card/schema/source fields.', parentNeoBlockId: 'block.bridge', parentNeoStackId: 'stack.bridge' }] };
     const invalidResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(invalidMissingCards) }));
     expect(invalidResponse.status).toBe(422);
-    expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/nlCard|jsonSchema|sourceKind|tags/);
+    expect(invalidResponse.body.validation.errors.join(' ')).toMatch(/jsonSchema|sourceKind|tags/);
+  });
+
+  it('normalizes sparse nlCards before final custom Sleeve validation', async () => {
+    const { buildCustomSleeveGenerationResponse } = await getRuntimeBridgeModule();
+    const request = { requestId: 'req.nlcard.normalize', userPrompt: 'Generate sparse nlCards.', userContext: '', selectedMode: 'custom_workflow', supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'] };
+
+    const stackContentPlan = makeNlCardNormalizationPlan();
+    const stackContentResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(stackContentPlan) }));
+    expect(stackContentResponse.status).toBe(200);
+    expect(stackContentResponse.body.plan.neoStacks[0].nlCard.content).toBe('Coordinate nlCard normalization work.');
+    expect(stackContentResponse.body.validation.valid).toBe(true);
+
+    const missingStackCardPlan = makeNlCardNormalizationPlan();
+    delete missingStackCardPlan.neoStacks[0].nlCard;
+    const missingStackCardResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(missingStackCardPlan) }));
+    expect(missingStackCardResponse.status).toBe(200);
+    expect(missingStackCardResponse.body.plan.neoStacks[0].nlCard).toMatchObject({ title: 'Normalization Stack', content: 'Coordinate nlCard normalization work.', category: 'runtime-session', tags: [] });
+
+    const blockModulePurposePlan = makeNlCardNormalizationPlan();
+    delete blockModulePurposePlan.neoBlocks[0].description;
+    delete blockModulePurposePlan.neoBlocks[0].nlCard.content;
+    const blockModulePurposeResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(blockModulePurposePlan) }));
+    expect(blockModulePurposeResponse.status).toBe(200);
+    expect(blockModulePurposeResponse.body.plan.neoBlocks[0].nlCard.content).toBe('Fill nlCard content from modulePurpose.');
+
+    const moltContentPlan = makeNlCardNormalizationPlan();
+    delete moltContentPlan.moltBlocks[0].nlCard.content;
+    const moltContentResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(moltContentPlan) }));
+    expect(moltContentResponse.status).toBe(200);
+    expect(moltContentResponse.body.plan.moltBlocks[0].nlCard.content).toBe('Actual thought-role content.');
+  });
+
+  it('preserves strict rejection for empty components and missing structural contract', async () => {
+    const { buildCustomSleeveGenerationResponse } = await getRuntimeBridgeModule();
+    const request = { requestId: 'req.nlcard.strict', userPrompt: 'Generate invalid sparse cards.', userContext: '', selectedMode: 'custom_workflow', supportedPromptMoltRoles: ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'] };
+
+    const emptyComponentPlan = makeNlCardNormalizationPlan();
+    emptyComponentPlan.neoStacks[0] = { ...emptyComponentPlan.neoStacks[0], id: '', title: '', purpose: '', description: '', kindOfWork: '', generationReason: '', nlCard: undefined };
+    const emptyComponentResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(emptyComponentPlan) }));
+    expect(emptyComponentResponse.status).toBe(422);
+    expect(emptyComponentResponse.body.validation.errors.join(' ')).toMatch(/requires generationReason|nlCard requires title|nlCard requires content/);
+
+    const missingStructural = makeNlCardNormalizationPlan();
+    delete missingStructural.structuralIR;
+    const missingStructuralResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(missingStructural) }));
+    expect(missingStructuralResponse.status).toBe(422);
+    expect(missingStructuralResponse.body.validation.errors.join(' ')).toMatch(/structuralIR/);
+
+    const missingAudit = makeNlCardNormalizationPlan();
+    delete missingAudit.auditResult;
+    const missingAuditResponse = await buildCustomSleeveGenerationResponse(request, {}, async () => ({ ok: true, status: 200, text: JSON.stringify(missingAudit) }));
+    expect(missingAuditResponse.status).toBe(422);
+    expect(missingAuditResponse.body.validation.errors.join(' ')).toMatch(/auditResult/);
   });
 
   it('extracts custom Sleeve JSON from prose and retries once with strict JSON instructions when no object exists', async () => {

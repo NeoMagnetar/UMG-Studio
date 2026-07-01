@@ -8,8 +8,9 @@ import { buildRuntimeGeometryManifest, summarizeGeometryManifest } from '../lib/
 import { getRuntimeTargetId } from '../lib/umg/cognitiveRuntimeState';
 
 export type RuntimeGeometryObserverMode = 'structure' | 'runtime';
-export type RuntimeExecutionState = 'idle' | 'ready' | 'compiling_required' | 'sending' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+export type RuntimeExecutionState = 'idle' | 'ready' | 'compiling_required' | 'sending' | 'running' | 'action_prepared' | 'awaiting_approval' | 'completed' | 'failed';
 export type RuntimeExecutionMode = 'batch' | 'stream';
+export type RuntimeNativeActionMode = 'observe' | 'approval' | 'direct';
 
 type RuntimeGeometryNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'molt' | 'merge' | 'gate' | 'tool' | 'capability' | 'artifact';
 type RuntimeGeometryNodeStatus = 'idle' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error';
@@ -66,6 +67,7 @@ export type RuntimeGeometryObserverProps = {
   isHermesRunning: boolean;
   pendingRuntimeApproval?: PendingRuntimeApproval;
   toolCapabilityResolutions?: ToolCapabilityResolution[];
+  nativeActionMode?: RuntimeNativeActionMode;
 };
 
 function unique(values: Array<string | undefined>) {
@@ -281,6 +283,8 @@ function projectManifestNode(node: ProjectRuntimeGeometryNode): RuntimeGeometryN
       ? `neostack:${node.neoStackId}`
       : node.kind === 'molt_binding'
         ? `neoblock:${node.parentNeoBlockId}`
+        : node.kind === 'tool_endpoint' && node.parentNeoBlockId
+          ? `neoblock:${node.parentNeoBlockId}`
         : undefined;
   const source = node.kind === 'molt_binding' ? node.moltBlockId : node.kind === 'gate' ? node.gateId : node.kind === 'tool_endpoint' ? node.toolId : node.sourceId;
   return {
@@ -663,14 +667,22 @@ function statusRows(node?: RuntimeGeometryNode) {
   ];
 }
 
-function deriveRuntimeExecutionState(args: { compiledRuntimeManifest?: UMGCompiledRuntimeManifest; isHermesRunning: boolean; pendingRuntimeApproval?: PendingRuntimeApproval; hermesRuntimeResult?: HermesCognitiveRuntimeResult; traceCount?: number }): RuntimeExecutionState {
+export function deriveRuntimeExecutionState(args: { compiledRuntimeManifest?: UMGCompiledRuntimeManifest; isHermesRunning: boolean; pendingRuntimeApproval?: PendingRuntimeApproval; hermesRuntimeResult?: HermesCognitiveRuntimeResult; traceCount?: number }): RuntimeExecutionState {
   if (args.isHermesRunning) return args.traceCount ? 'running' : 'sending';
   if (args.pendingRuntimeApproval) return 'awaiting_approval';
   if (!args.compiledRuntimeManifest) return 'compiling_required';
   if (!args.hermesRuntimeResult) return 'ready';
+  const traceTypes = new Set((args.hermesRuntimeResult.trace ?? []).map((event) => event.eventType));
   if (args.hermesRuntimeResult.status === 'needsApproval') return 'awaiting_approval';
-  if (args.hermesRuntimeResult.status === 'error') return 'failed';
-  return 'completed';
+  if (traceTypes.has('action_approval_required') || traceTypes.has('approval_required') || traceTypes.has('tool_call_requires_approval')) return 'awaiting_approval';
+  if (args.hermesRuntimeResult.status === 'error' || args.hermesRuntimeResult.status === 'blocked' || traceTypes.has('action_failed') || traceTypes.has('run_error')) return 'failed';
+  if (args.hermesRuntimeResult.nativeActionResult?.status === 'observed') return 'action_prepared';
+  const hasActionRequest = traceTypes.has('action_request_created');
+  const hasActionExecuted = traceTypes.has('action_executed');
+  const hasFileOrArtifact = traceTypes.has('file_created') || traceTypes.has('file_modified') || traceTypes.has('artifact_created');
+  if (traceTypes.has('run_completed') || (hasActionExecuted && hasFileOrArtifact)) return 'completed';
+  if (hasActionRequest) return 'action_prepared';
+  return args.hermesRuntimeResult.status === 'ok' && (args.traceCount ?? 0) > 0 ? 'action_prepared' : 'ready';
 }
 
 function routeStatusLabel(state: RuntimeExecutionState, traceCount: number) {
@@ -678,6 +690,7 @@ function routeStatusLabel(state: RuntimeExecutionState, traceCount: number) {
   if (state === 'ready') return 'Starting route: ready · Waiting for trace';
   if (state === 'sending') return 'Starting route · Waiting for trace';
   if (state === 'running') return traceCount ? 'Running' : 'Starting route · Waiting for trace';
+  if (state === 'action_prepared') return 'Action prepared · awaiting execution result';
   if (state === 'awaiting_approval') return 'Running · awaiting approval';
   if (state === 'completed') return 'Completed';
   if (state === 'failed') return 'Failed';
@@ -700,7 +713,8 @@ export function RuntimeGeometryObserver({
   compileStatus,
   runtimeStatus,
   isHermesRunning,
-  pendingRuntimeApproval
+  pendingRuntimeApproval,
+  nativeActionMode = 'observe'
 }: RuntimeGeometryObserverProps) {
   const [viewMode, setViewMode] = useState<RuntimeVisualViewMode>('system_sleeve');
   const [leftRailOpen, setLeftRailOpen] = useState(true);
@@ -714,6 +728,12 @@ export function RuntimeGeometryObserver({
   const artifactCount = hermesRuntimeResult?.artifacts?.length ?? 0;
   const runtimeExecutionState = deriveRuntimeExecutionState({ compiledRuntimeManifest, isHermesRunning, pendingRuntimeApproval, hermesRuntimeResult, traceCount: traceEvents.length });
   const runtimeExecutionMode: RuntimeExecutionMode = 'batch';
+  const nativeActionModeLabel = nativeActionMode === 'observe' ? 'Observe' : nativeActionMode === 'approval' ? 'Approval' : 'Direct';
+  const nativeActionModeCopy = nativeActionMode === 'observe'
+    ? 'Observe: prepares route only; no external action'
+    : nativeActionMode === 'approval'
+      ? 'Approval: prepares action and waits'
+      : 'Direct: executes allowed native Hermes actions';
   const canSendRuntimePrompt = Boolean(compiledRuntimeManifest && runtimePrompt.trim() && !isHermesRunning);
   const runtimeExecutionCopy = !compiledRuntimeManifest
     ? 'Structure view is available. Runtime execution requires compile.'
@@ -866,6 +886,7 @@ export function RuntimeGeometryObserver({
         <span><b>runtime state</b>{runtimeExecutionState}</span>
         <span><b>route</b>{routeStatusLabel(runtimeExecutionState, traceEvents.length)}</span>
         <span><b>mode</b>{runtimeExecutionMode}</span>
+        <span><b>action mode</b>{nativeActionModeLabel}</span>
         <span><b>Hermes</b>{runtimeStatus}</span>
         <span><b>trace</b>{traceEvents.length}</span>
         <span><b>artifacts</b>{artifactCount}</span>
@@ -878,6 +899,7 @@ export function RuntimeGeometryObserver({
       {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => setViewMode(tab)}>{tab === 'system_sleeve' ? 'System Sleeve' : tab === 'neostack' ? 'NeoStack View' : tab === 'neoblock' ? 'NeoBlock View' : 'Runtime Path'}</button>)}
       <label className="runtime-geometry-prompt"><span>Runtime prompt</span><textarea value={runtimePrompt} onChange={(event) => onRuntimePromptChange(event.target.value)} onKeyDown={handleRuntimePromptKeyDown} placeholder="Ask Hermes to perform a task through this Sleeve…" disabled={isHermesRunning} aria-label="Runtime prompt" /></label>
       <button type="button" className="publicPrimaryCta" disabled={!canSendRuntimePrompt} onClick={submitRuntimePrompt}>{isHermesRunning ? 'Hermes working…' : 'Send to Hermes'}</button>
+      <small className="runtime-action-mode-copy">Selected action mode: {nativeActionModeLabel}. {nativeActionModeCopy}</small>
       {pendingRuntimeApproval && <div className="runtime-geometry-approval"><b>Approval boundary active</b><button type="button" onClick={() => onContinueRuntimeApproval('approve')} disabled={isHermesRunning}>Approve & Continue</button><button type="button" onClick={() => onContinueRuntimeApproval('skip')} disabled={isHermesRunning}>Skip</button></div>}
     </div>
 

@@ -42,6 +42,7 @@ import { BlockMatchPlan, CompileCandidate, GeneratedBlockDraft, SleeveAssemblyPl
 import { createCompilerInputFromCompileCandidate, createCompilerRequest, validateCompilerInput } from './lib/umg/compileCandidateAdapter';
 import { buildCompilerSleeveInput } from './lib/umg/compilerSleeveInputBuilder';
 import { getCompilerAdapterConfigFromEnv, getCompilerConnectionSummary, compileWithRealCompiler } from './lib/umg/umgCompilerAdapter';
+import { deriveCompilerUiStatus, getCompileButtonLabel, getCompilerCardCopy, getCompilerTopCopy } from './lib/umg/compilerUiStatus';
 import { UMGCompilerRequest, UMGCompilerResult } from './lib/umg/compilerIntegrationTypes';
 import { HermesCognitiveRuntimeRequest, HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGNativeActionMode, UMGNativeHermesActionResult, UMGRuntimeVisualState } from './lib/umg/cognitiveRuntimeTypes';
 import { getRuntimeTargetId } from './lib/umg/cognitiveRuntimeState';
@@ -315,10 +316,29 @@ export default function App() {
   const [pendingRuntimeApproval, setPendingRuntimeApproval] = useState<PendingRuntimeApproval | undefined>();
   const [nativeActionMode, setNativeActionMode] = useState<Exclude<UMGNativeActionMode, 'blocked'>>('observe');
   const [lastNativeActionResult, setLastNativeActionResult] = useState<UMGNativeHermesActionResult | undefined>();
+  const [compilerBridgeAvailable, setCompilerBridgeAvailable] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') saveWorkbenchLayout(window.localStorage, layout);
   }, [layout]);
+
+  useEffect(() => {
+    const config = getCompilerAdapterConfigFromEnv();
+    if (!config.enabled || !config.endpoint) {
+      setCompilerBridgeAvailable(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 1500);
+    fetch(config.endpoint, { method: 'OPTIONS', signal: controller.signal })
+      .then((response) => setCompilerBridgeAvailable(response.ok || response.status === 204))
+      .catch(() => setCompilerBridgeAvailable(false))
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, []);
 
   const generatedMetadataMoltBlocks = useMemo(() => [...UMG_LIBRARY_METADATA_INDEX.filter((candidate) => candidate.blockType === 'molt').map(createMetadataMoltBlock), ...HERMES_NATIVE_META_MOLT_TOOL_BLOCKS], []);
   const generatedMetadataSummary = UMG_LIBRARY_METADATA_INDEX_INFO;
@@ -2188,7 +2208,10 @@ export default function App() {
         setHermesRuntimeVisualState(nativeExecution.visualState);
         setHermesRuntimeWarnings([...validation.warnings, ...nativeExecution.warnings]);
         setHermesRuntimeErrors(nativeExecution.runtimeResult.errors.map((error) => `${error.code}: ${error.message}`));
-        setPendingRuntimeApproval(undefined);
+        const nativePendingApproval = nativeExecution.runtimeResult.status === 'needsApproval'
+          ? createPendingRuntimeApproval({ request, result: nativeExecution.runtimeResult, resolutions: [], currentRuntimeState: nativeExecution.visualState })
+          : undefined;
+        setPendingRuntimeApproval(nativePendingApproval);
         setStatus(nativeExecution.result.status === 'approval_required'
           ? 'Hermes working… awaiting approval. Runtime trace updated from returned events.'
           : nativeExecution.result.status === 'executed'
@@ -2202,21 +2225,63 @@ export default function App() {
       }
       setStatus('Hermes working… Running route through compiled runtime manifest.');
       const execution = await runCompiledManifestThroughHermes({ request, config: hermesConfig });
-      setHermesRuntimeResult(execution.result);
-      setHermesRuntimeVisualState(execution.visualState);
-      setHermesRuntimeWarnings([...validation.warnings, ...execution.warnings]);
-      setHermesRuntimeErrors(execution.result.errors.map((error) => `${error.code}: ${error.message}`));
+      let runtimeResult = execution.result;
+      let runtimeVisualState = execution.visualState;
+      let runtimeWarnings = [...validation.warnings, ...execution.warnings];
+      let nativePendingApproval;
+      const traceTypes = new Set(runtimeResult.trace.map((event) => event.eventType));
+      const actionPreparedWithoutTerminal = traceTypes.has('action_request_created')
+        && !traceTypes.has('action_executed')
+        && !traceTypes.has('file_created')
+        && !traceTypes.has('file_modified')
+        && !traceTypes.has('artifact_created')
+        && !traceTypes.has('action_approval_required')
+        && !traceTypes.has('run_completed')
+        && !traceTypes.has('run_error');
+      if (actionPreparedWithoutTerminal) {
+        const nativeRequest = createNativeHermesActionRequestFromManifest({
+          compiledRuntimeManifest,
+          prompt: runtimeObserverPrompt.trim() || request.userGoal,
+          mode: nativeActionMode,
+          traceId: request.traceId,
+          userApproved: nativeActionMode === 'direct'
+        });
+        const nativeExecution = await runNativeHermesAction({ request: nativeRequest, config: hermesConfig });
+        setLastNativeActionResult(nativeExecution.result);
+        runtimeResult = {
+          ...nativeExecution.runtimeResult,
+          trace: [...execution.result.trace, ...nativeExecution.runtimeResult.trace],
+          toolCalls: [...execution.result.toolCalls, ...nativeExecution.runtimeResult.toolCalls],
+          blockedCalls: [...execution.result.blockedCalls, ...nativeExecution.runtimeResult.blockedCalls],
+          approvalRequests: [...execution.result.approvalRequests, ...nativeExecution.runtimeResult.approvalRequests],
+          errors: [...execution.result.errors, ...nativeExecution.runtimeResult.errors],
+          artifacts: [...execution.result.artifacts, ...nativeExecution.runtimeResult.artifacts]
+        };
+        runtimeVisualState = nativeExecution.visualState;
+        runtimeWarnings = [...runtimeWarnings, ...nativeExecution.warnings];
+        nativePendingApproval = nativeExecution.runtimeResult.status === 'needsApproval'
+          ? createPendingRuntimeApproval({ request, result: nativeExecution.runtimeResult, resolutions: [], currentRuntimeState: nativeExecution.visualState })
+          : undefined;
+      }
+      setHermesRuntimeResult(runtimeResult);
+      setHermesRuntimeVisualState(runtimeVisualState);
+      setHermesRuntimeWarnings(runtimeWarnings);
+      setHermesRuntimeErrors(runtimeResult.errors.map((error) => `${error.code}: ${error.message}`));
       const resolutions = resolveToolCapabilities({ manifest: compiledRuntimeManifest });
-      const pendingApproval = createPendingRuntimeApproval({ request, result: execution.result, resolutions, currentRuntimeState: execution.visualState });
+      const pendingApproval = nativePendingApproval ?? createPendingRuntimeApproval({ request, result: runtimeResult, resolutions, currentRuntimeState: runtimeVisualState });
       setToolCapabilityResolutions(resolutions);
       setPendingRuntimeApproval(pendingApproval);
-      setStatus(execution.result.status === 'needsApproval' && !pendingApproval
+      setStatus(runtimeResult.status === 'needsApproval' && !pendingApproval
         ? 'needsApproval returned but no approval capability could be resolved.'
         : pendingApproval
           ? 'Hermes working… awaiting approval. Runtime trace updated from returned events.'
-          : execution.result.trace.length
-            ? 'Hermes completed. Runtime trace updated from returned events.'
-            : 'Hermes completed with no returned runtime trace events.');
+          : runtimeResult.nativeActionResult?.status === 'observed'
+            ? 'Hermes observed native action only. No file execution occurred.'
+            : runtimeResult.nativeActionResult?.status === 'executed'
+              ? 'Hermes completed. Native action executed and runtime trace updated.'
+              : runtimeResult.trace.length
+                ? 'Hermes action prepared. Awaiting terminal execution trace.'
+                : 'Hermes completed with no returned runtime trace events.');
     } finally {
       setIsHermesRunning(false);
     }
@@ -2292,11 +2357,12 @@ export default function App() {
         onRunHermesRuntime={runHermesRuntimeFromManifest}
         onContinueRuntimeApproval={continueHermesRuntimeAfterApproval}
         onBackToBuilder={() => setAppSurfaceMode('public')}
-        compileStatus={compiledRuntimeManifest ? 'Compiler bridge connected. Compile Sleeve' : compilerResult?.status === 'not_configured' || compilerResult?.status === 'error' ? 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge' : activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile.' : 'Compile pending'}
+        compileStatus={activeSessionSleeve ? getCompilerCardCopy(deriveCompilerUiStatus({ compilerBridgeAvailable, compiledRuntimeManifest, result: compilerResult })) : 'Generate a source-bound Sleeve first.'}
         runtimeStatus={isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'ready' : 'compiling_required'}
         isHermesRunning={isHermesRunning}
         pendingRuntimeApproval={pendingRuntimeApproval}
         toolCapabilityResolutions={toolCapabilityResolutions}
+        nativeActionMode={nativeActionMode}
       />
     </div>;
   }
@@ -2323,6 +2389,7 @@ export default function App() {
       compilerRequestPreview={compilerRequestPreview}
       compilerResult={compilerResult}
       compiledRuntimeManifest={compiledRuntimeManifest}
+      compilerBridgeAvailable={compilerBridgeAvailable}
       hermesRequestPreview={hermesRequestPreview}
       hermesRuntimeResult={hermesRuntimeResult}
       hermesRuntimeVisualState={hermesRuntimeVisualState}
@@ -2518,7 +2585,7 @@ export default function App() {
             setSelectedActiveSessionNeoBlockId(blockId);
             setGraphViewMode('neoblock');
           }}
-          compileStatus={compiledRuntimeManifest ? 'Compiler bridge connected. Compile Sleeve' : compilerResult?.status === 'not_configured' || compilerResult?.status === 'error' ? 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge' : 'Structure view is available. Runtime execution requires compile.'}
+          compileStatus={activeSessionSleeve ? getCompilerCardCopy(deriveCompilerUiStatus({ compilerBridgeAvailable, compiledRuntimeManifest, result: compilerResult })) : 'Generate a source-bound Sleeve first.'}
           runtimeStatus={isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? `Hermes ${hermesRuntimeResult.status}` : compiledRuntimeManifest ? 'ready' : 'compiling_required'}
           onCompile={runActualUMGCompiler}
           isCompiling={isHermesRunning}
@@ -2617,6 +2684,7 @@ function PublicLandingShell({
   compilerRequestPreview,
   compilerResult,
   compiledRuntimeManifest,
+  compilerBridgeAvailable,
   hermesRequestPreview,
   hermesRuntimeResult,
   hermesRuntimeVisualState,
@@ -2674,6 +2742,7 @@ function PublicLandingShell({
   compilerRequestPreview?: UMGCompilerRequest;
   compilerResult?: UMGCompilerResult;
   compiledRuntimeManifest?: UMGCompiledRuntimeManifest;
+  compilerBridgeAvailable: boolean;
   hermesRequestPreview?: HermesCognitiveRuntimeRequest;
   hermesRuntimeResult?: HermesCognitiveRuntimeResult;
   hermesRuntimeVisualState?: UMGRuntimeVisualState;
@@ -2723,6 +2792,7 @@ function PublicLandingShell({
           : goal.trim()
             ? 'Ready for intake'
             : 'Ready for intake';
+  const compilerUiStatus = deriveCompilerUiStatus({ compilerBridgeAvailable, compiledRuntimeManifest, result: compilerResult });
   return <HackathonLandingPage
     goal={goal}
     context={context}
@@ -2736,6 +2806,8 @@ function PublicLandingShell({
     missingGenerated={Boolean(blockMatchPlan)}
     assemblyReady={Boolean(sleeveAssemblyPlan)}
     compilerComplete={Boolean(compiledRuntimeManifest)}
+    compilerBridgeAvailable={compilerBridgeAvailable}
+    compilerStatus={compilerUiStatus}
     hermesRunComplete={Boolean(hermesRuntimeResult)}
     traceComplete={Boolean(hermesRuntimeVisualState?.timeline.length)}
     hermesEndpointConfigured={hermesEndpointConfigured}
@@ -2761,7 +2833,7 @@ function PublicLandingShell({
         <small>{studioMode === 'basic' ? 'Clean Hermes-first Sleeve Builder + Runtime Observer.' : 'Developer / Architect inspection panels.'}</small>
       </div>
       {studioMode === 'basic'
-        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} nativeActionMode={nativeActionMode} lastNativeActionResult={lastNativeActionResult} hermesEndpointConfigured={hermesEndpointConfigured} onNativeActionModeChange={onNativeActionModeChange} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
+        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compilerBridgeAvailable={compilerBridgeAvailable} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} nativeActionMode={nativeActionMode} lastNativeActionResult={lastNativeActionResult} hermesEndpointConfigured={hermesEndpointConfigured} onNativeActionModeChange={onNativeActionModeChange} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
         : <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
     </>}
   </HackathonLandingPage>;
@@ -2781,13 +2853,11 @@ function getBasicCandidatePreview(candidates: unknown, prompt: string) {
     .slice(0, 5);
 }
 
-function getCompilerBridgeCopy(result?: UMGCompilerResult) {
-  const config = getCompilerAdapterConfigFromEnv();
-  if (!config.endpoint) return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
-  if (result?.status === 'error') return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
-  if (result?.status === 'not_configured') return 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
-  return 'Compiler bridge connected. Compile Sleeve';
-}
+const nativeActionModeHelp: Record<Exclude<UMGNativeActionMode, 'blocked'>, string> = {
+  observe: 'Observe: prepares route only; no external action',
+  approval: 'Approval: prepares action and waits',
+  direct: 'Direct: executes allowed native Hermes actions'
+};
 
 function StatusLine({ label, value, tone }: { label: string; value: string; tone: 'ready' | 'pending' }) {
   return <div className={`publicStatusLine ${tone}`}><span>{label}</span><b>{value}</b></div>;
@@ -2820,7 +2890,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, nativeActionMode, lastNativeActionResult, hermesEndpointConfigured, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onNativeActionModeChange, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>; lastNativeActionResult?: UMGNativeHermesActionResult; hermesEndpointConfigured: boolean; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onNativeActionModeChange: (mode: Exclude<UMGNativeActionMode, 'blocked'>) => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
+export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, compilerBridgeAvailable = false, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, nativeActionMode, lastNativeActionResult, hermesEndpointConfigured, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onNativeActionModeChange, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; compilerBridgeAvailable?: boolean; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>; lastNativeActionResult?: UMGNativeHermesActionResult; hermesEndpointConfigured: boolean; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onNativeActionModeChange: (mode: Exclude<UMGNativeActionMode, 'blocked'>) => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
   const classifications = classifyBasicContent({ text: [businessInput.text, ...businessInput.documents.map((doc) => doc.text)].join('\n'), filenames: businessInput.documents.map((doc) => doc.filename ?? '').filter(Boolean) });
   const palette = activeSessionSleeve?.metadata?.generatedByHermes ? buildBasicCapabilityPalette({ activeSessionSleeve, resolutions: toolCapabilityResolutions, content: classifications }) : [];
   const geometryManifest = useMemo(() => {
@@ -2846,8 +2916,11 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
   } : undefined;
   const activeStackPreview = activeSessionSleeve?.neoStacks.map((stack) => ({ id: stack.id, title: stack.title, reason: stack.description })) ?? [];
   const compositionSource = (hermesCustomGenerationDiagnostics?.compositionSource ?? buildCompositionSourceDiagnostics({ sleeve: activeSessionSleeve, route: activeSessionSleeve ? 'live Hermes' : 'intake draft' })) as Record<string, unknown>;
-  const compilerBridgeCopy = getCompilerBridgeCopy(compilerResult);
-  const compileStatus = compiledRuntimeManifest ? 'Compiler bridge connected. Compile Sleeve' : activeSessionSleeve?.metadata?.generatedByHermes ? (compilerResult?.status === 'ok' ? 'Compile Sleeve' : compilerBridgeCopy) : 'Compile available after source-bound Sleeve is ready.';
+  const compilerUiStatus = deriveCompilerUiStatus({ compilerBridgeAvailable, compiledRuntimeManifest, result: compilerResult });
+  const hasSourceBoundSleeve = Boolean(activeSessionSleeve?.metadata?.generatedByHermes);
+  const compileStatus = hasSourceBoundSleeve ? getCompilerTopCopy(compilerUiStatus) : 'Generate a source-bound Sleeve first.';
+  const compileCardCopy = hasSourceBoundSleeve ? getCompilerCardCopy(compilerUiStatus) : 'Generate a source-bound Sleeve first.';
+  const compileButtonDisabled = isHermesRunning || !hasSourceBoundSleeve || compilerUiStatus === 'disconnected' || compilerUiStatus === 'unknown';
   const runtimeStatus = isHermesRunning ? 'Hermes working…' : pendingRuntimeApproval ? 'awaiting_approval' : hermesRuntimeResult ? 'completed' : compiledRuntimeManifest ? 'ready' : activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile.' : 'Waiting for Sleeve';
   const basicCandidatePreview = getBasicCandidatePreview(hermesCustomGenerationDiagnostics?.topCandidates, businessInput.text);
   const hermesGenerationFailed = Boolean(hermesCustomGenerationStatus?.startsWith('failed') || compilerResult?.errors?.some((error) => String(error.code).startsWith('HERMES_CUSTOM_SLEEVE_GENERATION')));
@@ -2864,7 +2937,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     <div className="analysisPanel basicSleevePanel">
       <div className="publicSectionTitle"><span>01</span><div><b>Create Sleeve</b><small>Hermes-first runtime-session Sleeve; no source library write.</small></div></div>
       <p className="analysisSummary">{businessInput.text}</p>
-      <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{isHermesRunning ? 'Generating Sleeve' : hermesGenerationFailed ? 'Retry Hermes Generation' : activeSessionSleeve ? 'Regenerate Sleeve' : 'Build UMG Sleeve'}</button><button type="button" className="publicSecondaryCta" onClick={() => onStudioModeChange('advanced')}>Open Advanced Details</button></div>
+      <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onRunArchitectExecution} disabled={isHermesRunning}>{isHermesRunning ? 'Generating Sleeve' : hermesGenerationFailed ? 'Build UMG Sleeve' : activeSessionSleeve ? 'Regenerate Sleeve' : 'Build UMG Sleeve'}</button><button type="button" className="publicSecondaryCta" onClick={() => onStudioModeChange('advanced')}>Open Advanced Details</button></div>
       {hermesCustomGenerationStatus && <small>Hermes custom generation: {hermesCustomGenerationStatus}</small>}
       {classifications.some((entry) => entry.sensitive) && <div className="analysisWarnings"><b>Sensitive material detected</b><span>It will not be shown in prompts, trace, or artifacts.</span></div>}
       <div className="basicClassificationChips">{classifications.map((entry) => <span key={entry.kind}>{entry.label}{entry.sensitive ? ' · protected' : ''}</span>)}</div>
@@ -2890,13 +2963,25 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicCompilePanel">
       <div className="publicSectionTitle"><span>04</span><div><b>Compile</b><small>{compileStatus}</small></div></div>
-      <p>{!activeSessionSleeve?.metadata?.generatedByHermes ? 'Compile available after source-bound Sleeve is ready.' : compiledRuntimeManifest ? 'Compiler returned a real runtime manifest.' : compilerBridgeCopy}</p>
-      <button type="button" className="publicPrimaryCta" onClick={onCompileWithUMGCompiler} disabled={isHermesRunning || !activeSessionSleeve?.metadata?.generatedByHermes}>{isHermesRunning ? 'Generating…' : compiledRuntimeManifest ? 'Recompile Sleeve' : activeSessionSleeve?.metadata?.generatedByHermes ? 'Compile Sleeve' : 'Start compiler bridge, then Compile Sleeve'}</button>
+      <p>{compileCardCopy}</p>
+      {compilerUiStatus === 'disconnected' && <small>npm run umg:compiler-bridge</small>}
+      {!hasSourceBoundSleeve && <small>Generate a source-bound Sleeve first.</small>}
+      <button type="button" className="publicPrimaryCta" onClick={onCompileWithUMGCompiler} disabled={compileButtonDisabled}>{getCompileButtonLabel({ status: compilerUiStatus, hasSourceBoundSleeve, isHermesRunning })}</button>
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicRuntimeObserver">
       <div className="publicSectionTitle"><span>05</span><div><b>Runtime</b><small>{runtimeStatus}</small></div></div>
-      <SummaryRows rows={[["Hermes", hermesEndpointConfigured ? 'configured' : 'not connected'], ["Native tools", 'available'], ["Runtime Graph", activeSessionSleeve ? 'structure available' : 'waiting for Sleeve'], ["Action mode", nativeActionMode], ...runtimeDetailRows]} />
-      <small>{activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.' : 'Generate a Sleeve first.'}</small>
+      <SummaryRows rows={[["Hermes", hermesEndpointConfigured ? 'configured' : 'not connected'], ["Native tools", 'available'], ["Runtime Graph", activeSessionSleeve ? 'structure available' : 'waiting for Sleeve'], ["Action mode", nativeActionMode === 'observe' ? 'Observe' : nativeActionMode === 'approval' ? 'Approval' : 'Direct'], ...runtimeDetailRows]} />
+      <div className="nativeActionModePanel" aria-label="Native action mode">
+        <b>Selected action mode: {nativeActionMode === 'observe' ? 'Observe' : nativeActionMode === 'approval' ? 'Approval' : 'Direct'}</b>
+        <div className="nativeActionModeChoices">
+          {(['observe', 'approval', 'direct'] as Exclude<UMGNativeActionMode, 'blocked'>[]).map((mode) => <button key={mode} type="button" className={nativeActionMode === mode ? 'hot' : ''} onClick={() => onNativeActionModeChange(mode)}>{mode === 'observe' ? 'Observe' : mode === 'approval' ? 'Approval' : 'Direct'}</button>)}
+        </div>
+        <small>{nativeActionModeHelp.observe}</small>
+        <small>{nativeActionModeHelp.approval}</small>
+        <small>{nativeActionModeHelp.direct}</small>
+        <small>For note-file demos, choose Direct mode or continue an approval boundary before expecting a desktop file.</small>
+      </div>
+      <small>{activeSessionSleeve ? 'Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.' : 'Generate a source-bound Sleeve first.'}</small>
       <div className="templateActionRow"><button type="button" className="publicPrimaryCta" onClick={onOpenRuntimeGeometry} disabled={!activeSessionSleeve}>Open Runtime Graph</button></div>
       {pendingRuntimeApproval && <RuntimeApprovalPanel resolutions={toolCapabilityResolutions} pendingApproval={pendingRuntimeApproval} isRunning={isHermesRunning} onContinue={onContinueRuntimeApproval} />}
       {hermesRuntimeResult?.artifacts?.length ? <div className="phase5CardGrid">{hermesRuntimeResult.artifacts.map((artifact) => <div key={artifact.id} className="matchCard"><b>{artifact.label}</b><small>{artifact.kind}</small><p>{typeof artifact.content === 'string' ? artifact.content : JSON.stringify(artifact.content)}</p></div>)}</div> : <small>No artifacts yet. Run Hermes after compile to produce real runtime artifacts.</small>}

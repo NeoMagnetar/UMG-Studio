@@ -113,6 +113,8 @@ export type ToolEndpointNode = RuntimeGeometryBaseNode & {
   provider?: string;
   capabilityLabel?: string;
   requiredByNodeIds: string[];
+  parentNeoBlockId?: string;
+  parentNeoStackId?: string;
 };
 
 export type RuntimeGeometryNode =

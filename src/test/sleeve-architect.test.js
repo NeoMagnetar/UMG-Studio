@@ -21,6 +21,7 @@ import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, redactSensitiveText } from '../lib/umg/basicModeScaffolds';
 import { HackathonLandingPage } from '../components/HackathonLandingPage';
+import { deriveCompilerUiStatus, getCompileButtonLabel, getCompilerCardCopy, getCompilerTopCopy } from '../lib/umg/compilerUiStatus';
 import { ActiveSessionSleeveStudioInspector, MoltDetailPanel } from '../components/ActiveSessionSleeveStudioInspector';
 import { summarizeNormalizedTemplateSourceStatus } from '../lib/umg/templateSleeveStructures';
 
@@ -401,7 +402,7 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     expect(appSource).toContain('Open Runtime Graph');
     expect(appSource).toContain('Structure view is available. Runtime execution requires compile. Runtime trace appears after Hermes runs.');
-    expect(appSource).toContain('Generate a Sleeve first.');
+    expect(appSource).toContain('Generate a source-bound Sleeve first.');
     expect(appSource).toContain('npm run umg:compiler-bridge');
     expect(appSource).toContain('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
     expect(appSource).not.toContain('Open Runtime Observer');
@@ -414,6 +415,34 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(appSource).toContain('Noncanonical dev route.');
     expect(appSource).toContain('Advanced Diagnostics');
     expect(appSource).toContain('Intake Intelligence Diagnostics · Composition Source · bridge debug');
+  });
+
+  it('uses one compiler status derivation for connected, disconnected, and compiled copy', () => {
+    const connected = deriveCompilerUiStatus({ compilerBridgeAvailable: true, result: { status: 'error', errors: [], warnings: [] } });
+    expect(connected).toBe('connected_not_compiled');
+    expect(getCompilerTopCopy(connected)).toBe('Compiler connected · not compiled');
+    expect(getCompilerCardCopy(connected)).toBe('Compiler connected. Compile Sleeve.');
+    expect(getCompileButtonLabel({ status: connected, hasSourceBoundSleeve: true, isHermesRunning: false })).toBe('Compile Sleeve');
+
+    const disconnected = deriveCompilerUiStatus({ compilerBridgeAvailable: false, result: { status: 'not_configured', errors: [], warnings: [] } });
+    expect(disconnected).toBe('disconnected');
+    expect(getCompilerTopCopy(disconnected)).toBe('Compiler bridge not connected');
+    expect(getCompilerCardCopy(disconnected)).toBe('Compiler bridge not connected. Start it with: npm run umg:compiler-bridge');
+    expect(getCompileButtonLabel({ status: disconnected, hasSourceBoundSleeve: true, isHermesRunning: false })).toBe('Start compiler bridge, then Compile Sleeve');
+
+    const compiled = deriveCompilerUiStatus({ compilerBridgeAvailable: true, compiledRuntimeManifest: { sleeveId: 'sleeve.demo', sleeveTitle: 'Demo', compiledAt: 'now', compiledStructure: {}, runtimeInstructions: [], executionPlan: [], gates: [], toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'manual', executionMode: 'direct', registry: [] }, sourceBlocks: [], traceMetadata: {} } });
+    expect(compiled).toBe('connected_compiled');
+    expect(getCompilerTopCopy(compiled)).toBe('Compiled');
+    expect(getCompilerCardCopy(compiled)).toBe('Compile succeeded');
+  });
+
+  it('keeps Basic failure/action-mode UI explicit without duplicate retry source strings', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect((appSource.match(/Retry Hermes Generation/g) ?? []).length).toBe(1);
+    expect(appSource).toContain('Observe: prepares route only; no external action');
+    expect(appSource).toContain('Approval: prepares action and waits');
+    expect(appSource).toContain('Direct: executes allowed native Hermes actions');
+    expect(appSource).toContain('For note-file demos, choose Direct mode or continue an approval boundary');
   });
 
   it('keeps general canvas separate and only exposes Inspect Active Sleeve when session state exists', () => {

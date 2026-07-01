@@ -6,10 +6,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function getCompilerAdapterConfigFromEnv(env: Record<string, string | boolean | undefined> = import.meta.env): UMGCompilerAdapterConfig {
-  const endpoint = String(env.VITE_UMG_COMPILER_ENDPOINT || env.VITE_UMG_COMPILER_URL || '').trim();
+  const configuredEndpoint = String(env.VITE_UMG_COMPILER_ENDPOINT || env.VITE_UMG_COMPILER_URL || '').trim();
   const enabledRaw = env.VITE_UMG_COMPILER_ENABLED;
-  const enabled = endpoint.length > 0 && enabledRaw !== 'false';
-  return { enabled, endpoint: endpoint || undefined, timeoutMs: 30000 };
+  const endpoint = configuredEndpoint || 'http://127.0.0.1:8787/compile';
+  const enabled = enabledRaw !== 'false';
+  return { enabled, endpoint, timeoutMs: 30000 };
 }
 
 export function getCompilerConnectionSummary(config: UMGCompilerAdapterConfig): CompilerConnectionSummary {
@@ -74,22 +75,36 @@ function makeToolPolicy(request: UMGCompilerRequest, rawPolicy: unknown): UMGToo
   };
 }
 
+function getNormalizedStructureRecord(request: UMGCompilerRequest): Record<string, unknown> {
+  return isRecord(request.input.normalizedStructure) ? request.input.normalizedStructure : {};
+}
+
+function normalizeExecutionOrderToNeoBlocks(request: UMGCompilerRequest) {
+  const normalized = getNormalizedStructureRecord(request);
+  const neoBlockIds = new Set(toArray(normalized.neoBlocks).filter(isRecord).map((block) => typeof block.id === 'string' ? block.id : undefined).filter(Boolean) as string[]);
+  const parentByMolt = new Map<string, string>();
+  for (const block of toArray(normalized.neoBlocks)) {
+    if (!isRecord(block) || typeof block.id !== 'string' || !Array.isArray(block.moltBlockIds)) continue;
+    block.moltBlockIds.forEach((moltId) => {
+      if (typeof moltId === 'string') parentByMolt.set(moltId, block.id as string);
+    });
+  }
+  const mapped = request.input.executionOrder.map((id) => neoBlockIds.has(id) ? id : parentByMolt.get(id)).filter(Boolean) as string[];
+  return Array.from(new Set(mapped.length ? mapped : request.input.executionOrder.filter((id) => neoBlockIds.has(id))));
+}
+
 function makeExecutionPlan(request: UMGCompilerRequest, rawPlan: unknown): UMGExecutionStep[] {
   if (Array.isArray(rawPlan)) return rawPlan as UMGExecutionStep[];
-  return request.input.executionOrder.map((targetId, orderIndex) => ({
+  return normalizeExecutionOrderToNeoBlocks(request).map((targetId, orderIndex) => ({
     id: `compiler_step_${orderIndex + 1}_${targetId}`,
     label: targetId,
-    scopeKind: targetId.includes('stack') ? 'neostack' : targetId.includes('block') ? 'neoblock' : 'molt',
+    scopeKind: 'neoblock',
     targetId,
     requiredGateIds: [],
     requiredToolIds: [],
     expectedState: 'queued',
     orderIndex
   }));
-}
-
-function getNormalizedStructureRecord(request: UMGCompilerRequest): Record<string, unknown> {
-  return isRecord(request.input.normalizedStructure) ? request.input.normalizedStructure : {};
 }
 
 function collectSourceBlockMetadata(request: UMGCompilerRequest): Map<string, UMGSourceBlockRef> {
@@ -177,6 +192,36 @@ function collectCompilerOutput(raw: unknown): Record<string, unknown> | undefine
   return raw;
 }
 
+function normalizeCompiledStructureHierarchy(runtime: unknown, request: UMGCompilerRequest) {
+  if (!isRecord(runtime)) return runtime;
+  const normalized = getNormalizedStructureRecord(request);
+  const neoStacks = toArray(normalized.neoStacks).filter(isRecord);
+  const neoBlocks = toArray(normalized.neoBlocks).filter(isRecord);
+  const neoBlockIds = new Set(neoBlocks.map((block) => typeof block.id === 'string' ? block.id : undefined).filter(Boolean) as string[]);
+  const blocksByStack = new Map<string, string[]>();
+  neoBlocks.forEach((block) => {
+    if (typeof block.id !== 'string' || typeof block.neoStackId !== 'string') return;
+    blocksByStack.set(block.neoStackId, [...(blocksByStack.get(block.neoStackId) ?? []), block.id]);
+  });
+  const stackOrderById = new Map<string, string[]>();
+  neoStacks.forEach((stack) => {
+    if (typeof stack.id !== 'string') return;
+    const explicitIds = Array.isArray(stack.neoBlockIds) ? stack.neoBlockIds.filter((id): id is string => typeof id === 'string' && neoBlockIds.has(id)) : [];
+    stackOrderById.set(stack.id, explicitIds.length ? explicitIds : blocksByStack.get(stack.id) ?? []);
+  });
+  const clone = { ...runtime } as Record<string, unknown>;
+  if (Array.isArray(clone.stacks)) {
+    clone.stacks = clone.stacks.map((stack) => {
+      if (!isRecord(stack)) return stack;
+      const stackId = typeof stack.id === 'string' ? stack.id : undefined;
+      const orderedBlockIds = (stackId ? stackOrderById.get(stackId) : undefined)
+        ?? (Array.isArray(stack.orderedBlockIds) ? stack.orderedBlockIds.filter((id): id is string => typeof id === 'string' && neoBlockIds.has(id)) : []);
+      return { ...stack, orderedBlockIds };
+    });
+  }
+  return clone;
+}
+
 export function normalizeCompilerResponseToManifest(raw: unknown, request: UMGCompilerRequest): UMGCompilerResult {
   const output = collectCompilerOutput(raw);
   if (!output) {
@@ -193,7 +238,8 @@ export function normalizeCompilerResponseToManifest(raw: unknown, request: UMGCo
     };
   }
 
-  const runtimeRecord = isRecord(runtime) ? runtime : {};
+  const normalizedRuntime = normalizeCompiledStructureHierarchy(runtime, request);
+  const runtimeRecord = isRecord(normalizedRuntime) ? normalizedRuntime : {};
   const warnings: UMGCompilerWarning[] = [];
   const wrapperWarnings = isRecord(raw) && Array.isArray(raw.warnings) ? raw.warnings as UMGCompilerWarning[] : [];
   warnings.push(...wrapperWarnings);
@@ -211,7 +257,7 @@ export function normalizeCompilerResponseToManifest(raw: unknown, request: UMGCo
     sleeveTitle: String(runtimeRecord.sleeveName ?? request.input.sleeveTitle),
     compiledAt,
     ...(compiledPrompt ? { compiledPrompt } : {}),
-    compiledStructure: runtime,
+    compiledStructure: normalizedRuntime,
     runtimeInstructions: Array.isArray(output.runtimeInstructions) ? output.runtimeInstructions as string[] : [...request.input.runtimeInstructions],
     executionPlan: makeExecutionPlan(request, output.executionPlan),
     gates: toArray(request.input.gates) as UMGGateRecord[],

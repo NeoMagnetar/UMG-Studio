@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import type { CompilerUiStatus } from '../lib/umg/compilerUiStatus';
+import { getCompilerTopCopy } from '../lib/umg/compilerUiStatus';
 import './HackathonLandingPage.css';
 
 const pipelineStages = [
@@ -31,6 +33,8 @@ type HackathonLandingPageProps = {
   missingGenerated: boolean;
   assemblyReady: boolean;
   compilerComplete?: boolean;
+  compilerBridgeAvailable?: boolean;
+  compilerStatus?: CompilerUiStatus;
   hermesRunComplete?: boolean;
   traceComplete?: boolean;
   hermesEndpointConfigured: boolean;
@@ -71,6 +75,8 @@ export function HackathonLandingPage({
   missingGenerated,
   assemblyReady,
   compilerComplete = false,
+  compilerBridgeAvailable = false,
+  compilerStatus,
   hermesRunComplete = false,
   traceComplete = false,
   hermesEndpointConfigured,
@@ -168,7 +174,7 @@ export function HackathonLandingPage({
       </section>
 
       <PipelineStrip intakeSubmitted={intakeSubmitted} businessMapReady={businessMapReady} templateSelected={templateSelected} sleeveInstantiated={sleeveInstantiated} blockMatched={blockMatched} missingGenerated={missingGenerated} assemblyReady={assemblyReady} compilerComplete={compilerComplete} hermesRunComplete={hermesRunComplete} traceComplete={traceComplete} />
-      <StatusRow hermesEndpointConfigured={hermesEndpointConfigured} compilerComplete={compilerComplete} hermesRunComplete={hermesRunComplete} traceComplete={traceComplete} />
+      <StatusRow hermesEndpointConfigured={hermesEndpointConfigured} compilerComplete={compilerComplete} compilerBridgeAvailable={compilerBridgeAvailable} compilerStatus={compilerStatus} hermesRunComplete={hermesRunComplete} traceComplete={traceComplete} />
       {children && <section className="hackathonResults" aria-label="Analysis and assembly results">{children}</section>}
     </main>
   </div>;
@@ -191,10 +197,11 @@ function PipelineStrip({ intakeSubmitted, businessMapReady, templateSelected, sl
   </section>;
 }
 
-function StatusRow({ hermesEndpointConfigured, compilerComplete, hermesRunComplete, traceComplete }: { hermesEndpointConfigured: boolean; compilerComplete: boolean; hermesRunComplete: boolean; traceComplete: boolean }) {
+function StatusRow({ hermesEndpointConfigured, compilerComplete, compilerBridgeAvailable, compilerStatus, hermesRunComplete, traceComplete }: { hermesEndpointConfigured: boolean; compilerComplete: boolean; compilerBridgeAvailable: boolean; compilerStatus?: CompilerUiStatus; hermesRunComplete: boolean; traceComplete: boolean }) {
+  const compilerLabel = compilerStatus ? getCompilerTopCopy(compilerStatus) : compilerComplete ? 'Compiled' : compilerBridgeAvailable ? 'Compiler connected · not compiled' : 'Compiler bridge not connected. Start it with: npm run umg:compiler-bridge';
   return <section className="hackathonStatus" aria-label="Runtime and compiler status">
     <div><span>Runtime</span><b>Ready</b></div>
-    <div><span>Compiler</span><b>{compilerComplete ? 'Compiled' : 'Bridge not connected'}</b></div>
+    <div><span>Compiler</span><b>{compilerLabel}</b></div>
     <div><span>Hermes</span><b>{hermesRunComplete ? 'Response Received' : hermesEndpointConfigured ? 'Configured' : 'Not Connected'}</b></div>
     <div><span>Trace</span><b>{traceComplete ? 'Ingested' : 'Pending'}</b></div>
   </section>;

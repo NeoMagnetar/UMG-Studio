@@ -287,15 +287,48 @@ export function buildGateGeometryNodes(sleeve: NormalizedTemplateSleeve): GateGe
 
 function buildToolEndpointNodes(source: GeometrySource): ToolEndpointNode[] {
   const requiredTools = unique([...(source.assemblyPlan?.requiredTools ?? []), ...(source.compiledRuntimeManifest?.toolPolicy.allowedTools ?? [])]);
+  const owningBlockByToolId = new Map<string, NormalizedTemplateNeoBlock>();
+  const owningMoltByToolId = new Map<string, NormalizedTemplateMoltBlock>();
+  const moltById = new Map(source.sleeve.moltBlocks.map((molt) => [molt.id, molt]));
+  source.sleeve.neoBlocks.forEach((block) => {
+    block.moltBlockIds.forEach((moltId) => {
+      const molt = moltById.get(moltId);
+      const moltMetadata = isRecord(molt) && isRecord((molt as unknown as Record<string, unknown>).metadata) ? (molt as unknown as { metadata: Record<string, unknown> }).metadata : undefined;
+      const capabilityIds = unique([
+        moltId,
+        molt?.sourceId,
+        typeof moltMetadata?.capabilityId === 'string' ? moltMetadata.capabilityId : undefined,
+        typeof moltMetadata?.toolId === 'string' ? moltMetadata.toolId : undefined
+      ]);
+      capabilityIds.forEach((capabilityId) => {
+        owningBlockByToolId.set(capabilityId, block);
+        if (molt) owningMoltByToolId.set(capabilityId, molt);
+      });
+    });
+  });
+  const metadataCapabilities = Array.isArray(source.sleeve.metadata?.capabilities) ? source.sleeve.metadata.capabilities : [];
+  metadataCapabilities.forEach((capability) => {
+    if (!isRecord(capability) || typeof capability.capabilityId !== 'string') return;
+    const parentId = typeof capability.sourceNeoBlock === 'string'
+      ? capability.sourceNeoBlock
+      : typeof capability.parentNeoBlockId === 'string'
+        ? capability.parentNeoBlockId
+        : undefined;
+    const parent = parentId ? source.sleeve.neoBlocks.find((block) => block.id === parentId) : undefined;
+    if (parent) owningBlockByToolId.set(capability.capabilityId, parent);
+  });
   return requiredTools.map((toolId) => ({
     id: `tool:${toolId}`,
     kind: 'tool_endpoint',
     toolId,
     label: toolId,
     state: 'idle',
-    aliases: [toolId],
-    requiredByNodeIds: [],
-    layoutHint: { arrangement: 'cluster', semanticGroup: 'dependency_data' }
+    aliases: unique([toolId, owningMoltByToolId.get(toolId)?.id, owningMoltByToolId.get(toolId)?.sourceId]),
+    requiredByNodeIds: owningBlockByToolId.get(toolId) ? [`neoblock:${owningBlockByToolId.get(toolId)!.id}`] : [],
+    parentNeoBlockId: owningBlockByToolId.get(toolId)?.id,
+    parentNeoStackId: owningBlockByToolId.get(toolId)?.neoStackId,
+    layoutHint: { arrangement: 'cluster', semanticGroup: 'dependency_data' },
+    metadata: { parentNeoBlockId: owningBlockByToolId.get(toolId)?.id, parentNeoStackId: owningBlockByToolId.get(toolId)?.neoStackId, sourceToolBlockId: owningMoltByToolId.get(toolId)?.id, capabilityId: toolId }
   }));
 }
 

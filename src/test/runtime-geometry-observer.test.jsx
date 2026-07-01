@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RuntimeGeometryObserver, buildRuntimeGeometryObserverGraph } from '../components/RuntimeGeometryObserver';
+import { RuntimeGeometryObserver, buildRuntimeGeometryObserverGraph, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
+import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
+import { runNativeHermesAction } from '../lib/umg/hermesRuntimeExecution';
+import { createCompilerRequest } from '../lib/umg/compileCandidateAdapter';
+import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapter';
 
 function makeSleeve() {
   return {
@@ -27,6 +31,7 @@ function makeSleeve() {
     gates: [{ id: 'gate.approval', title: 'Local note approval gate', sourceId: 'gate.approval', attachesTo: { kind: 'neoblock', id: 'block.capture' }, triggerType: 'user_intent', conditionText: 'Require approval before note file capability.', action: 'activate', targetIds: ['block.capture'], defaultState: 'closed', runtimeState: 'inactive', tags: [] }],
     metadata: {
       runtimeSessionOnly: true,
+      requiredTools: ['umg.capability.local_note_file_write'],
       structuralIR: {
         sleeve: { id: 'sleeve.greek_note' },
         neoStacks: [{ id: 'stack.compose', title: 'Note Composition Stack' }],
@@ -71,6 +76,9 @@ function renderObserver(extra = {}) {
 }
 
 describe('RuntimeGeometryObserver', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it('renders the active Sleeve title and Runtime Graph warning without source-library controls', () => {
     const html = renderObserver();
     expect(html).toContain('Greek-Infused Desktop Note Creator');
@@ -152,5 +160,122 @@ describe('RuntimeGeometryObserver', () => {
     expect(graph.edges.find((edge) => edge.id === 'edge.capture.to.merge')?.status).toBe('active');
     expect(graph.nodes.find((node) => node.id === 'artifact:artifact.apple_haiku')?.status).toBe('complete');
     expect(graph.unmappedEvents.map((entry) => entry.event.eventId)).toContain('evt.unknown');
+  });
+
+  it('does not mark action_request_created alone as runtime completed', () => {
+    const state = deriveRuntimeExecutionState({
+      compiledRuntimeManifest: { sleeveId: 'sleeve.greek_note', sleeveTitle: 'Greek Note', compiledAt: 'now', compiledStructure: {}, runtimeInstructions: ['run'], executionPlan: [], gates: [], toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'manual', executionMode: 'direct', registry: [] }, sourceBlocks: [], traceMetadata: {} },
+      isHermesRunning: false,
+      traceCount: 1,
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'prepared', trace: [{ traceId: 'trace.dynamic', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    expect(state).toBe('action_prepared');
+  });
+
+  it('requires action_executed plus file/artifact or run_completed before Direct desktop note runtime is completed', () => {
+    const manifest = { sleeveId: 'sleeve.greek_note', sleeveTitle: 'Greek Note', compiledAt: 'now', compiledStructure: {}, runtimeInstructions: ['run'], executionPlan: [], gates: [], toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'manual', executionMode: 'direct', registry: [] }, sourceBlocks: [], traceMetadata: {} };
+    expect(deriveRuntimeExecutionState({ compiledRuntimeManifest: manifest, isHermesRunning: false, traceCount: 2, hermesRuntimeResult: { status: 'ok', finalOutput: 'executed', trace: [{ traceId: 'trace.dynamic', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }, { traceId: 'trace.dynamic', timestamp: 2, eventType: 'action_executed', state: 'complete', label: 'Action executed' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] } })).toBe('action_prepared');
+    expect(deriveRuntimeExecutionState({ compiledRuntimeManifest: manifest, isHermesRunning: false, traceCount: 3, hermesRuntimeResult: { status: 'ok', finalOutput: 'created', trace: [{ traceId: 'trace.dynamic', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }, { traceId: 'trace.dynamic', timestamp: 2, eventType: 'action_executed', state: 'complete', label: 'Action executed' }, { traceId: 'trace.dynamic', timestamp: 3, eventType: 'file_created', state: 'complete', label: 'File created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] } })).toBe('completed');
+  });
+
+  it('maps approval-only runtime to awaiting_approval, not completed', () => {
+    const state = deriveRuntimeExecutionState({
+      compiledRuntimeManifest: { sleeveId: 'sleeve.greek_note', sleeveTitle: 'Greek Note', compiledAt: 'now', compiledStructure: {}, runtimeInstructions: ['run'], executionPlan: [], gates: [], toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'beforeToolUse', executionMode: 'approvalRequired', registry: [] }, sourceBlocks: [], traceMetadata: {} },
+      isHermesRunning: false,
+      traceCount: 1,
+      hermesRuntimeResult: { status: 'needsApproval', finalOutput: 'approval required', trace: [{ traceId: 'trace.dynamic', timestamp: 1, eventType: 'action_approval_required', state: 'attention', label: 'Approval required' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    expect(state).toBe('awaiting_approval');
+  });
+
+  it('maps observe-mode native result to action_prepared instead of completed file action', () => {
+    const state = deriveRuntimeExecutionState({
+      compiledRuntimeManifest: { sleeveId: 'sleeve.greek_note', sleeveTitle: 'Greek Note', compiledAt: 'now', compiledStructure: {}, runtimeInstructions: ['run'], executionPlan: [], gates: [], toolPolicy: { allowedTools: [], blockedTools: [], approvalMode: 'manual', executionMode: 'dryRun', registry: [] }, sourceBlocks: [], traceMetadata: {} },
+      isHermesRunning: false,
+      traceCount: 1,
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'observed', nativeActionResult: { status: 'observed' }, trace: [{ traceId: 'trace.dynamic', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    expect(state).toBe('action_prepared');
+  });
+
+  it('projects capability/tool ownership under the parent NeoBlock and keeps MOLT internal', () => {
+    const sleeve = makeSleeve();
+    const manifest = buildRuntimeGeometryManifest({
+      templateSleeve: sleeve,
+      compiledRuntimeManifest: { sleeveId: sleeve.id, sleeveTitle: sleeve.title, compiledAt: 'now', compiledStructure: {}, runtimeInstructions: ['run'], executionPlan: [], gates: [], toolPolicy: { allowedTools: ['umg.capability.local_note_file_write'], blockedTools: [], approvalMode: 'manual', executionMode: 'direct', registry: [] }, sourceBlocks: [], traceMetadata: {} }
+    });
+    const tool = manifest.nodes.find((node) => node.kind === 'tool_endpoint' && node.toolId === 'umg.capability.local_note_file_write');
+    expect(tool?.parentNeoBlockId).toBe('block.capture');
+    expect(tool?.parentNeoStackId).toBe('stack.compose');
+    const graph = buildRuntimeGeometryObserverGraph({ activeSessionSleeve: sleeve, geometryManifest: manifest, mode: 'structure' });
+    expect(graph.nodes.find((node) => node.id === 'capability:umg.capability.local_note_file_write')?.parentId).toBe('neoblock:block.capture');
+    expect(graph.nodes.filter((node) => node.kind === 'molt')).toHaveLength(3);
+  });
+
+  it('direct native action execution invokes native bridge and produces action/file/artifact terminal trace', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({
+        actionId: 'native_action_test',
+        capabilityId: 'umg.native.hermes.note_create',
+        mode: 'direct',
+        status: 'executed',
+        externalActionTaken: true,
+        summary: 'Created note file.',
+        traceEvents: [
+          { traceId: 'trace.native', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' },
+          { traceId: 'trace.native', timestamp: 2, eventType: 'action_executed', state: 'complete', label: 'Action executed' },
+          { traceId: 'trace.native', timestamp: 3, eventType: 'file_created', state: 'complete', label: 'File created' },
+          { traceId: 'trace.native', timestamp: 4, eventType: 'artifact_created', state: 'complete', label: 'Artifact created' },
+          { traceId: 'trace.native', timestamp: 5, eventType: 'run_completed', state: 'complete', label: 'Run completed' }
+        ],
+        artifacts: [{ path: '/tmp/apple-haiku.txt' }],
+        diagnostics: { elapsedMs: 10 }
+      })
+    });
+    const result = await runNativeHermesAction({
+      config: { enabled: true, endpoint: 'http://127.0.0.1:8788/api/hermes/runtime', timeoutMs: 60000 },
+      request: { actionId: 'native_action_test', capabilityId: 'umg.native.hermes.note_create', mode: 'direct', risk: 'low', prompt: 'Create a haiku note about apples and save it to my desktop.', traceId: 'trace.native', userApproved: true }
+    });
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8788/api/hermes/native-action', expect.any(Object));
+    expect(result.runtimeResult.trace.map((event) => event.eventType)).toEqual(expect.arrayContaining(['action_executed', 'file_created', 'artifact_created', 'run_completed']));
+    expect(result.runtimeResult.status).toBe('ok');
+  });
+
+  it('normalizes compiled stack orderedBlockIds to NeoBlock IDs, not MOLT IDs', () => {
+    const request = createCompilerRequest({
+      id: 'compiler_input_test',
+      compileCandidateId: 'candidate.test',
+      assemblyPlanId: 'assembly.test',
+      sleeveId: 'sleeve.greek_note',
+      sleeveTitle: 'Greek Note',
+      normalizedStructure: makeSleeve(),
+      gates: [],
+      activeStates: {},
+      disabledStates: {},
+      executionOrder: ['molt.instruction', 'molt.subject'],
+      requiredTools: [],
+      approvalPoints: [],
+      runtimeInstructions: ['run'],
+      sourceBlocks: ['molt.instruction', 'molt.subject'],
+      traceMetadata: {},
+      metadata: {}
+    });
+    const result = normalizeCompilerResponseToManifest({ ok: true, result: { runtime: { sleeveId: 'sleeve.greek_note', sleeveName: 'Greek Note', promptSpec: { neoBlockPrompts: [] }, stacks: [{ id: 'stack.compose', orderedBlockIds: ['molt.instruction', 'molt.subject'] }] } } }, request);
+    expect(result.status).toBe('ok');
+    expect(result.manifest.executionPlan.map((step) => step.targetId)).toEqual(['block.capture']);
+    expect(result.manifest.compiledStructure.stacks[0].orderedBlockIds).toEqual(['block.capture']);
+  });
+
+  it('keeps the Runtime bottom drawer collapsed by default', () => {
+    const html = renderObserver();
+    expect(html).toContain('runtime-bottom-drawer');
+    expect(html).not.toContain('runtime-bottom-drawer--open');
+  });
+
+  it('shows selected native action mode help in Runtime Graph', () => {
+    const html = renderObserver({ nativeActionMode: 'direct' });
+    expect(html).toContain('Selected action mode: Direct');
+    expect(html).toContain('Direct: executes allowed native Hermes actions');
   });
 });
