@@ -66,6 +66,7 @@ import { buildHermesImportBrief } from './lib/umg/import/umgHermesImportBrief';
 import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import type { UMGCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import { listWorkspaceBlocks, saveWorkspaceBlock } from './lib/umg/umgWorkspaceBlockRegistry';
+import { buildComposerEnhancedSleeve, enrichUoImportedSleeveWithMoltEvidence } from './lib/umg/moltNeoBlockComposer';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -2148,7 +2149,9 @@ export default function App() {
           setStatus('Hermes generation failed. Retry available.');
           return;
         }
-        const runtimeSleeve = adaptHermesCustomSleevePlanToRuntimeSessionSleeve(generation.plan, generationRequest);
+        const initialRuntimeSleeve = adaptHermesCustomSleevePlanToRuntimeSessionSleeve(generation.plan, generationRequest);
+        const composerEnhanced = buildComposerEnhancedSleeve({ sleeve: initialRuntimeSleeve, userPrompt: selectedInput?.text || publicGoal, workspaceBlocks: listWorkspaceBlocks() });
+        const runtimeSleeve = composerEnhanced.sleeve as NormalizedTemplateSleeve;
         if (generationRunId !== sleeveActivationVersionRef.current) {
           return;
         }
@@ -2177,6 +2180,9 @@ export default function App() {
           sourceBindingStatus: normalizedSourceStatus.sourceBindingStatus,
           sourceBindingWarning: normalizedSourceStatus.sourceBindingWarning,
           bridgeDebug: (generation.raw as Record<string, unknown> | undefined)?.debug,
+          composerEvidence: composerEnhanced.evidence,
+          composerInvoked: true,
+          composerTargetDomain: runtimeSleeve.metadata?.composerTargetDomain,
           nlCardCount: [generation.plan.sleeve, ...generation.plan.neoStacks, ...generation.plan.neoBlocks, ...generation.plan.moltBlocks].filter((entry) => Boolean((entry as Record<string, unknown> | undefined)?.nlCard)).length,
           jsonSchemaCount: [generation.plan.sleeve, ...generation.plan.neoStacks, ...generation.plan.neoBlocks, ...generation.plan.moltBlocks].filter((entry) => Boolean((entry as Record<string, unknown> | undefined)?.jsonSchema)).length,
           compositionSource: buildCompositionSourceDiagnostics({ sleeve: runtimeSleeve, request: generationRequest, route: 'live Hermes' })
@@ -2816,9 +2822,10 @@ export default function App() {
               const parsed: UploadedIntakeContext = createUploadedIntakeContext({ ...intakeBase, text: JSON.stringify(brief, null, 2) });
               setImportReviewReport(disseminated.report as unknown as Record<string, unknown>);
               setHermesImportBrief(brief as unknown as Record<string, unknown>);
+              let uoEnrichmentEvidence: unknown;
               if (disseminated.normalizedSleeveCandidate) {
                 sleeveActivationVersionRef.current += 1;
-                const runtimeSleeve = {
+                const importedRuntimeSleeve = {
                   ...(disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve),
                   metadata: {
                     ...((disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve).metadata ?? {}),
@@ -2830,6 +2837,9 @@ export default function App() {
                     sourceLibraryBacked: false
                   }
                 } as NormalizedTemplateSleeve;
+                const enriched = enrichUoImportedSleeveWithMoltEvidence({ sleeve: importedRuntimeSleeve, userPrompt: publicGoal, workspaceBlocks: listWorkspaceBlocks() });
+                const runtimeSleeve = enriched.sleeve;
+                uoEnrichmentEvidence = enriched.evidence;
                 const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: [], sourceLabel: 'imported_legacy_package' });
                 setActiveSessionSleeve(runtimeSleeve);
                 resetCompileStateForActiveSleeve(runtimeSleeve);
@@ -2840,7 +2850,7 @@ export default function App() {
                 setCompilerRequestPreview(undefined);
               }
               setHermesCustomGenerationStatus('ok: imported UMG package · live Hermes generation skipped');
-              setHermesCustomGenerationDiagnostics({ generationRoute: 'imported_legacy_sleeve_package', importedPackage: true, liveHermesGenerated: false, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
+              setHermesCustomGenerationDiagnostics({ generationRoute: 'imported_legacy_sleeve_package', importedPackage: true, liveHermesGenerated: false, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
               setCompilerResult(undefined);
               setCompileError(null);
               setStatus('Imported legacy UMG Sleeve package ready. Compile next.');
@@ -3514,7 +3524,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT Blocks</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{toolBlockCount}</b><span>Tool Blocks</span></div><div><b>{palette.length}</b><span>Capabilities</span></div>{activeSleeveCounts.unresolved > 0 && <div><b>{activeSleeveCounts.unresolved}</b><span>Needs attention</span></div>}</div></>}
       {isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b><span>NeoStacks imported: {safeActiveNeoStacks.length}</span><span>NeoBlocks imported: {safeActiveNeoBlocks.length}</span><span>MOLT imported/generated: {safeActiveMoltBlocks.length}</span><span>Source-library matches: not resolved yet / optional</span><span>Duplicates merged: {String(((activeSessionSleeve.metadata?.duplicateDiagnostics as Record<string, unknown> | undefined)?.merged ?? (hermesCustomGenerationDiagnostics?.importReviewReport as { duplicates?: { merged?: unknown } } | undefined)?.duplicates?.merged ?? 0))}</span><span>Schema adjustments: {String((hermesCustomGenerationDiagnostics?.importReviewReport as { normalizationAdjustments?: unknown[] } | undefined)?.normalizationAdjustments?.length ?? 0)}</span></div> : <><small>Library candidates bound: {String((activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? safeActiveMoltBlocks.filter((block) => block.sourceKind === 'source-library reused').length)}</small>
       <div className="compactCandidatePreview"><b>Library blocks used: {libraryBlocksUsed.length}</b>{libraryBlockExamples.map((title) => <span key={String(title)}>{String(title)}</span>)}</div></>}
-      <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{safeActiveNeoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => { const moltBlockIds = Array.isArray(block.moltBlockIds) ? block.moltBlockIds : []; const gateIds = Array.isArray(block.gateIds) ? block.gateIds : Array.isArray((block as unknown as { gates?: unknown[] }).gates) ? (block as unknown as { gates: unknown[] }).gates : []; return <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {moltBlockIds.length} · Gates {gateIds.length}</small><div className="compactCandidatePreview">{moltBlockIds.slice(0, 6).map((moltId) => safeActiveMoltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>; })}</ol>}</details>)}</div>
+      <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{safeActiveNeoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => { const moltBlockIds = Array.isArray(block.moltBlockIds) ? block.moltBlockIds : []; const gateIds = Array.isArray(block.gateIds) ? block.gateIds : Array.isArray((block as unknown as { gates?: unknown[] }).gates) ? (block as unknown as { gates: unknown[] }).gates : []; const enrichment = ((block.nlCard as Record<string, unknown> | undefined)?.enrichmentEvidence ?? (block.nlCard as Record<string, unknown> | undefined)?.evidence) as Record<string, unknown> | undefined; const missingRoles = Array.isArray(enrichment?.missingRoles) ? enrichment.missingRoles.map(String) : Array.isArray(enrichment?.missingRoleWarnings) ? enrichment.missingRoleWarnings.map(String) : []; return <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {moltBlockIds.length} · Gates {gateIds.length}</small>{enrichment && <small>Composition/enrichment evidence · source-bound {String(enrichment.sourceBoundCount ?? 0)} · workspace-bound {String(enrichment.workspaceBoundCount ?? enrichment.workspaceDraftCount ?? 0)} · package-only {String(enrichment.packageOnlyCount ?? enrichment.importedPackageCount ?? 0)} · missing roles {missingRoles.join(', ') || 'none'}</small>}<div className="compactCandidatePreview">{moltBlockIds.slice(0, 6).map((moltId) => safeActiveMoltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>; })}</ol>}</details>)}</div>
       <small>Runtime-session only. This Sleeve is not saved to the source library.</small>
     </div>}
     {sleeveArchitectPlan && <div className="analysisPanel basicCompilePanel">

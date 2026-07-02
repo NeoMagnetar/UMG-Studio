@@ -1,6 +1,6 @@
 import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './generated/umgLibraryMetadataIndex';
 import type { UMGCreatedMoltBlock } from './umgBlockAuthoring';
-import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock } from './templateSleeveStructures';
+import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock, NormalizedTemplateSleeve } from './templateSleeveStructures';
 import type { UmgLibraryCandidateBase } from './umgLibraryCandidateRetrieval';
 import { hydrateUmgLibraryCandidate, retrieveUmgLibraryCandidates } from './umgLibraryCandidateRetrieval';
 
@@ -346,4 +346,167 @@ export function analyzeImportedSleeveNeoBlockComposition(input: { neoBlocks: Arr
     sourceLibraryCompositionActive: neoBlocks.some((block) => block.compositionMode === 'source-library-active'),
     neoBlocks
   };
+}
+
+export type ComposerGenerationTargets = {
+  targetDomain: 'uo_servuo' | 'general';
+  intendedNeoStacks: Array<{ id: string; title: string; description: string; tags: string[]; neoBlockPurposes: string[] }>;
+};
+
+export type UoMoltDraftSuggestion = { id: string; title: string; role: NeoBlockCompositionRole; sourceKind: 'workspace-draft-suggestion'; reason: string; reviewRequired: true };
+
+export type UoNeoBlockEnrichmentEvidence = {
+  neoBlockId: string;
+  packageNeoBlockTitle: string;
+  selectedSourceLibraryMoltBlocks: NeoBlockCompositionEvidence['selectedMoltBlocks'];
+  selectedWorkspaceDraftMoltBlocks: NeoBlockCompositionEvidence['selectedMoltBlocks'];
+  importedPackageOnlyMoltBlocks: Array<{ id: string; title: string; role?: string; sourceKind?: string }>;
+  missingRoles: NeoBlockCompositionRole[];
+  suggestedNewMoltBlocks: UoMoltDraftSuggestion[];
+  sourceBoundCount: number;
+  workspaceBoundCount: number;
+  packageOnlyCount: number;
+  unusedRelevantCandidates: NeoBlockCompositionEvidence['rejectedCandidates'];
+};
+
+export type UoSleeveEnrichmentEvidence = {
+  mode: 'uo_imported_package_enrichment' | 'composer_enhanced_generation';
+  sourceLibraryMutationOccurred: false;
+  sourceLibraryReadOnly: true;
+  neoBlocks: UoNeoBlockEnrichmentEvidence[];
+  suggestedDraftsReviewRequired: true;
+};
+
+const UO_ROLE_DRAFT_TITLES: Record<NeoBlockCompositionRole, string> = {
+  directive: 'ServUO Project File Edit Safety Directive',
+  instruction: 'ServUO C# Item Script Creation Instruction',
+  subject: 'Deadly Poison Charge Item Subject',
+  primary: 'ServUO Item Script Artifact Primary',
+  philosophy: 'ServUO Shard Stability Review Philosophy',
+  blueprint: 'ServUO Item Serialization Blueprint'
+};
+
+function suggestionForRole(role: NeoBlockCompositionRole, neoBlockTitle: string): UoMoltDraftSuggestion {
+  return { id: cleanId(`workspace.draft.${role}.${UO_ROLE_DRAFT_TITLES[role]}`).toLowerCase(), title: UO_ROLE_DRAFT_TITLES[role], role, sourceKind: 'workspace-draft-suggestion', reason: `Missing ${role} coverage for ${neoBlockTitle}; review before saving to workspace.`, reviewRequired: true };
+}
+
+export function inferComposerGenerationTargets(prompt: string): ComposerGenerationTargets {
+  const text = normalize(prompt);
+  const isUo = /\b(uo|ultima|servuo|shard|csharp|c#)\b/.test(text);
+  if (isUo) {
+    return {
+      targetDomain: 'uo_servuo',
+      intendedNeoStacks: [{
+        id: 'STACK.UO.SERVUO.ITEMS',
+        title: 'ServUO Item Scripting',
+        description: 'UO/ServUO C# item scripting stack inferred from prompt.',
+        tags: ['uo', 'servuo', 'csharp', 'item-script'],
+        neoBlockPurposes: ['ServUO C# item script creation', 'Deadly poison charge item behavior', 'ServUO item serialization and validation']
+      }]
+    };
+  }
+  return { targetDomain: 'general', intendedNeoStacks: [{ id: 'STACK.CUSTOM.COMPOSITION', title: 'Custom Workflow Composition', description: 'General source-library composition stack inferred from prompt.', tags: ['custom', 'composer'], neoBlockPurposes: ['Source-library composed workflow NeoBlock'] }] };
+}
+
+function evidenceFromComposition(block: NormalizedTemplateNeoBlock, composition: ComposedNeoBlockResult, packageMolts: NormalizedTemplateMoltBlock[] = []): UoNeoBlockEnrichmentEvidence {
+  const selected = composition.evidence.selectedMoltBlocks;
+  return {
+    neoBlockId: block.id,
+    packageNeoBlockTitle: block.title,
+    selectedSourceLibraryMoltBlocks: selected.filter((entry) => entry.sourceKind === 'source-library'),
+    selectedWorkspaceDraftMoltBlocks: selected.filter((entry) => entry.sourceKind === 'workspace-draft'),
+    importedPackageOnlyMoltBlocks: packageMolts.filter((molt) => !(molt.sourceKind === 'source-library reused' || molt.matchedCandidateId)).map((molt) => ({ id: molt.id, title: molt.title, role: molt.role, sourceKind: molt.sourceKind })),
+    missingRoles: composition.missingRoleWarnings,
+    suggestedNewMoltBlocks: composition.missingRoleWarnings.map((role) => suggestionForRole(role, block.title)),
+    sourceBoundCount: composition.evidence.sourceBoundCount,
+    workspaceBoundCount: composition.evidence.workspaceDraftCount,
+    packageOnlyCount: packageMolts.filter((molt) => !(molt.sourceKind === 'source-library reused' || molt.matchedCandidateId)).length,
+    unusedRelevantCandidates: composition.evidence.rejectedCandidates
+  };
+}
+
+function mergeUniqueMoltBlocks(existing: NormalizedTemplateMoltBlock[], additions: NormalizedTemplateMoltBlock[]) {
+  const ids = new Set(existing.map((block) => block.id));
+  const next = [...existing];
+  additions.forEach((block) => {
+    if (!ids.has(block.id)) {
+      ids.add(block.id);
+      next.push(block);
+    }
+  });
+  return next;
+}
+
+export function enrichUoImportedSleeveWithMoltEvidence(input: { sleeve: NormalizedTemplateSleeve; sourceIndex?: UmgLibraryCandidateBase[]; workspaceBlocks?: UMGCreatedMoltBlock[]; userPrompt?: string }) {
+  const sourceIndex = input.sourceIndex ?? UMG_LIBRARY_METADATA_INDEX;
+  let nextMoltBlocks = [...input.sleeve.moltBlocks];
+  const nextNeoBlocks = input.sleeve.neoBlocks.map((block) => {
+    const packageMolts = input.sleeve.moltBlocks.filter((molt) => block.moltBlockIds.includes(molt.id));
+    const composition = composeNeoBlockFromMoltBlocks({
+      userPrompt: [input.userPrompt, input.sleeve.title, block.title, block.description, packageMolts.map((molt) => `${molt.title} ${molt.role} ${(molt.tags ?? []).join(' ')}`).join(' ')].filter(Boolean).join(' '),
+      sleeveDomain: 'Ultima Online ServUO C# shard scripting',
+      parentNeoStackId: block.neoStackId,
+      parentNeoStackTitle: input.sleeve.neoStacks.find((stack) => stack.id === block.neoStackId)?.title,
+      neoBlockPurpose: block.title,
+      tags: unique(['uo', 'servuo', ...(block.tags ?? []), ...packageMolts.flatMap((molt) => molt.tags ?? [])]),
+      sourceIndex,
+      workspaceBlocks: input.workspaceBlocks,
+      importedMoltBlocks: packageMolts
+    });
+    const supplemental = composition.moltBlocks.filter((molt) => molt.sourceKind === 'source-library reused' || molt.sourcePath?.startsWith('workspace://'));
+    nextMoltBlocks = mergeUniqueMoltBlocks(nextMoltBlocks, supplemental);
+    const evidence = evidenceFromComposition(block, composition, packageMolts);
+    return { ...block, moltBlockIds: unique([...block.moltBlockIds, ...supplemental.map((molt) => molt.id)]), generationReason: `${block.generationReason ?? 'Imported package NeoBlock'}; enriched with ${evidence.sourceBoundCount} source-library and ${evidence.workspaceBoundCount} workspace MOLT candidates.`, nlCard: { ...(block.nlCard ?? {}), enrichmentEvidence: evidence, evidence: { ...composition.evidence, uoEnrichment: true } } };
+  });
+  const evidence: UoSleeveEnrichmentEvidence = { mode: 'uo_imported_package_enrichment', sourceLibraryMutationOccurred: false, sourceLibraryReadOnly: true, neoBlocks: nextNeoBlocks.map((block) => (block.nlCard?.enrichmentEvidence as UoNeoBlockEnrichmentEvidence)), suggestedDraftsReviewRequired: true };
+  return { sleeve: { ...input.sleeve, neoBlocks: nextNeoBlocks, moltBlocks: nextMoltBlocks, metadata: { ...input.sleeve.metadata, uoEnrichmentEvidence: evidence, sourceLibraryWrite: false, composerInvoked: true } }, evidence, sourceLibraryMutationOccurred: false as const };
+}
+
+export function buildComposerEnhancedSleeve(input: { sleeve: NormalizedTemplateSleeve; userPrompt: string; sourceIndex?: UmgLibraryCandidateBase[]; workspaceBlocks?: UMGCreatedMoltBlock[] }) {
+  const targets = inferComposerGenerationTargets(input.userPrompt);
+  const sourceIndex = input.sourceIndex ?? UMG_LIBRARY_METADATA_INDEX;
+  let nextNeoStacks = [...input.sleeve.neoStacks];
+  let nextNeoBlocks = [...input.sleeve.neoBlocks];
+  let nextMoltBlocks = [...input.sleeve.moltBlocks];
+  const evidenceBlocks: UoNeoBlockEnrichmentEvidence[] = [];
+  nextNeoBlocks = nextNeoBlocks.map((block) => {
+    const packageMolts = nextMoltBlocks.filter((molt) => block.moltBlockIds.includes(molt.id));
+    const parentStack = nextNeoStacks.find((stack) => stack.id === block.neoStackId);
+    const composition = composeNeoBlockFromMoltBlocks({
+      userPrompt: input.userPrompt,
+      sleeveDomain: targets.targetDomain,
+      parentNeoStackId: block.neoStackId,
+      parentNeoStackTitle: parentStack?.title,
+      neoBlockPurpose: block.title,
+      tags: unique([...(block.tags ?? []), ...(parentStack?.tags ?? [])]),
+      sourceIndex,
+      workspaceBlocks: input.workspaceBlocks,
+      importedMoltBlocks: packageMolts
+    });
+    const supplemental = composition.moltBlocks.filter((molt) => molt.sourceKind === 'source-library reused' || molt.sourcePath?.startsWith('workspace://'));
+    if (!supplemental.length && !composition.evidence.selectedMoltBlocks.length) return block;
+    nextMoltBlocks = mergeUniqueMoltBlocks(nextMoltBlocks, supplemental);
+    const evidence = evidenceFromComposition(block, composition, packageMolts);
+    evidenceBlocks.push(evidence);
+    return { ...block, moltBlockIds: unique([...block.moltBlockIds, ...supplemental.map((molt) => molt.id)]), generationReason: `${block.generationReason ?? 'Generated NeoBlock'}; composer enrichment checked ${evidence.sourceBoundCount} source-library and ${evidence.workspaceBoundCount} workspace MOLT candidates.`, nlCard: { ...(block.nlCard ?? {}), enrichmentEvidence: evidence, evidence: { ...composition.evidence, composerEnhanced: true } } };
+  });
+  targets.intendedNeoStacks.forEach((target, targetIndex) => {
+    let stack = nextNeoStacks.find((entry) => entry.id === target.id || normalize(entry.title) === normalize(target.title));
+    if (!stack) {
+      stack = { id: target.id, title: target.title, description: target.description, stackOrder: nextNeoStacks.length + targetIndex + 1, tags: target.tags, neoBlockIds: [] };
+      nextNeoStacks.push(stack);
+    }
+    const purposes = target.neoBlockPurposes.length ? target.neoBlockPurposes : ['Source-library composed workflow NeoBlock'];
+    purposes.slice(0, 2).forEach((purpose) => {
+      const existing = nextNeoBlocks.find((block) => block.neoStackId === stack!.id && normalize(block.title).includes(normalize(purpose).split(' ')[0] ?? ''));
+      if (existing) return;
+      const composition = composeNeoBlockFromMoltBlocks({ userPrompt: input.userPrompt, sleeveDomain: targets.targetDomain, parentNeoStackId: stack!.id, parentNeoStackTitle: stack!.title, neoBlockPurpose: purpose, tags: target.tags, sourceIndex, workspaceBlocks: input.workspaceBlocks });
+      nextNeoBlocks.push(composition.neoBlock);
+      nextMoltBlocks = mergeUniqueMoltBlocks(nextMoltBlocks, composition.moltBlocks);
+      evidenceBlocks.push(evidenceFromComposition(composition.neoBlock, composition));
+      stack!.neoBlockIds = unique([...(stack!.neoBlockIds ?? []), composition.neoBlock.id]);
+    });
+  });
+  const evidence: UoSleeveEnrichmentEvidence = { mode: 'composer_enhanced_generation', sourceLibraryMutationOccurred: false, sourceLibraryReadOnly: true, neoBlocks: evidenceBlocks, suggestedDraftsReviewRequired: true };
+  return { sleeve: { ...input.sleeve, neoStacks: nextNeoStacks, neoBlocks: nextNeoBlocks, moltBlocks: nextMoltBlocks, metadata: { ...input.sleeve.metadata, composerInvoked: true, composerTargetDomain: targets.targetDomain, composerEvidence: evidence, sourceLibraryWrite: false } }, evidence: { ...evidence, sourceLibraryMutationOccurred: false as const }, sourceLibraryMutationOccurred: false as const };
 }

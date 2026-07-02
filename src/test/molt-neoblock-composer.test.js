@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composeNeoBlockFromMoltBlocks, retrieveNeoBlockMoltCandidates, summarizeSourceLibraryMoltInventory, analyzeImportedSleeveNeoBlockComposition } from '../lib/umg/moltNeoBlockComposer';
+import { composeNeoBlockFromMoltBlocks, retrieveNeoBlockMoltCandidates, summarizeSourceLibraryMoltInventory, analyzeImportedSleeveNeoBlockComposition, enrichUoImportedSleeveWithMoltEvidence, buildComposerEnhancedSleeve, inferComposerGenerationTargets } from '../lib/umg/moltNeoBlockComposer';
 import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 
 const sourceIndex = [
@@ -129,5 +129,53 @@ describe('source-library MOLT to NeoBlock composition', () => {
     expect(analysis.neoBlocks[0].compositionMode).toBe('package-plus-source-suggestions');
     expect(analysis.neoBlocks[0].matchedSourceMoltIds).toContain('SUBJ.POISON');
     expect(analysis.neoBlocks[0].packageMoltIds).toContain('PKG.MOLT.POISON');
+  });
+
+  it('infers composer domain and intended NeoStacks from a Basic Generate prompt', () => {
+    const targets = inferComposerGenerationTargets('Build a ServUO UO shard sleeve for C# item script editing with deadly poison charge items');
+    expect(targets.targetDomain).toBe('uo_servuo');
+    expect(targets.intendedNeoStacks.map((stack) => stack.id)).toContain('STACK.UO.SERVUO.ITEMS');
+    expect(targets.intendedNeoStacks[0].neoBlockPurposes.some((purpose) => /item script/i.test(purpose))).toBe(true);
+  });
+
+  it('enriches a UO imported package without faking package MOLT as source-library MOLT', () => {
+    const sleeve = {
+      id: 'SLV.UO', title: 'UO Server Developer Sleeve', version: '1.0', description: 'Imported UO package', isTemplate: true, templateKind: 'developer', source: 'session', tags: ['uo', 'servuo'],
+      neoStacks: [{ id: 'STACK.UO.ITEMS', title: 'UO Item Scripting', description: 'stack', stackOrder: 1, tags: ['uo'], neoBlockIds: ['NB.UO.POISON'] }],
+      neoBlocks: [{ id: 'NB.UO.POISON', title: 'Poison Dagger Item', description: 'ServUO poison dagger behavior', neoStackId: 'STACK.UO.ITEMS', blockOrder: 1, tags: ['uo'], moltBlockIds: ['PKG.MOLT.POISON'], gateIds: [], defaultState: 'off' }],
+      moltBlocks: [{ id: 'PKG.MOLT.POISON', title: 'Package poison note', role: 'subject', content: 'Imported package MOLT.', tags: ['poison'], parentNeoBlockId: 'NB.UO.POISON', parentNeoStackId: 'STACK.UO.ITEMS', defaultState: 'off', sourceKind: 'runtime-session draft' }],
+      gates: [], governanceBlockIds: [], defaultExecutionMode: 'approvalRequired', metadata: { importedPackage: true, generationRoute: 'imported_legacy_sleeve_package' }
+    };
+    const enriched = enrichUoImportedSleeveWithMoltEvidence({ sleeve, sourceIndex: sourceIndex.filter((entry) => entry.role !== 'blueprint'), workspaceBlocks });
+    const evidence = enriched.evidence.neoBlocks[0];
+    expect(evidence.packageNeoBlockTitle).toBe('Poison Dagger Item');
+    expect(evidence.importedPackageOnlyMoltBlocks.map((entry) => entry.id)).toContain('PKG.MOLT.POISON');
+    expect(evidence.selectedWorkspaceDraftMoltBlocks.length).toBeGreaterThan(0);
+    expect(evidence.selectedSourceLibraryMoltBlocks.some((entry) => entry.id === 'PKG.MOLT.POISON')).toBe(false);
+    expect(evidence.missingRoles).toContain('blueprint');
+    expect(evidence.suggestedNewMoltBlocks.map((entry) => entry.title)).toContain('ServUO Item Serialization Blueprint');
+    expect(enriched.sleeve.moltBlocks.find((block) => block.id === 'PKG.MOLT.POISON')?.matchedCandidateId).toBeUndefined();
+    expect(enriched.sleeve.metadata.uoEnrichmentEvidence).toBeTruthy();
+    expect(enriched.sourceLibraryMutationOccurred).toBe(false);
+  });
+
+  it('builds a composer-enhanced Sleeve for Generate Sleeve and projects enrichment evidence', () => {
+    const baseSleeve = {
+      id: 'SLV.BASIC', title: 'Basic Composer Sleeve', version: '0.1', description: 'basic', isTemplate: true, templateKind: 'custom', source: 'session', tags: ['servuo'],
+      neoStacks: [{ id: 'STACK.UO.SERVUO.ITEMS', title: 'ServUO Item Scripting', description: 'stack', stackOrder: 1, tags: ['uo'], neoBlockIds: [] }],
+      neoBlocks: [], moltBlocks: [], gates: [], governanceBlockIds: [], defaultExecutionMode: 'approvalRequired', metadata: {}
+    };
+    const enhanced = buildComposerEnhancedSleeve({ sleeve: baseSleeve, userPrompt: 'Create a ServUO deadly poison charge item script', sourceIndex, workspaceBlocks });
+    expect(enhanced.sleeve.neoBlocks.length).toBeGreaterThan(0);
+    expect(enhanced.sleeve.moltBlocks.some((block) => block.sourceKind === 'source-library reused')).toBe(true);
+    expect(enhanced.evidence.neoBlocks[0].sourceBoundCount).toBeGreaterThan(0);
+    expect(enhanced.evidence.sourceLibraryMutationOccurred).toBe(false);
+    const manifest = buildRuntimeGeometryManifest({ templateSleeve: enhanced.sleeve });
+    const node = manifest.nodes.find((entry) => entry.kind === 'neoblock');
+    expect(node?.metadata?.compositionEvidence).toBeTruthy();
+    const imported = enrichUoImportedSleeveWithMoltEvidence({ sleeve: { ...baseSleeve, neoBlocks: [{ id: 'NB.UO.POISON', title: 'Poison Dagger Item', description: 'ServUO poison dagger behavior', neoStackId: 'STACK.UO.SERVUO.ITEMS', blockOrder: 1, tags: ['uo'], moltBlockIds: [], gateIds: [], defaultState: 'off' }] }, userPrompt: 'ServUO poison item', sourceIndex, workspaceBlocks });
+    const importedManifest = buildRuntimeGeometryManifest({ templateSleeve: imported.sleeve });
+    const importedNode = importedManifest.nodes.find((entry) => entry.kind === 'neoblock');
+    expect(importedNode?.metadata?.enrichmentEvidence).toBeTruthy();
   });
 });

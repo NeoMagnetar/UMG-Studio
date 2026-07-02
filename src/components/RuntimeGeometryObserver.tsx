@@ -1111,8 +1111,48 @@ function RuntimeNodeInspectorCard({ node, layers, onOpenNeoBlock, onSelect }: { 
         ['status', node.status],
         ['parent', node.parentId ?? 'n/a']
       ];
-  const evidence = isRecord(node.metadata?.compositionEvidence) ? node.metadata.compositionEvidence : undefined;
+  const compositionEvidence = isRecord(node.metadata?.compositionEvidence) ? node.metadata.compositionEvidence : undefined;
+  const enrichmentEvidence = isRecord(node.metadata?.enrichmentEvidence) ? node.metadata.enrichmentEvidence : undefined;
+  const evidence = compositionEvidence ?? enrichmentEvidence;
   const selectedEvidence = Array.isArray(evidence?.selectedMoltBlocks) ? evidence.selectedMoltBlocks.filter(isRecord).slice(0, 6) : [];
-  const missingRoles = Array.isArray(evidence?.missingRoleWarnings) ? evidence.missingRoleWarnings.map(String) : [];
-  return <aside className="runtime-node-inspector-card" aria-label="Runtime node inspector card"><h3>{node.kind === 'neoblock' ? 'NeoBlock inspector' : node.kind === 'neostack' ? 'NeoStack inspector' : 'Selected node summary'}</h3><b>{node.label}</b><p>{String(node.metadata?.description ?? node.rawNode?.subtitle ?? 'Compressed runtime node')}</p><div className="runtime-inspector-rows">{rows.map(([key, value]) => <span key={key}><b>{key}</b>{value}</span>)}</div>{evidence && <details className="runtime-inspector-molt-list" open><summary>Composition Evidence</summary><div className="runtime-inspector-rows"><span><b>source-bound count</b>{String(evidence.sourceBoundCount ?? 0)}</span><span><b>workspace-draft count</b>{String(evidence.workspaceDraftCount ?? 0)}</span><span><b>unused candidate count</b>{String(evidence.unusedCandidateCount ?? 0)}</span><span><b>missing roles</b>{missingRoles.join(' · ') || 'none'}</span></div><div>{selectedEvidence.map((entry) => <button key={String(entry.id)} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · {String(entry.sourceKind ?? 'source?')} · {Array.isArray(entry.whySelected) ? entry.whySelected.map(String).slice(0, 3).join(' · ') : 'why-selected unavailable'}</small></button>)}</div></details>}{node.kind !== 'neoblock' && node.neoBlockId && <button type="button" onClick={onOpenNeoBlock}>Open parent NeoBlock Map</button>}{node.kind === 'neoblock' && <button type="button" onClick={onOpenNeoBlock}>Open NeoBlock Map</button>}<details className="runtime-inspector-molt-list"><summary>{node.kind === 'neoblock' ? 'View all MOLT' : 'Related MOLT'} ({layers.length})</summary><div>{layers.slice(0, 3).map((layer) => <button key={layer.id} type="button" onClick={() => onSelect(layer)}>{layer.label}<small>{String(layer.metadata?.matchedCandidateId ?? 'not linked')} · {String(layer.metadata?.sourcePath ?? 'not linked')}</small></button>)}{layers.length > 3 && <small>+ {layers.length - 3} more MOLT children</small>}</div></details></aside>;
+  const sourceSelected = Array.isArray(enrichmentEvidence?.selectedSourceLibraryMoltBlocks) ? enrichmentEvidence.selectedSourceLibraryMoltBlocks.filter(isRecord).slice(0, 6) : [];
+  const workspaceSelected = Array.isArray(enrichmentEvidence?.selectedWorkspaceDraftMoltBlocks) ? enrichmentEvidence.selectedWorkspaceDraftMoltBlocks.filter(isRecord).slice(0, 6) : [];
+  const suggestedDrafts = Array.isArray(enrichmentEvidence?.suggestedNewMoltBlocks) ? enrichmentEvidence.suggestedNewMoltBlocks.filter(isRecord).slice(0, 6) : [];
+  const unusedCandidates = Array.isArray(enrichmentEvidence?.unusedRelevantCandidates)
+    ? enrichmentEvidence.unusedRelevantCandidates.filter(isRecord).slice(0, 6)
+    : Array.isArray(evidence?.rejectedCandidates)
+      ? evidence.rejectedCandidates.filter(isRecord).slice(0, 6)
+      : [];
+  const missingRoles = Array.isArray(enrichmentEvidence?.missingRoles)
+    ? enrichmentEvidence.missingRoles.map(String)
+    : Array.isArray(evidence?.missingRoleWarnings)
+      ? evidence.missingRoleWarnings.map(String)
+      : [];
+
+  return <aside className="runtime-node-inspector-card" aria-label="Runtime node inspector card">
+    <h3>{node.kind === 'neoblock' ? 'NeoBlock inspector' : node.kind === 'neostack' ? 'NeoStack inspector' : 'Selected node summary'}</h3>
+    <b>{node.label}</b>
+    <p>{String(node.metadata?.description ?? node.rawNode?.subtitle ?? 'Compressed runtime node')}</p>
+    <div className="runtime-inspector-rows">{rows.map(([key, value]) => <span key={key}><b>{key}</b>{value}</span>)}</div>
+    {evidence && <details className="runtime-inspector-molt-list" open>
+      <summary>{enrichmentEvidence ? 'UO Composition/Enrichment Evidence' : 'Composition Evidence'}</summary>
+      <div className="runtime-inspector-rows">
+        <span><b>source-bound count</b>{String(enrichmentEvidence?.sourceBoundCount ?? evidence.sourceBoundCount ?? 0)}</span>
+        <span><b>workspace-draft count</b>{String(enrichmentEvidence?.workspaceBoundCount ?? evidence.workspaceDraftCount ?? 0)}</span>
+        <span><b>package-only count</b>{String(enrichmentEvidence?.packageOnlyCount ?? evidence.importedPackageCount ?? 0)}</span>
+        <span><b>unused candidate count</b>{String(evidence.unusedCandidateCount ?? unusedCandidates.length)}</span>
+        <span><b>missing roles</b>{missingRoles.join(' · ') || 'none'}</span>
+      </div>
+      <div>
+        {sourceSelected.map((entry) => <button key={`source-${String(entry.id)}`} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · source-library · {Array.isArray(entry.whySelected) ? entry.whySelected.map(String).slice(0, 3).join(' · ') : 'why-selected unavailable'}</small></button>)}
+        {workspaceSelected.map((entry) => <button key={`workspace-${String(entry.id)}`} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · workspace-draft · {Array.isArray(entry.whySelected) ? entry.whySelected.map(String).slice(0, 3).join(' · ') : 'why-selected unavailable'}</small></button>)}
+        {!sourceSelected.length && !workspaceSelected.length && selectedEvidence.map((entry) => <button key={String(entry.id)} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · {String(entry.sourceKind ?? 'source?')} · {Array.isArray(entry.whySelected) ? entry.whySelected.map(String).slice(0, 3).join(' · ') : 'why-selected unavailable'}</small></button>)}
+      </div>
+      {suggestedDrafts.length > 0 && <details open><summary>Suggested workspace-draft MOLT Blocks</summary><div>{suggestedDrafts.map((entry) => <button key={`draft-${String(entry.id)}`} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · review required · {String(entry.reason ?? 'missing role suggestion')}</small></button>)}</div></details>}
+      {unusedCandidates.length > 0 && <details><summary>Unused relevant candidates</summary><div>{unusedCandidates.map((entry) => <button key={`unused-${String(entry.id)}`} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · {String(entry.sourceKind ?? 'source?')} · {String(entry.reason ?? 'not selected')}</small></button>)}</div></details>}
+    </details>}
+    {node.kind !== 'neoblock' && node.neoBlockId && <button type="button" onClick={onOpenNeoBlock}>Open parent NeoBlock Map</button>}
+    {node.kind === 'neoblock' && <button type="button" onClick={onOpenNeoBlock}>Open NeoBlock Map</button>}
+    <details className="runtime-inspector-molt-list"><summary>{node.kind === 'neoblock' ? 'View all MOLT' : 'Related MOLT'} ({layers.length})</summary><div>{layers.slice(0, 3).map((layer) => <button key={layer.id} type="button" onClick={() => onSelect(layer)}>{layer.label}<small>{String(layer.metadata?.matchedCandidateId ?? 'not linked')} · {String(layer.metadata?.sourcePath ?? 'not linked')}</small></button>)}{layers.length > 3 && <small>+ {layers.length - 3} more MOLT children</small>}</div></details>
+  </aside>;
 }

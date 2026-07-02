@@ -1223,6 +1223,9 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     expect(appSource).toContain('<b>Generate a Sleeve</b>');
     expect(appSource).toContain('>{generationButtonLabel}</button>{showCalibratedFastPath');
+    expect((appSource.match(/>{generationButtonLabel}<\/button>/g) ?? []).length).toBe(2);
+    expect(appSource).toContain('buildComposerEnhancedSleeve({ sleeve: initialRuntimeSleeve');
+    expect(appSource).toContain('enrichUoImportedSleeveWithMoltEvidence({ sleeve: importedRuntimeSleeve');
     expect(appSource).toContain('className="publicSecondaryCta" onClick={onUseCalibratedHaikuNoteSleeve}>Use Calibrated Haiku Note Sleeve');
     expect(appSource).toContain('Live Hermes generation request was too large. Use calibrated Sleeve or retry with compact request.');
   });

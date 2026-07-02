@@ -219,7 +219,7 @@ export function buildNeoBlockGeometryNodes(sleeve: NormalizedTemplateSleeve): Ne
         hasBlueprint: Boolean(row && row.roleCounts.blueprint > 0),
         warnings: warningCodes
       },
-      metadata: { neoStackId: block.neoStackId, blockOrder: block.blockOrder, tags: block.tags, defaultState: block.defaultState, sourceKind: block.sourceKind, generationReason: block.generationReason, compositionEvidence: isRecord(block.nlCard) ? block.nlCard.evidence : undefined }
+      metadata: { neoStackId: block.neoStackId, blockOrder: block.blockOrder, tags: block.tags, defaultState: block.defaultState, sourceKind: block.sourceKind, generationReason: block.generationReason, compositionEvidence: isRecord(block.nlCard) ? block.nlCard.evidence : undefined, enrichmentEvidence: isRecord(block.nlCard) ? block.nlCard.enrichmentEvidence : undefined }
     };
   });
 }
