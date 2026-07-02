@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent, MouseEvent, ReactNode, WheelEvent } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { NormalizedTemplateSleeve } from '../lib/umg/templateSleeveStructures';
 import type { HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeArtifact, UMGRuntimeVisualState, UMGTraceEvent } from '../lib/umg/cognitiveRuntimeTypes';
 import type { PendingRuntimeApproval, ToolCapabilityResolution } from '../lib/umg/toolCapabilityResolver';
@@ -567,6 +567,70 @@ export type LatticeBoardLayout = {
   boardHeight: number;
 };
 
+export type RuntimeHierarchyTargetView = 'Sleeve Overview' | 'View NeoStack' | 'View NeoBlock' | 'Runtime Path';
+export type LibraryInsertionContext = {
+  targetView: RuntimeHierarchyTargetView;
+  targetSlotId: string;
+  targetObjectType: 'neostack' | 'neoblock' | 'molt_block' | 'runtime_route';
+  rowId?: string;
+  rowLabel?: string;
+  overlayId?: string;
+  allowedBlockTypes: string[];
+  preferredMoltRoles: string[];
+  parentNeoStackId?: string;
+  parentNeoBlockId?: string;
+  slotState: string;
+};
+
+const MOLT_ROLE_ORDER = ['trigger', 'gate', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint', 'tool', 'capability'] as const;
+export type RuntimeMoltRole = typeof MOLT_ROLE_ORDER[number];
+export type RuntimeSlotActionFlow = 'none' | 'library' | 'neostack-draft' | 'neoblock-builder' | 'molt-creator' | 'runtime-route';
+export type SelectedRuntimeSlotAction = {
+  targetView: RuntimeHierarchyTargetView;
+  slotId: string;
+  slot: LatticeGridSlot;
+  preferredMoltRoles: string[];
+  flow: RuntimeSlotActionFlow;
+};
+const MOLT_REQUIRED_ROLES: RuntimeMoltRole[] = ['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+const MOLT_OPTIONAL_ROLES: RuntimeMoltRole[] = ['trigger', 'gate', 'tool', 'capability'];
+const MOLT_ROLE_LABELS: Record<RuntimeMoltRole, string> = { trigger: 'Trigger', gate: 'Gate', directive: 'Directive', instruction: 'Instruction', subject: 'Subject', primary: 'Primary', philosophy: 'Philosophy', blueprint: 'Blueprint', tool: 'Tool', capability: 'Capability' };
+
+export function createLibraryInsertionContext(args: {
+  targetView: RuntimeHierarchyTargetView;
+  slot: Pick<LatticeGridSlot, 'rowId' | 'rowLabel' | 'columnIndex' | 'slotState'>;
+  parentNeoStackId?: string;
+  parentNeoBlockId?: string;
+  preferredMoltRoles?: string[];
+}): LibraryInsertionContext {
+  const targetObjectType = args.targetView === 'Sleeve Overview' ? 'neostack' : args.targetView === 'View NeoStack' ? 'neoblock' : args.targetView === 'View NeoBlock' ? 'molt_block' : 'runtime_route';
+  return {
+    targetView: args.targetView,
+    targetSlotId: `${args.slot.rowId}:${args.slot.columnIndex}`,
+    targetObjectType,
+    rowId: args.slot.rowId,
+    rowLabel: args.slot.rowLabel,
+    allowedBlockTypes: targetObjectType === 'neostack' ? ['neostack'] : targetObjectType === 'neoblock' ? ['neoblock'] : targetObjectType === 'molt_block' ? ['molt_block'] : ['neoblock'],
+    preferredMoltRoles: args.preferredMoltRoles ?? [],
+    parentNeoStackId: args.parentNeoStackId,
+    parentNeoBlockId: args.parentNeoBlockId,
+    slotState: args.slot.slotState
+  };
+}
+
+export function hasExplicitDependencyMetadata(edge: RuntimeVisualEdge | RuntimeGeometryEdge | { kind?: string; traceEventIds?: string[]; metadata?: Record<string, unknown>; explicit?: boolean; }): boolean {
+  const edgeMetadata = edge as { kind?: string; traceEventIds?: string[]; metadata?: Record<string, unknown>; explicit?: boolean; };
+  if (edgeMetadata.explicit === true) return true;
+  if (Array.isArray(edgeMetadata.traceEventIds) && edgeMetadata.traceEventIds.length > 0) return true;
+  if (edgeMetadata.metadata?.explicitDependency === true || edgeMetadata.metadata?.dependencyType === 'explicit') return true;
+  return edgeMetadata.kind === 'routes' || edgeMetadata.kind === 'uses' || edgeMetadata.kind === 'guards';
+}
+
+export function filterDisplayEdges(edges: RuntimeVisualEdge[], showExplicitEdges: boolean): RuntimeVisualEdge[] {
+  if (!showExplicitEdges) return [];
+  return edges.filter((edge) => hasExplicitDependencyMetadata(edge));
+}
+
 const DEFAULT_LATTICE_ROW_CAPACITY: Record<string, number> = {
   controller: 2,
   intent: 4,
@@ -1065,6 +1129,7 @@ export function RuntimeGeometryObserver({
   const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
   const [isGraphDragging, setIsGraphDragging] = useState(false);
   const graphDragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const graphSurfaceRef = useRef<HTMLElement | null>(null);
 
   const model = useMemo(() => buildRuntimeVisualViewModel({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
   const graph = useMemo(() => buildRuntimeGeometryObserverGraph({ activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, mode: viewMode === 'runtime_path' ? 'runtime' : 'structure' }), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest, hermesRuntimeVisualState, hermesRuntimeResult, viewMode]);
@@ -1121,33 +1186,38 @@ export function RuntimeGeometryObserver({
   const summary = useMemo(() => {
     try { return summarizeGeometryManifest(geometryManifest ?? buildRuntimeGeometryManifest({ templateSleeve: activeSessionSleeve, compiledRuntimeManifest })); } catch { return undefined; }
   }, [activeSessionSleeve, compiledRuntimeManifest, geometryManifest]);
-  const firstStack = model.neoStacks[0];
-  const firstBlock = model.neoBlocks[0];
-  const [selectedStackId, setSelectedStackId] = useState<string | undefined>();
-  const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
-  const selectedStack = model.neoStacks.find((node) => node.id === selectedStackId) ?? firstStack;
-  const selectedBlock = model.neoBlocks.find((node) => node.id === selectedNodeId) ?? model.neoBlocks.find((node) => node.parentId === selectedStack?.id) ?? firstBlock;
+  const [selectedNeoStackId, setSelectedNeoStackId] = useState<string | undefined>();
+  const [selectedNeoBlockId, setSelectedNeoBlockId] = useState<string | undefined>();
+  const [selectedMoltBlockId, setSelectedMoltBlockId] = useState<string | undefined>();
+  const [lastLibraryInsertionContext, setLastLibraryInsertionContext] = useState<LibraryInsertionContext | undefined>();
+  const [selectedSlotAction, setSelectedSlotAction] = useState<SelectedRuntimeSlotAction | undefined>();
+  const [showExplicitEdges, setShowExplicitEdges] = useState(false);
+  const selectedNeoStack = model.neoStacks.find((node) => node.id === selectedNeoStackId);
+  const selectedNeoBlock = model.neoBlocks.find((node) => node.id === selectedNeoBlockId);
   const sleeveNode = model.nodes.find((node) => node.kind === 'sleeve');
-  const selectedVisualNode = model.nodes.find((node) => node.id === selectedNodeId) ?? (viewMode === 'neostack' ? selectedStack : selectedBlock) ?? selectedStack ?? sleeveNode;
+  const selectedMoltBlock = model.nodes.find((node) => node.id === selectedMoltBlockId);
+  const selectedVisualNode = selectedMoltBlock ?? selectedNeoBlock ?? selectedNeoStack ?? sleeveNode;
   const selectedGeometryNode = selectedVisualNode?.rawNode;
   const selectVisualNode = (node: RuntimeVisualNode) => {
-    setSelectedNodeId(node.id);
-    if (node.kind === 'neostack') setSelectedStackId(node.id);
-    if (node.kind === 'neoblock' && node.parentId) setSelectedStackId(node.parentId);
+    if (node.kind === 'neostack') setSelectedNeoStackId(node.id);
+    if (node.kind === 'neoblock') { setSelectedNeoBlockId(node.id); if (node.parentId) setSelectedNeoStackId(node.parentId); }
+    if (node.kind === 'molt_layer') { setSelectedMoltBlockId(node.id); if (node.neoBlockId) setSelectedNeoBlockId(`neoblock:${node.neoBlockId}`); }
   };
   const selectStack = (node: RuntimeVisualNode) => {
-    setSelectedStackId(node.id);
-    setSelectedNodeId(node.id);
+    setSelectedNeoStackId(node.id);
+    setSelectedNeoBlockId(undefined);
+    setSelectedMoltBlockId(undefined);
   };
   const selectBlock = (node: RuntimeVisualNode) => {
-    setSelectedNodeId(node.id);
-    if (node.parentId) setSelectedStackId(node.parentId);
+    setSelectedNeoBlockId(node.id);
+    setSelectedMoltBlockId(undefined);
+    if (node.parentId) setSelectedNeoStackId(node.parentId);
   };
-  const childBlocksForStack = (stackId?: string) => model.neoBlocks.filter((block) => block.parentId === stackId);
+  const childBlocksForStack = (stackId?: string) => stackId ? model.neoBlocks.filter((block) => block.parentId === stackId) : [];
   const centeredStackOrder = useMemo(() => buildRuntimeCognitiveTopology(model.neoStacks, model.edges), [model.neoStacks, model.edges]);
   const overlayRows = useMemo(() => latticeRowDefinitionsFromManifest(geometryManifest ?? buildRuntimeGeometryManifest({ templateSleeve: activeSessionSleeve, compiledRuntimeManifest })), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest]);
   const sleeveStackBoard = useMemo(() => buildLatticeBoardLayout({ nodes: centeredStackOrder, rows: overlayRows, viewKind: 'neostack' }), [centeredStackOrder, overlayRows]);
-  const neoBlockBoard = useMemo(() => buildLatticeBoardLayout({ nodes: model.neoBlocks, rows: overlayRows, viewKind: 'neoblock' }), [model.neoBlocks, overlayRows]);
+  const selectedNeoStackBlockBoard = useMemo(() => buildLatticeBoardLayout({ nodes: childBlocksForStack(selectedNeoStack?.id), rows: overlayRows, viewKind: 'neoblock' }), [model.neoBlocks, overlayRows, selectedNeoStack?.id]);
   const runtimePathBoard = useMemo(() => buildLatticeBoardLayout({ nodes: model.pathNodes, rows: overlayRows, viewKind: 'runtime_path' }), [model.pathNodes, overlayRows]);
   const tieredBlocksForStack = (stackId?: string) => childBlocksForStack(stackId).reduce((tiers, block) => {
     tiers[tierScore(`${block.label} ${block.id}`)].push(block);
@@ -1157,10 +1227,34 @@ export function RuntimeGeometryObserver({
   const foundationItems = [...model.resources, ...model.contexts];
   const sourceBoundLayerCount = (block: RuntimeVisualNode) => layersForBlock(block).filter((layer) => layer.sourceStatus === 'source-library-reused' || Boolean(layer.metadata?.matchedCandidateId)).length;
   const sourceBoundLayerCountForStack = (stackId?: string) => childBlocksForStack(stackId).reduce((total, block) => total + sourceBoundLayerCount(block), 0);
-  const graphViewportStyle = { transform: `translate(${graphPan.x}px, ${graphPan.y}px) scale(${graphScale})`, transformOrigin: 'center center' };
-  const fitGraph = () => { setGraphScale(0.9); setGraphPan({ x: 0, y: 0 }); };
-  const resetGraph = () => { setGraphScale(1); setGraphPan({ x: 0, y: 0 }); };
-  const zoomGraph = (delta: number) => setGraphScale((current) => Math.min(1.4, Math.max(0.7, Number((current + delta).toFixed(2)))));
+  const visibleEdges = useMemo(() => filterDisplayEdges(model.edges, showExplicitEdges), [model.edges, showExplicitEdges]);
+  const currentBoard = viewMode === 'system_sleeve' ? sleeveStackBoard : viewMode === 'neostack' ? selectedNeoStackBlockBoard : viewMode === 'runtime_path' ? runtimePathBoard : undefined;
+  const centerCameraForBoard = (board?: LatticeBoardLayout, scale = graphScale) => {
+    const viewportWidth = 980;
+    const viewportHeight = 620;
+    if (!board) {
+      setGraphPan({ x: 0, y: 0 });
+      return;
+    }
+    setGraphPan({
+      x: Math.round((viewportWidth - board.boardWidth * scale) / 2),
+      y: Math.round((viewportHeight - board.boardHeight * scale) / 2)
+    });
+  };
+  const graphViewportStyle = { transform: `translate(${graphPan.x}px, ${graphPan.y}px) scale(${graphScale})`, transformOrigin: '0 0' };
+  const fitGraph = () => { setGraphScale(0.9); centerCameraForBoard(currentBoard, 0.9); };
+  const resetGraph = () => { setGraphScale(1); centerCameraForBoard(currentBoard, 1); };
+  const zoomGraph = (delta: number, focus?: { x: number; y: number }) => {
+    setGraphScale((current) => {
+      const next = Math.min(1.6, Math.max(0.55, Number((current + delta).toFixed(2))));
+      if (focus) {
+        const worldX = (focus.x - graphPan.x) / current;
+        const worldY = (focus.y - graphPan.y) / current;
+        setGraphPan({ x: Math.round(focus.x - worldX * next), y: Math.round(focus.y - worldY * next) });
+      }
+      return next;
+    });
+  };
   const startGraphPan = (event: MouseEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     const target = event.target as HTMLElement;
@@ -1174,10 +1268,27 @@ export function RuntimeGeometryObserver({
     setGraphPan({ x: start.panX + event.clientX - start.x, y: start.panY + event.clientY - start.y });
   };
   const stopGraphPan = () => setIsGraphDragging(false);
-  const handleGraphWheel = (event: WheelEvent<HTMLElement>) => {
+  const handleNativeGraphWheel = (event: globalThis.WheelEvent) => {
     event.preventDefault();
-    zoomGraph(event.deltaY < 0 ? 0.08 : -0.08);
+    event.stopPropagation();
+    const rect = graphSurfaceRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    zoomGraph(event.deltaY < 0 ? 0.08 : -0.08, { x: event.clientX - rect.left, y: event.clientY - rect.top });
   };
+  useEffect(() => {
+    const surface = graphSurfaceRef.current;
+    if (!surface) return undefined;
+    surface.addEventListener('wheel', handleNativeGraphWheel, { passive: false });
+    return () => surface.removeEventListener('wheel', handleNativeGraphWheel);
+  }, [graphPan.x, graphPan.y]);
+  const switchView = (nextMode: RuntimeVisualViewMode) => {
+    setViewMode(nextMode);
+    setSelectedSlotAction(undefined);
+  };
+  useEffect(() => {
+    setGraphScale(1);
+    centerCameraForBoard(currentBoard, 1);
+  }, [viewMode, selectedNeoStack?.id, selectedNeoBlock?.id, currentBoard?.boardWidth, currentBoard?.boardHeight]);
 
   const topologyRows = (nodes: RuntimeVisualNode[]) => Array.from(nodes.reduce((rows, node) => {
     const row = node.layout?.y ?? 0;
@@ -1197,73 +1308,141 @@ export function RuntimeGeometryObserver({
 
   const renderCompactEdge = (edge?: RuntimeVisualEdge, extra = '') => <div className={`runtime-map-edge runtime-map-edge--${edge?.status ?? 'idle'} ${edge?.traceEventIds?.length ? 'runtime-map-edge--glow' : ''} ${extra}`} aria-label="runtime connector" />;
 
-  const renderEmptyLatticeSlot = (slot: LatticeGridSlot) => <div key={`${slot.rowId}-empty-${slot.columnIndex}`} className="runtime-lattice-slot runtime-lattice-slot--empty runtime-map-card" style={{ width: slot.width, height: slot.height }}>
-    <b>Empty slot</b>
-    <small>{slot.rowLabel}</small>
-    <span>available / unfilled</span>
-    <em>no block bound yet</em>
-  </div>;
+  const buildSlotContext = (targetView: RuntimeHierarchyTargetView, slot: LatticeGridSlot, preferredMoltRoles: string[] = []) => createLibraryInsertionContext({ targetView, slot, parentNeoStackId: selectedNeoStack?.id, parentNeoBlockId: selectedNeoBlock?.id, preferredMoltRoles });
+  const activateSlotFlow = (targetView: RuntimeHierarchyTargetView, slot: LatticeGridSlot, preferredMoltRoles: string[], flow: RuntimeSlotActionFlow) => {
+    const context = buildSlotContext(targetView, slot, preferredMoltRoles);
+    setLastLibraryInsertionContext(context);
+    setSelectedSlotAction({ targetView, slotId: context.targetSlotId, slot, preferredMoltRoles, flow });
+    setRightRailOpen(true);
+  };
+  const renderSlotActions = (targetView: RuntimeHierarchyTargetView, slot: LatticeGridSlot, preferredMoltRoles: string[] = []) => {
+    const addLabel = targetView === 'Sleeve Overview' ? 'Add NeoStack here' : targetView === 'View NeoStack' ? 'Add NeoBlock here' : targetView === 'View NeoBlock' ? 'Add MOLT Block here' : 'Inspect route';
+    const libraryLabel = targetView === 'Sleeve Overview' ? 'Add existing NeoStack from Library' : targetView === 'View NeoStack' ? 'Add existing NeoBlock from Library' : targetView === 'View NeoBlock' ? 'Add existing MOLT Block from Library' : 'Create missing/draft block if route reports missing block';
+    const draftLabel = targetView === 'Sleeve Overview' ? 'Draft NeoStack with Hermes' : targetView === 'View NeoStack' ? 'Draft NeoBlock with Hermes' : targetView === 'View NeoBlock' ? 'Draft MOLT Block with Hermes' : 'No normal structural mutation by default';
+    const primaryFlow: RuntimeSlotActionFlow = targetView === 'Sleeve Overview' ? 'neostack-draft' : targetView === 'View NeoStack' ? 'neoblock-builder' : targetView === 'View NeoBlock' ? 'molt-creator' : 'runtime-route';
+    const draftFlow: RuntimeSlotActionFlow = targetView === 'Sleeve Overview' ? 'neostack-draft' : targetView === 'View NeoStack' ? 'neoblock-builder' : targetView === 'View NeoBlock' ? 'molt-creator' : 'runtime-route';
+    return <div className="runtime-slot-actions" aria-label={`${targetView} empty slot actions`}>
+      <button type="button" onClick={(event) => { event.stopPropagation(); activateSlotFlow(targetView, slot, preferredMoltRoles, primaryFlow); }}>{addLabel}</button>
+      <button type="button" onClick={(event) => { event.stopPropagation(); activateSlotFlow(targetView, slot, preferredMoltRoles, 'library'); }}>{libraryLabel}</button>
+      <button type="button" onClick={(event) => { event.stopPropagation(); activateSlotFlow(targetView, slot, preferredMoltRoles, draftFlow); }}>{draftLabel}</button>
+      <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedSlotAction(undefined); }}>Cancel</button>
+    </div>;
+  };
 
-  const renderLatticeBoard = (board: LatticeBoardLayout, ariaLabel: string, renderSlotNode: (slot: LatticeGridSlot) => ReactNode) => <div className="runtime-lattice-board" aria-label={ariaLabel} style={{ width: board.boardWidth, minHeight: board.boardHeight }}>
+  const renderSlotActionPanel = () => {
+    if (!selectedSlotAction || !lastLibraryInsertionContext) return null;
+    const { flow, targetView, slot, preferredMoltRoles } = selectedSlotAction;
+    const contextJson = JSON.stringify(lastLibraryInsertionContext, null, 2);
+    const roleCoverage = MOLT_REQUIRED_ROLES.map((role) => ({ role, status: layersForBlock(selectedNeoBlock).some((layer) => roleForMoltLayer(layer) === role) ? 'covered' : 'missing' }));
+    return <aside className="runtime-slot-action-panel" aria-label="Slot action panel">
+      <header><h3>Slot action panel</h3><small>{targetView} · {slot.rowLabel} · slot {slot.columnIndex}</small></header>
+      {flow === 'library' && <section aria-label="Block Library insertion context"><h4>Block Library</h4><p>LibraryInsertionContext created. Filter: {lastLibraryInsertionContext.allowedBlockTypes.join(', ')}{preferredMoltRoles.length ? ` · role ${preferredMoltRoles.join(', ')}` : ''}</p><pre>{contextJson}</pre></section>}
+      {flow === 'neostack-draft' && <section aria-label="NeoStack draft/create panel"><h4>NeoStack draft/create panel</h4><label>title<input readOnly value="Workspace draft NeoStack" /></label><label>purpose<textarea readOnly value="Define the workflow/domain lane for this slot." /></label><label>domain/tags<input readOnly value={slot.rowLabel} /></label><label>overlay row<input readOnly value={slot.rowLabel} /></label><label>lattice slot<input readOnly value={String(slot.columnIndex)} /></label><label>allowed NeoBlock types<input readOnly value="runtime-session NeoBlocks" /></label><label>optional controller behavior<input readOnly value="review-required" /></label><button type="button">Save workspace-draft NeoStack for review</button><small>Result: workspace-draft NeoStack; no source-library mutation; bound only after user confirms.</small></section>}
+      {flow === 'neoblock-builder' && <section aria-label="NeoBlock Builder"><h4>NeoBlock Builder</h4><label>title<input readOnly value="Workspace draft NeoBlock" /></label><label>purpose<textarea readOnly value="Compose function from MOLT role slots." /></label><label>parent NeoStack<input readOnly value={selectedNeoStack?.label ?? lastLibraryInsertionContext.parentNeoStackId ?? 'select parent NeoStack'} /></label><label>overlay row<input readOnly value={slot.rowLabel} /></label><label>lattice slot<input readOnly value={String(slot.columnIndex)} /></label><div aria-label="MOLT role coverage status"><b>role coverage status</b>{roleCoverage.map((entry) => <span key={entry.role}>{MOLT_ROLE_LABELS[entry.role]}: {entry.status}</span>)}</div><div className="runtime-neoblock-builder-role-actions">{MOLT_ROLE_ORDER.map((role) => <article key={role}><b>{MOLT_ROLE_LABELS[role]}{MOLT_OPTIONAL_ROLES.includes(role) ? ' optional' : ''}</b><button type="button" onClick={() => activateSlotFlow('View NeoBlock', { ...slot, rowId: `molt-${role}`, rowLabel: MOLT_ROLE_LABELS[role], columnIndex: 0, slotState: 'empty' }, [role], 'library')}>Add from MOLT Library</button><button type="button" onClick={() => activateSlotFlow('View NeoBlock', { ...slot, rowId: `molt-${role}`, rowLabel: MOLT_ROLE_LABELS[role], columnIndex: 0, slotState: 'empty' }, [role], 'molt-creator')}>Draft new MOLT Block</button><button type="button" onClick={() => activateSlotFlow('View NeoBlock', { ...slot, rowId: `molt-${role}`, rowLabel: MOLT_ROLE_LABELS[role], columnIndex: 0, slotState: 'empty' }, [role], 'molt-creator')}>Generate from prompt</button><button type="button">Leave missing for now</button></article>)}</div><small>Result: workspace-draft NeoBlock; composed from selected/drafted MOLT Blocks; validation shows missing roles; no source-library mutation.</small></section>}
+      {flow === 'molt-creator' && <section aria-label="MOLT Block Creator"><h4>MOLT Block Creator</h4><label>role<input readOnly value={preferredMoltRoles[0] ?? 'select role'} /></label><label>title<input readOnly value="Workspace draft MOLT Block" /></label><label>NL card content<textarea readOnly value="Natural-language card content goes here." /></label><label>JSON/schema metadata<textarea readOnly value='{ "sourceKind": "workspace-draft" }' /></label><label>tags<input readOnly value="workspace-draft, review-required" /></label><label>domain<input readOnly value={slot.rowLabel} /></label><label>parent NeoBlock target<input readOnly value={selectedNeoBlock?.label ?? lastLibraryInsertionContext.parentNeoBlockId ?? 'select parent NeoBlock'} /></label><label>sourceKind<input readOnly value="workspace-draft" /></label><label>validation status<input readOnly value="review-required" /></label><button type="button">Save workspace-draft MOLT Block for review</button><small>Can be bound into selected NeoBlock after review; no source-library mutation.</small></section>}
+      {flow === 'runtime-route' && <section aria-label="Runtime route slot actions"><h4>Runtime route slot actions</h4><button type="button">Inspect route</button><button type="button">Create missing/draft block if route reports missing block</button><small>No normal structural mutation by default.</small></section>}
+    </aside>;
+  };
+
+  const renderEmptyLatticeSlot = (slot: LatticeGridSlot, targetView: RuntimeHierarchyTargetView, preferredMoltRoles: string[] = []) => {
+    const context = buildSlotContext(targetView, slot, preferredMoltRoles);
+    const selected = selectedSlotAction?.slotId === context.targetSlotId && selectedSlotAction.targetView === targetView;
+    return <div key={`${targetView}-${slot.rowId}-empty-${slot.columnIndex}`} className={`runtime-lattice-slot runtime-lattice-slot--empty runtime-map-card ${selected ? 'runtime-lattice-slot--selected-empty' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => { setSelectedSlotAction({ targetView, slotId: context.targetSlotId, slot, preferredMoltRoles, flow: 'none' }); setLastLibraryInsertionContext(context); setRightRailOpen(true); }} role="button" tabIndex={0} aria-label={`${targetView} empty slot ${slot.rowLabel}`}>
+      <b>Empty slot</b>
+      <small>{slot.rowLabel}</small>
+      <span>available / unfilled</span>
+      {selected && renderSlotActions(targetView, slot, preferredMoltRoles)}
+    </div>;
+  };
+
+  const renderLatticeBoard = (board: LatticeBoardLayout, ariaLabel: string, renderSlotNode: (slot: LatticeGridSlot) => ReactNode, targetView: RuntimeHierarchyTargetView) => <div className="runtime-lattice-board" aria-label={ariaLabel} style={{ width: board.boardWidth, minHeight: board.boardHeight }}>
     {board.rows.map((row) => <section key={row.rowId} className="runtime-lattice-row" style={{ minHeight: board.cellHeight }} aria-label={`Row ${row.rowIndex}: ${row.rowLabel}`}>
       <header className="runtime-overlay-row-label"><b>Row {row.rowIndex}</b><span>{row.rowLabel}</span></header>
       <div className="runtime-lattice-row-slots" style={{ gridTemplateColumns: `repeat(${row.capacity}, ${board.cellWidth}px)`, gap: `${board.columnGap}px` }}>
-        {row.slots.map((slot) => slot.node ? renderSlotNode(slot) : renderEmptyLatticeSlot(slot))}
+        {row.slots.map((slot) => slot.node ? renderSlotNode(slot) : renderEmptyLatticeSlot(slot, targetView))}
       </div>
     </section>)}
   </div>;
 
   const renderNeoStackSlot = (slot: LatticeGridSlot) => {
     const stack = slot.node;
-    if (!stack) return renderEmptyLatticeSlot(slot);
-    return <button key={stack.id} type="button" title={stack.label} className={`runtime-node runtime-compact-node runtime-stack-node runtime-node--${stack.status} runtime-stack-title runtime-lattice-slot runtime-lattice-card runtime-lattice-slot--${slot.slotState} ${selectedStack?.id === stack.id ? 'runtime-node--selected' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => selectStack(stack)}>
+    if (!stack) return renderEmptyLatticeSlot(slot, 'Sleeve Overview');
+    return <button key={stack.id} type="button" title={stack.label} className={`runtime-node runtime-compact-node runtime-stack-node runtime-node--${stack.status} runtime-stack-title runtime-lattice-slot runtime-lattice-card runtime-lattice-slot--${slot.slotState} ${selectedNeoStack?.id === stack.id ? 'runtime-node--selected' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => selectStack(stack)}>
       <span className="runtime-node-icon">▦</span><b>{stack.shortLabel ?? shortRuntimeLabel(stack.label)}</b><small>Row: {slot.rowLabel}</small><span className="runtime-node-chip-row"><i>NeoStack</i><i>{childBlocksForStack(stack.id).length} NeoBlocks</i><i>{sourceBoundLayerCountForStack(stack.id)} source-bound</i><i>{stack.status}</i></span>
     </button>;
   };
 
   const renderNeoBlockSlot = (slot: LatticeGridSlot) => {
     const block = slot.node;
-    if (!block) return renderEmptyLatticeSlot(slot);
+    if (!block) return renderEmptyLatticeSlot(slot, viewMode === 'runtime_path' ? 'Runtime Path' : 'View NeoStack');
     const parentStack = model.neoStacks.find((stack) => stack.id === block.parentId);
     const overlay = isRecord(block.metadata?.overlay) ? block.metadata.overlay : undefined;
-    return <button key={block.id} type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} ${overlay ? `runtime-map-card--${String(overlay.activationState)}` : ''} runtime-neoblock-module runtime-lattice-slot runtime-lattice-card runtime-lattice-slot--${slot.slotState} ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => selectBlock(block)}>
+    return <button key={block.id} type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} ${overlay ? `runtime-map-card--${String(overlay.activationState)}` : ''} runtime-neoblock-module runtime-lattice-slot runtime-lattice-card runtime-lattice-slot--${slot.slotState} ${selectedNeoBlock?.id === block.id ? 'runtime-node--selected' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => selectBlock(block)}>
       <span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {parentStack?.shortLabel ?? parentStack?.label ?? block.parentId ?? 'unknown'}</small><span className="runtime-node-chip-row"><i>NeoBlock</i><i>{layersForBlock(block).length} MOLT Blocks</i><i>{String(overlay?.activationState ?? block.status)}</i><i>{String(block.sourceStatus ?? 'runtime-draft')}</i><i>{String(overlay?.rowLabel ?? slot.rowLabel)}</i></span>
     </button>;
+  };
+
+  const roleForMoltLayer = (layer: RuntimeVisualNode): RuntimeMoltRole | undefined => {
+    const raw = String(layer.metadata?.role ?? layer.metadata?.localSlotRole ?? layer.rawNode?.subtitle ?? layer.shortLabel ?? '').toLowerCase();
+    if (raw === 'metatool' || raw === 'meta' || raw === 'other') return 'tool';
+    return MOLT_ROLE_ORDER.find((role) => role === raw || raw.includes(role));
+  };
+  const renderMoltRoleStack = (block: RuntimeVisualNode) => {
+    const layersByRole = new Map<RuntimeMoltRole, RuntimeVisualNode>();
+    layersForBlock(block).forEach((layer) => { const role = roleForMoltLayer(layer); if (role && !layersByRole.has(role)) layersByRole.set(role, layer); });
+    return <section className="runtime-molt-role-stack" aria-label="Vertical MOLT role stack">
+      {MOLT_ROLE_ORDER.map((role, index) => {
+        const layer = layersByRole.get(role);
+        const slot: LatticeGridSlot = { rowId: `molt-${role}`, rowLabel: MOLT_ROLE_LABELS[role], rowIndex: index, columnIndex: 0, x: 0, y: index, width: 320, height: 84, slotState: layer ? 'filled' : 'empty', nodeId: layer?.id, node: layer, evidence: [] };
+        return <article key={role} className={`runtime-molt-role-slot molt-role--${role} ${layer ? 'runtime-molt-role-slot--bound' : 'runtime-molt-role-slot--missing'}`}>
+          <header><b>{MOLT_ROLE_LABELS[role]}</b><small>{layer ? 'bound MOLT Block' : `Missing ${MOLT_ROLE_LABELS[role]}`}</small></header>
+          {layer ? <button type="button" className="runtime-molt-role-card" onClick={() => { setSelectedMoltBlockId(layer.id); selectVisualNode(layer); }}><span>{layer.label}</span><small>{String(layer.sourceStatus ?? layer.metadata?.sourceKind ?? 'runtime-draft')}</small><em>{String(layer.metadata?.reviewState ?? layer.metadata?.draftState ?? 'review state n/a')}</em></button> : <div className="runtime-molt-role-placeholder"><span>{`Missing ${MOLT_ROLE_LABELS[role]}`}</span>{renderEmptyLatticeSlot(slot, 'View NeoBlock', [role])}</div>}
+        </article>;
+      })}
+    </section>;
   };
 
   const renderSystemSleeveView = () => <div className="runtime-system-sleeve-view" style={graphViewportStyle}>
     <section className="runtime-sleeve-package">
       <div className="runtime-sleeve-banner">
         <span className="runtime-sleeve-icon">⬢</span>
-        <div><h2>Sleeve Overview</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} NeoStacks · {model.neoBlocks.length} NeoBlocks · {summary ? `${summary.totalMoltBindings} MOLT Blocks · ${summary.totalGates} Gates · ${summary.totalToolEndpoints} Tool Blocks · ${model.capabilities.length} Capabilities` : 'manifest pending'}</small></div>
+        <div><h2>Sleeve Overview</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} NeoStacks · {model.neoBlocks.length} NeoBlocks total · static architecture view</small></div>
       </div>
+      <p>How is the whole Sleeve structured?</p>
       <div className="runtime-neostack-clusters runtime-map-centered">
-        {renderLatticeBoard(sleeveStackBoard, 'Sleeve Overview fixed overlay lattice slots', renderNeoStackSlot)}
+        {renderLatticeBoard(sleeveStackBoard, 'Sleeve Overview fixed overlay lattice slots', renderNeoStackSlot, 'Sleeve Overview')}
       </div>
-      <small>Sleeve Overview answers what major work stacks are inside the Sleeve. Diagnostics stay in the drawers/rails, not the graph canvas.</small>
+      {selectedNeoStack && <button type="button" onClick={() => switchView('neostack')}>Open View NeoStack</button>}
+      <small>Sleeve Overview renders NeoStack cards only. NeoBlocks and MOLT Blocks stay out of the main cards except counts.</small>
     </section>
   </div>;
 
   const renderNeoStackView = () => <div className="runtime-neostack-view runtime-map-centered" style={graphViewportStyle}>
-    <h2>NeoStack Map</h2>
-    <small>NeoStack Map uses a fixed overlay lattice board. Inferred placement is layout-only and does not create dependency edges.</small>
-    {renderLatticeBoard(sleeveStackBoard, 'NeoStack-only runtime graph', renderNeoStackSlot)}
-    {selectedStack && <div className="runtime-selected-stack-summary"><b>{selectedStack.label}</b><small>{childBlocksForStack(selectedStack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(selectedStack.id)} source-bound MOLT Blocks · status {selectedStack.status}</small></div>}
+    <h2>View NeoStack</h2>
+    {!selectedNeoStack && <div className="runtime-geometry-empty-selection">Select a NeoStack from Sleeve Overview.</div>}
+    {selectedNeoStack && <>
+      <small>What functional NeoBlocks are inside this NeoStack?</small>
+      <div className="runtime-selected-stack-summary"><b>{selectedNeoStack.label}</b><small>{childBlocksForStack(selectedNeoStack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(selectedNeoStack.id)} source-bound MOLT Blocks · status {selectedNeoStack.status}</small></div>
+      {renderLatticeBoard(selectedNeoStackBlockBoard, 'Selected NeoStack NeoBlocks by fixed overlay lattice slots', renderNeoBlockSlot, 'View NeoStack')}
+      {selectedNeoBlock && <button type="button" onClick={() => switchView('neoblock')}>Open View NeoBlock</button>}
+    </>}
   </div>;
 
   const renderNeoBlockView = () => <div className="runtime-neoblock-view runtime-map-centered" style={graphViewportStyle}>
-    <h2>NeoBlock Map</h2>
-    <small>Structural route of all NeoBlocks across all NeoStacks. Runtime trace is not required.</small>
-    <small>NeoBlocks are assigned to fixed overlay lattice slots; empty slots stay faint and graph edges remain real only.</small>
-    {renderLatticeBoard(neoBlockBoard, 'All NeoBlocks by fixed overlay lattice slots', renderNeoBlockSlot)}
-    <small>MOLT details are intentionally compressed into the right inspector and bottom drawer; they are not graph cards in NeoBlock Map.</small>
+    <h2>View NeoBlock</h2>
+    {!selectedNeoBlock && <div className="runtime-geometry-empty-selection">Select a NeoBlock from View NeoStack or Runtime Path.</div>}
+    {selectedNeoBlock && <>
+      <small>What MOLT Blocks compose this NeoBlock?</small>
+      <div className="runtime-selected-stack-summary"><b>{selectedNeoBlock.label}</b><small>{layersForBlock(selectedNeoBlock).length} bound MOLT Blocks · vertical role stack · parent {selectedNeoBlock.parentId ?? 'unknown'}</small></div>
+      {renderMoltRoleStack(selectedNeoBlock)}
+    </>}
   </div>;
 
   const renderRuntimePathView = () => <div className="runtime-path-view runtime-map-centered" style={graphViewportStyle}>
-    <h2>Runtime Path View</h2>
-    {traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace yet. Send a task to Hermes to activate the route.</div>}
-    {traceEvents.length === 0 && <small>Planned route in lattice slots / no trace yet.</small>}
-    {renderLatticeBoard(runtimePathBoard, 'Planned runtime route by fixed overlay lattice slots', renderNeoBlockSlot)}
+    <h2>Runtime Path</h2>
+    {traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace yet. Showing planned route preview across all NeoBlocks. Send a Hermes prompt to activate the sleeve.</div>}
+    {traceEvents.length === 0 && <small>No runtime trace yet. Showing planned route preview.</small>}
+    {renderLatticeBoard(runtimePathBoard, traceEvents.length ? 'Runtime route by fixed overlay lattice slots' : 'Planned runtime route by fixed overlay lattice slots', renderNeoBlockSlot, 'Runtime Path')}
   </div>;
 
   const drawerPayload = selectedVisualNode ? { id: selectedVisualNode.id, kind: selectedVisualNode.kind, label: selectedVisualNode.label, status: selectedVisualNode.status, sourceStatus: selectedVisualNode.sourceStatus, metadata: selectedVisualNode.metadata } : { sleeve: activeSessionSleeve.title };
@@ -1273,8 +1452,8 @@ export function RuntimeGeometryObserver({
     ? layersForBlock(selectedVisualNode)
     : selectedVisualNode?.kind === 'neostack'
       ? childBlocksForStack(selectedVisualNode.id).flatMap((block) => layersForBlock(block))
-      : selectedBlock
-        ? layersForBlock(selectedBlock)
+      : selectedNeoBlock
+        ? layersForBlock(selectedNeoBlock)
         : [];
   const runtimeWorkLogRows = buildWorkLogRows({ endpoint: toText(hermesRuntimeResult?.raw && isRecord(hermesRuntimeResult.raw) ? hermesRuntimeResult.raw.endpoint : undefined), mode: selectedNativeActionMode, runtimeState: runtimeExecutionState, routeLabel: routeStatusLabel(runtimeExecutionState, traceEvents.length), traceEvents, result: hermesRuntimeResult, status: runtimeStatus, errors: hermesRuntimeErrors });
   const missingCapability = inferMissingCapability({ result: hermesRuntimeResult, prompt: runtimePrompt || [...runtimeChatMessages].reverse().find((message) => message.role === 'user')?.content || '', mode: selectedNativeActionMode, compiledRuntimeManifest });
@@ -1345,20 +1524,20 @@ export function RuntimeGeometryObserver({
 
     <div className="runtime-geometry-controls runtime-view-tabs">
       <button type="button" onClick={onBackToBuilder}>Back to Sleeve Builder</button>
-      {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => setViewMode(tab)}>{tab === 'system_sleeve' ? 'Sleeve Overview' : tab === 'neostack' ? 'NeoStack Map' : tab === 'neoblock' ? 'NeoBlock Map' : 'Runtime Path'}</button>)}
+      {(['system_sleeve', 'neostack', 'neoblock', 'runtime_path'] as RuntimeVisualViewMode[]).map((tab) => <button key={tab} type="button" className={viewMode === tab ? 'hot' : ''} onClick={() => switchView(tab)}>{tab === 'system_sleeve' ? 'Sleeve Overview' : tab === 'neostack' ? 'View NeoStack' : tab === 'neoblock' ? 'View NeoBlock' : 'Runtime Path'}</button>)}
       <div className="runtime-action-mode-control" aria-label="Action Mode"><span>Action Mode:</span>{(['observe', 'approval', 'direct'] as RuntimeNativeActionMode[]).map((mode) => <button key={mode} type="button" className={selectedNativeActionMode === mode ? 'hot' : ''} onClick={() => setSelectedNativeActionMode(mode)}>{mode === 'observe' ? 'Observe' : mode === 'approval' ? 'Approval' : 'Direct'}</button>)}</div>
-      <div className="runtime-pan-zoom-controls" aria-label="Runtime graph fit and zoom controls"><button type="button" onClick={fitGraph}>Fit graph</button><button type="button" onClick={resetGraph}>Reset graph</button><span>{Math.round(graphScale * 100)}%</span></div>
+      <div className="runtime-pan-zoom-controls" aria-label="Runtime graph fit and zoom controls"><button type="button" onClick={fitGraph}>Fit graph</button><button type="button" onClick={resetGraph}>Reset graph</button><span>{Math.round(graphScale * 100)}%</span></div><label className="runtime-explicit-edge-toggle"><input type="checkbox" checked={showExplicitEdges} onChange={(event) => setShowExplicitEdges(event.currentTarget.checked)} /> Show explicit edges</label>
     </div>
 
     <div className={`runtime-main-layout ${leftRailOpen ? 'runtime-main-layout--left-open' : ''} ${rightRailOpen ? 'runtime-main-layout--right-open' : ''}`}>
-      <aside className="runtime-left-rail" aria-label="Runtime hierarchy rail"><button type="button" onClick={() => setLeftRailOpen(!leftRailOpen)}>{leftRailOpen ? 'Collapse hierarchy' : 'Open hierarchy'}</button>{leftRailOpen && <><h2>Sleeve hierarchy</h2>{model.neoStacks.map((stack) => <section key={stack.id}><button type="button" onClick={() => { selectStack(stack); setViewMode('neostack'); }}><b>{stack.label}</b></button>{childBlocksForStack(stack.id).map((block) => <button key={block.id} type="button" onClick={() => { selectBlock(block); setViewMode('neoblock'); }}>{block.label}</button>)}</section>)}</>}</aside>
-      <main className={`runtime-graph-surface ${isGraphDragging ? 'runtime-graph-surface--dragging' : ''}`} aria-label="Runtime graph surface" onMouseDown={startGraphPan} onMouseMove={moveGraphPan} onMouseUp={stopGraphPan} onMouseLeave={stopGraphPan} onWheel={handleGraphWheel}>{viewMode === 'system_sleeve' && renderSystemSleeveView()}{viewMode === 'neostack' && renderNeoStackView()}{viewMode === 'neoblock' && renderNeoBlockView()}{viewMode === 'runtime_path' && renderRuntimePathView()}</main>
-      <aside className="runtime-right-rail" aria-label="Runtime trace and artifact rail"><button type="button" onClick={() => setRightRailOpen(!rightRailOpen)}>{rightRailOpen ? 'Collapse runtime inspector' : 'Open runtime inspector'}</button>{rightRailOpen && <><h2>Runtime Inspector</h2><div className="runtime-rail-summary"><span><b>Active route</b>{routeStatusLabel(runtimeExecutionState, traceEvents.length)}</span><span><b>Current node</b>{selectedVisualNode?.shortLabel ?? selectedVisualNode?.label ?? 'none'}</span><span><b>Trace count</b>{traceEvents.length}</span><span><b>Artifact count</b>{artifactCount}</span><span><b>Unmapped count</b>{model.unmappedEvents.length}</span></div>{selectedVisualNode && <RuntimeNodeInspectorCard node={selectedVisualNode} layers={inspectorLayers} onOpenNeoBlock={() => { if (selectedVisualNode.neoBlockId) setSelectedNodeId(`neoblock:${selectedVisualNode.neoBlockId}`); setViewMode('neoblock'); }} onSelect={selectVisualNode} />}<h3>Activity Stream</h3>{traceEvents.length ? <ol className="runtime-geometry-trace-list">{traceEvents.map((event, index) => <li className="runtime-geometry-trace-event" key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span><small>{eventTargetId(event) ?? 'missing target'}</small></li>)}</ol> : <small>No real Hermes trace yet.</small>}</>}</aside>
+      <aside className="runtime-left-rail" aria-label="Runtime hierarchy rail"><button type="button" onClick={() => setLeftRailOpen(!leftRailOpen)}>{leftRailOpen ? 'Collapse hierarchy' : 'Open hierarchy'}</button>{leftRailOpen && <><h2>Sleeve hierarchy</h2>{model.neoStacks.map((stack) => <section key={stack.id}><button type="button" onClick={() => { selectStack(stack); switchView('neostack'); }}><b>{stack.label}</b></button>{childBlocksForStack(stack.id).map((block) => <button key={block.id} type="button" onClick={() => { selectBlock(block); switchView('neoblock'); }}>{block.label}</button>)}</section>)}</>}</aside>
+      <main ref={graphSurfaceRef} className={`runtime-graph-surface ${isGraphDragging ? 'runtime-graph-surface--dragging' : ''}`} aria-label="Runtime graph surface" onMouseDown={startGraphPan} onMouseMove={moveGraphPan} onMouseUp={stopGraphPan} onMouseLeave={stopGraphPan}>{viewMode === 'system_sleeve' && renderSystemSleeveView()}{viewMode === 'neostack' && renderNeoStackView()}{viewMode === 'neoblock' && renderNeoBlockView()}{viewMode === 'runtime_path' && renderRuntimePathView()}{showExplicitEdges && visibleEdges.length > 0 && <aside className="runtime-explicit-edge-list" aria-label="Explicit dependency edges">{visibleEdges.map((edge) => <span key={edge.id}>{edge.kind}: {edge.from} → {edge.to}</span>)}</aside>}</main>
+      <aside className="runtime-right-rail" aria-label="Runtime trace and artifact rail"><button type="button" onClick={() => setRightRailOpen(!rightRailOpen)}>{rightRailOpen ? 'Collapse runtime inspector' : 'Open runtime inspector'}</button>{rightRailOpen && <><h2>Runtime Inspector</h2><div className="runtime-rail-summary"><span><b>Active route</b>{routeStatusLabel(runtimeExecutionState, traceEvents.length)}</span><span><b>Current node</b>{selectedVisualNode?.shortLabel ?? selectedVisualNode?.label ?? 'none'}</span><span><b>Trace count</b>{traceEvents.length}</span><span><b>Artifact count</b>{artifactCount}</span><span><b>Unmapped count</b>{model.unmappedEvents.length}</span></div>{renderSlotActionPanel()}{selectedVisualNode && <RuntimeNodeInspectorCard node={selectedVisualNode} layers={inspectorLayers} onOpenNeoBlock={() => { if (selectedVisualNode.neoBlockId) setSelectedNeoBlockId(`neoblock:${selectedVisualNode.neoBlockId}`); switchView('neoblock'); }} onSelect={selectVisualNode} />}<h3>Activity Stream</h3>{traceEvents.length ? <ol className="runtime-geometry-trace-list">{traceEvents.map((event, index) => <li className="runtime-geometry-trace-event" key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span><small>{eventTargetId(event) ?? 'missing target'}</small></li>)}</ol> : <small>No real Hermes trace yet.</small>}</>}</aside>
     </div>
 
     <section className={`runtime-bottom-drawer ${drawerOpen ? 'runtime-bottom-drawer--open' : ''}`} aria-label="Runtime bottom drawer">
       <div className="runtime-bottom-drawer-tabs"><button type="button" onClick={() => setDrawerOpen(!drawerOpen)}>{drawerOpen ? 'Collapse drawer' : 'Open drawer'}</button>{(['JSON', 'Trace', 'Manifest', 'Artifacts', 'Diagnostics', 'Hermes Terminal'] as const).map((tab) => <button key={tab} type="button" className={drawerTab === tab ? 'hot' : ''} onClick={() => { setDrawerTab(tab); setDrawerOpen(true); }}>{tab}</button>)}</div>
-      {drawerOpen && <div className="runtime-bottom-drawer-body">{drawerTab === 'JSON' && <pre>{JSON.stringify(drawerPayload, null, 2)}</pre>}{drawerTab === 'Trace' && <ol>{(selectedTrace.length ? selectedTrace : traceEvents).map((event, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol>}{drawerTab === 'Manifest' && <pre>{JSON.stringify({ compileStatus, summary, manifest: compiledRuntimeManifest, resources: foundationItems.map((item) => item.label) }, null, 2).slice(0, 3000)}</pre>}{drawerTab === 'Artifacts' && <div>{selectedArtifacts.length ? selectedArtifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><pre>{JSON.stringify(artifact, null, 2)}</pre></article>) : <small>No artifacts selected.</small>}</div>}{drawerTab === 'Diagnostics' && <pre>{JSON.stringify({ runtimeStatus, resources: foundationItems.map((item) => item.label), capabilities: model.capabilities.map((capability) => capability.label), unmappedEvents: model.unmappedEvents, noFakeActivation: true, sourceLibraryWrite: false }, null, 2)}</pre>}{drawerTab === 'Hermes Terminal' && renderHermesTerminalDrawer()}</div>}
+      {drawerOpen && <div className="runtime-bottom-drawer-body">{drawerTab === 'JSON' && <pre>{JSON.stringify(drawerPayload, null, 2)}</pre>}{drawerTab === 'Trace' && <ol>{(selectedTrace.length ? selectedTrace : traceEvents).map((event, index) => <li key={eventId(event, index)}><b>{event.eventType}</b><span>{event.label}</span></li>)}</ol>}{drawerTab === 'Manifest' && <pre>{JSON.stringify({ compileStatus, summary, manifest: compiledRuntimeManifest, resources: foundationItems.map((item) => item.label) }, null, 2).slice(0, 3000)}</pre>}{drawerTab === 'Artifacts' && <div>{selectedArtifacts.length ? selectedArtifacts.map((artifact) => <article key={artifact.id}><b>{artifact.label}</b><pre>{JSON.stringify(artifact, null, 2)}</pre></article>) : <small>No artifacts selected.</small>}</div>}{drawerTab === 'Diagnostics' && <pre>{JSON.stringify({ runtimeStatus, resources: foundationItems.map((item) => item.label), capabilities: model.capabilities.map((capability) => capability.label), unmappedEvents: model.unmappedEvents, noFakeActivation: true, sourceLibraryWrite: false, selectedNeoStackId, selectedNeoBlockId, selectedMoltBlockId, lastLibraryInsertionContext, selectedSlotAction: selectedSlotAction ? { targetView: selectedSlotAction.targetView, flow: selectedSlotAction.flow, slotId: selectedSlotAction.slotId, preferredMoltRoles: selectedSlotAction.preferredMoltRoles } : undefined, showExplicitEdges, visibleEdgeCount: visibleEdges.length }, null, 2)}</pre>}{drawerTab === 'Hermes Terminal' && renderHermesTerminalDrawer()}</div>}
     </section>
   </section>;
 }
@@ -1445,8 +1624,8 @@ function RuntimeNodeInspectorCard({ node, layers, onOpenNeoBlock, onSelect }: { 
       {suggestedDrafts.length > 0 && <details open><summary>Suggested workspace-draft MOLT Blocks</summary><div>{suggestedDrafts.map((entry) => <button key={`draft-${String(entry.id)}`} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · review required · {String(entry.reason ?? 'missing role suggestion')}</small></button>)}</div></details>}
       {unusedCandidates.length > 0 && <details><summary>Unused relevant candidates</summary><div>{unusedCandidates.map((entry) => <button key={`unused-${String(entry.id)}`} type="button">{String(entry.title ?? entry.id)}<small>{String(entry.role ?? 'role?')} · {String(entry.sourceKind ?? 'source?')} · {String(entry.reason ?? 'not selected')}</small></button>)}</div></details>}
     </details>}
-    {node.kind !== 'neoblock' && node.neoBlockId && <button type="button" onClick={onOpenNeoBlock}>Open parent NeoBlock Map</button>}
-    {node.kind === 'neoblock' && <button type="button" onClick={onOpenNeoBlock}>Open NeoBlock Map</button>}
+    {node.kind !== 'neoblock' && node.neoBlockId && <button type="button" onClick={onOpenNeoBlock}>Open parent View NeoBlock</button>}
+    {node.kind === 'neoblock' && <button type="button" onClick={onOpenNeoBlock}>Open View NeoBlock</button>}
     <details className="runtime-inspector-molt-list"><summary>{node.kind === 'neoblock' ? 'View all MOLT' : 'Related MOLT'} ({layers.length})</summary><div>{layers.slice(0, 3).map((layer) => <button key={layer.id} type="button" onClick={() => onSelect(layer)}>{layer.label}<small>{String(layer.metadata?.matchedCandidateId ?? 'not linked')} · {String(layer.metadata?.sourcePath ?? 'not linked')}</small></button>)}{layers.length > 3 && <small>+ {layers.length - 3} more MOLT children</small>}</div></details>
   </aside>;
 }

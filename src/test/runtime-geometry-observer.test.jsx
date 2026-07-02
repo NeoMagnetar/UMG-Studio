@@ -132,42 +132,59 @@ describe('RuntimeGeometryObserver', () => {
     expect(document.querySelectorAll('.runtime-node--resource, .runtime-node--context, .runtime-foundation-item')).toHaveLength(0);
   });
 
-  it('NeoStack Map renders NeoStack nodes only', () => {
+  it('Sleeve Overview renders NeoStack nodes only', () => {
     renderInteractiveObserver();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoStack Map' }));
-    expect(screen.getByLabelText('NeoStack-only runtime graph')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sleeve Overview' })).toBeTruthy();
+    expect(screen.getByLabelText('Sleeve Overview fixed overlay lattice slots')).toBeTruthy();
     expect(document.querySelectorAll('.runtime-stack-node')).toHaveLength(1);
-    expect(document.querySelectorAll('.runtime-neoblock-tile, .runtime-neoblock-module, .runtime-molt-layer, .runtime-node--resource, .runtime-node--context')).toHaveLength(0);
+    expect(document.querySelectorAll('.runtime-neoblock-tile, .runtime-neoblock-module, .runtime-molt-layer, .runtime-node--molt_layer, .runtime-node--resource, .runtime-node--context')).toHaveLength(0);
   });
 
-  it('NeoBlock Map renders NeoBlock nodes only and does not render MOLT rows as graph cards', () => {
+  it('View NeoStack requires a selected NeoStack and then renders NeoBlocks for that stack only', () => {
     renderInteractiveObserver();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
-    expect(screen.getByLabelText('All NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    expect(screen.getByText('Select a NeoStack from Sleeve Overview.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Sleeve Overview' }));
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    expect(screen.getByLabelText('Selected NeoStack NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
     expect(document.querySelectorAll('.runtime-neoblock-module')).toHaveLength(1);
     expect(document.querySelectorAll('.runtime-stack-node, .runtime-molt-layer, .runtime-node--molt_layer, .runtime-node--resource, .runtime-node--context')).toHaveLength(0);
-    expect(screen.queryByText('Instruction')).toBeNull();
   });
 
-  it('NeoBlock Map renders the structural NeoBlock route without runtime trace', () => {
+  it('View NeoBlock requires a selected NeoBlock and renders the vertical MOLT Block role stack', () => {
     renderInteractiveObserver();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
-    expect(screen.getByText('Structural route of all NeoBlocks across all NeoStacks. Runtime trace is not required.')).toBeTruthy();
-    expect(screen.getByLabelText('All NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
-    expect(screen.getAllByText('Capture and Draft Note').length).toBeGreaterThan(0);
-    expect(screen.getByText('NeoBlock inspector')).toBeTruthy();
-    expect(screen.getByText('MOLT child count')).toBeTruthy();
-    expect(screen.getByText('source-bound count')).toBeTruthy();
-    expect(screen.getByText(/View all MOLT/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoBlock' }));
+    expect(screen.getByText('Select a NeoBlock from View NeoStack or Runtime Path.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Sleeve Overview' }));
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    fireEvent.click(screen.getByTitle('Capture and Draft Note'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoBlock' }));
+    expect(screen.getByLabelText('Vertical MOLT role stack')).toBeTruthy();
+    expect(screen.getByText('What MOLT Blocks compose this NeoBlock?')).toBeTruthy();
+    expect(screen.getAllByText('Instruction Role').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Subject Role').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Philosophy Role').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Missing Directive').length).toBeGreaterThan(0);
+    expect(document.querySelector('.molt-role--instruction')).toBeTruthy();
+    expect(document.querySelector('.molt-role--subject')).toBeTruthy();
+    expect(document.querySelector('.molt-role--philosophy')).toBeTruthy();
   });
 
   it('uses corrected graph labels, MOLT Block terminology, and pan/zoom controls', () => {
     renderInteractiveObserver();
     expect(screen.getByRole('button', { name: 'Sleeve Overview' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View NeoStack' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'View NeoBlock' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Runtime Path' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'System Sleeve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'NeoStack Map' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'NeoBlock Map' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Runtime Path View' })).toBeNull();
     expect(screen.getByRole('complementary', { name: 'Runtime trace and artifact rail' }).textContent).toContain('Runtime Inspector');
     expect(screen.queryByText('Runtime Rail')).toBeNull();
-    expect(screen.getByText(/3 MOLT Blocks/)).toBeTruthy();
+    expect(screen.getByLabelText('Sleeve Overview fixed overlay lattice slots').textContent).toContain('NeoBlocks');
     expect(screen.queryByText(/MOLT Layers/i)).toBeNull();
     expect(screen.getByRole('button', { name: 'Fit graph' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Reset graph' })).toBeTruthy();
@@ -175,9 +192,10 @@ describe('RuntimeGeometryObserver', () => {
     expect(screen.queryByRole('button', { name: /Zoom out/i })).toBeNull();
   });
 
-  it('NeoBlock Map cards show MOLT Block counts and share graph-card styling', () => {
+  it('View NeoStack cards show MOLT Block counts and share graph-card styling', () => {
     renderInteractiveObserver();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
     const blockCard = document.querySelector('.runtime-neoblock-module');
     expect(blockCard?.className).toContain('runtime-map-card');
     expect(blockCard?.textContent).toContain('3 MOLT Blocks');
@@ -207,10 +225,11 @@ describe('RuntimeGeometryObserver', () => {
     expect(new Set(platformSlots.map((slot) => slot.columnIndex)).size).toBe(7);
   });
 
-  it('renders fixed slot placeholders and keeps NeoBlock cards readable on the board', () => {
+  it('renders fixed slot placeholders and keeps View NeoStack cards readable on the board', () => {
     renderInteractiveObserver();
-    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
-    expect(screen.getByLabelText('All NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    expect(screen.getByLabelText('Selected NeoStack NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
     expect(document.querySelectorAll('.runtime-lattice-slot--empty').length).toBeGreaterThan(0);
     const blockCard = document.querySelector('.runtime-neoblock-module');
     expect(blockCard?.className).toContain('runtime-lattice-card');
@@ -230,12 +249,97 @@ describe('RuntimeGeometryObserver', () => {
     expect(surface.className).not.toContain('runtime-graph-surface--dragging');
   });
 
-  it('Runtime Path stays idle and shows the no-trace message until Hermes emits a trace', () => {
+  it('Runtime Path stays idle and shows the no-trace planned route preview until Hermes emits a trace', () => {
     renderInteractiveObserver();
     fireEvent.click(screen.getByRole('button', { name: 'Runtime Path' }));
-    expect(screen.getByText('No runtime trace yet. Send a task to Hermes to activate the route.')).toBeTruthy();
-    expect(screen.getByText('Planned route in lattice slots / no trace yet.')).toBeTruthy();
+    expect(screen.getByText('No runtime trace yet. Showing planned route preview across all NeoBlocks. Send a Hermes prompt to activate the sleeve.')).toBeTruthy();
+    expect(screen.getByText('No runtime trace yet. Showing planned route preview.')).toBeTruthy();
+    expect(screen.getByLabelText('Planned runtime route by fixed overlay lattice slots')).toBeTruthy();
     expect(document.querySelectorAll('.runtime-node--active, .runtime-map-edge--glow')).toHaveLength(0);
+  });
+
+  it('empty slot click opens an action panel and LibraryInsertionContext without source-library mutation', () => {
+    renderInteractiveObserver();
+    expect(screen.queryByRole('button', { name: 'Add existing NeoStack from Library' })).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: /Sleeve Overview empty slot/ })[0]);
+    expect(screen.getByLabelText('Slot action panel')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Add existing NeoStack from Library' }));
+    expect(screen.getByLabelText('Block Library insertion context')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    expect(screen.getAllByText(/"targetView": "Sleeve Overview"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"targetObjectType": "neostack"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"allowedBlockTypes": \[/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"neostack"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"sourceLibraryWrite": false/).length).toBeGreaterThan(0);
+  });
+
+  it('View NeoBlock missing-role library action filters insertion context to MOLT Blocks and preferred role', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    fireEvent.click(screen.getByTitle('Capture and Draft Note'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoBlock' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoBlock empty slot Trigger' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add existing MOLT Block from Library' }));
+    expect(screen.getByLabelText('Block Library insertion context').textContent).toContain('role trigger');
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+    expect(screen.getAllByText(/"targetView": "View NeoBlock"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"targetObjectType": "molt_block"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"preferredMoltRoles": \[/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"trigger"/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/"parentNeoBlockId": "neoblock:block.capture"/).length).toBeGreaterThan(0);
+  });
+
+  it('Add NeoStack here opens a real NeoStack draft/create panel with review-required save path', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getAllByRole('button', { name: /Sleeve Overview empty slot/ })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Add NeoStack here' }));
+    expect(screen.getByLabelText('NeoStack draft/create panel')).toBeTruthy();
+    expect(screen.getByText('workspace-draft NeoStack; no source-library mutation; bound only after user confirms.', { exact: false })).toBeTruthy();
+  });
+
+  it('Add NeoBlock here opens NeoBlock Builder with MOLT role coverage status', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /View NeoStack empty slot/ })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Add NeoBlock here' }));
+    expect(screen.getByLabelText('NeoBlock Builder')).toBeTruthy();
+    expect(screen.getByLabelText('MOLT role coverage status').textContent).toContain('Directive: missing');
+    expect(screen.getByText(/workspace-draft NeoBlock/)).toBeTruthy();
+  });
+
+  it('Add MOLT Block here opens true MOLT Block Creator with workspace-draft sourceKind', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    fireEvent.click(screen.getByTitle('Capture and Draft Note'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoBlock' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoBlock empty slot Directive' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add MOLT Block here' }));
+    expect(screen.getByLabelText('MOLT Block Creator')).toBeTruthy();
+    expect(screen.getByDisplayValue('directive')).toBeTruthy();
+    expect(screen.getAllByDisplayValue('workspace-draft').length).toBeGreaterThan(0);
+  });
+
+  it('empty slots do not render action buttons by default and action panel options match current view', () => {
+    renderInteractiveObserver();
+    expect(screen.queryByRole('button', { name: 'Add NeoStack here' })).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: /Sleeve Overview empty slot/ })[0]);
+    expect(screen.getByRole('button', { name: 'Add NeoStack here' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Draft NeoStack with Hermes' })).toBeTruthy();
+    fireEvent.click(screen.getByTitle('Note Composition Stack'));
+    fireEvent.click(screen.getByRole('button', { name: 'View NeoStack' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /View NeoStack empty slot/ })[0]);
+    expect(screen.getByRole('button', { name: 'Add NeoBlock here' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Draft NeoBlock with Hermes' })).toBeTruthy();
+  });
+
+  it('Show explicit edges hides all edge display by default and shows explicit metadata only when enabled', () => {
+    renderInteractiveObserver();
+    expect(screen.queryByLabelText('Explicit dependency edges')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Show explicit edges'));
+    expect(screen.getByLabelText('Explicit dependency edges').textContent).toContain('routes');
   });
 
   it('left Sleeve hierarchy is collapsed by default and resources remain in diagnostics drawer', () => {
