@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
-import { RuntimeGeometryObserver, buildRuntimeCognitiveTopology, buildRuntimeGeometryObserverGraph, buildRuntimeVisualViewModel, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
+import { RuntimeGeometryObserver, buildLatticeBoardLayout, buildRuntimeCognitiveTopology, buildRuntimeGeometryObserverGraph, buildRuntimeVisualViewModel, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
 import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 import { runNativeHermesAction } from '../lib/umg/hermesRuntimeExecution';
 import { createCompilerRequest } from '../lib/umg/compileCandidateAdapter';
@@ -143,7 +143,7 @@ describe('RuntimeGeometryObserver', () => {
   it('NeoBlock Map renders NeoBlock nodes only and does not render MOLT rows as graph cards', () => {
     renderInteractiveObserver();
     fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
-    expect(screen.getByLabelText('All NeoBlocks by NeoStack')).toBeTruthy();
+    expect(screen.getByLabelText('All NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
     expect(document.querySelectorAll('.runtime-neoblock-module')).toHaveLength(1);
     expect(document.querySelectorAll('.runtime-stack-node, .runtime-molt-layer, .runtime-node--molt_layer, .runtime-node--resource, .runtime-node--context')).toHaveLength(0);
     expect(screen.queryByText('Instruction')).toBeNull();
@@ -153,7 +153,7 @@ describe('RuntimeGeometryObserver', () => {
     renderInteractiveObserver();
     fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
     expect(screen.getByText('Structural route of all NeoBlocks across all NeoStacks. Runtime trace is not required.')).toBeTruthy();
-    expect(screen.getByLabelText('All NeoBlocks by NeoStack')).toBeTruthy();
+    expect(screen.getByLabelText('All NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
     expect(screen.getAllByText('Capture and Draft Note').length).toBeGreaterThan(0);
     expect(screen.getByText('NeoBlock inspector')).toBeTruthy();
     expect(screen.getByText('MOLT child count')).toBeTruthy();
@@ -184,6 +184,40 @@ describe('RuntimeGeometryObserver', () => {
     expect(blockCard?.textContent).not.toContain('0 NeoBlocks');
   });
 
+  it('builds a fixed lattice board with rows, readable slots, empty placeholders, and expanded capacity', () => {
+    const rows = [
+      { rowId: 'controller', rowIndex: 0, rowLabel: 'Controller' },
+      { rowId: 'specialization', rowIndex: 3, rowLabel: 'Platform / Engine' }
+    ];
+    const nodes = Array.from({ length: 7 }, (_, index) => ({
+      id: `node.${index}`,
+      kind: 'neoblock',
+      label: `Platform ${index}`,
+      status: 'available',
+      metadata: { overlay: { rowId: 'specialization', rowIndex: 3, rowLabel: 'Platform / Engine', columnIndex: index, activationState: index === 0 ? 'active' : 'inactive' } }
+    }));
+    const board = buildLatticeBoardLayout({ nodes, rows, viewKind: 'neoblock' });
+    expect(board.rows).toHaveLength(2);
+    expect(board.cellWidth).toBeGreaterThanOrEqual(260);
+    expect(board.cellHeight).toBeGreaterThanOrEqual(150);
+    expect(board.rows.find((row) => row.rowId === 'controller')?.slots.some((slot) => slot.slotState === 'empty')).toBe(true);
+    const platformSlots = board.rows.find((row) => row.rowId === 'specialization')?.slots ?? [];
+    expect(platformSlots).toHaveLength(7);
+    expect(platformSlots.filter((slot) => slot.slotState !== 'empty')).toHaveLength(7);
+    expect(new Set(platformSlots.map((slot) => slot.columnIndex)).size).toBe(7);
+  });
+
+  it('renders fixed slot placeholders and keeps NeoBlock cards readable on the board', () => {
+    renderInteractiveObserver();
+    fireEvent.click(screen.getByRole('button', { name: 'NeoBlock Map' }));
+    expect(screen.getByLabelText('All NeoBlocks by fixed overlay lattice slots')).toBeTruthy();
+    expect(document.querySelectorAll('.runtime-lattice-slot--empty').length).toBeGreaterThan(0);
+    const blockCard = document.querySelector('.runtime-neoblock-module');
+    expect(blockCard?.className).toContain('runtime-lattice-card');
+    expect(blockCard?.getAttribute('style')).toContain('width: 280px');
+    expect(blockCard?.getAttribute('style')).toContain('height: 160px');
+  });
+
   it('Runtime graph surface supports wheel zoom and drag pan state', () => {
     renderInteractiveObserver();
     const surface = screen.getByLabelText('Runtime graph surface');
@@ -200,7 +234,7 @@ describe('RuntimeGeometryObserver', () => {
     renderInteractiveObserver();
     fireEvent.click(screen.getByRole('button', { name: 'Runtime Path' }));
     expect(screen.getByText('No runtime trace yet. Send a task to Hermes to activate the route.')).toBeTruthy();
-    expect(screen.getByText('Planned route skeleton is shown idle until a real Hermes trace arrives.')).toBeTruthy();
+    expect(screen.getByText('Planned route in lattice slots / no trace yet.')).toBeTruthy();
     expect(document.querySelectorAll('.runtime-node--active, .runtime-map-edge--glow')).toHaveLength(0);
   });
 

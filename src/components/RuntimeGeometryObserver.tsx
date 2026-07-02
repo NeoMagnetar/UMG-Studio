@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent, MouseEvent, WheelEvent } from 'react';
+import type { KeyboardEvent, MouseEvent, ReactNode, WheelEvent } from 'react';
 import type { NormalizedTemplateSleeve } from '../lib/umg/templateSleeveStructures';
 import type { HermesCognitiveRuntimeResult, UMGCompiledRuntimeManifest, UMGRuntimeArtifact, UMGRuntimeVisualState, UMGTraceEvent } from '../lib/umg/cognitiveRuntimeTypes';
 import type { PendingRuntimeApproval, ToolCapabilityResolution } from '../lib/umg/toolCapabilityResolver';
 import type { UMGGeometryManifest, RuntimeGeometryNode as ProjectRuntimeGeometryNode } from '../lib/umg/runtimeGeometryTypes';
 import { buildRuntimeGeometryManifest, summarizeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 import { getRuntimeTargetId } from '../lib/umg/cognitiveRuntimeState';
+import { getOverlayById } from '../lib/umg/overlayLattice';
+import { UNIVERSAL_LATTICE_ROWS } from '../lib/umg/overlayLattice/umgUniversalLattice';
 
 export type RuntimeGeometryObserverMode = 'structure' | 'runtime';
 export type RuntimeExecutionState = 'idle' | 'ready' | 'compiling_required' | 'sending' | 'running' | 'action_prepared' | 'awaiting_approval' | 'completed' | 'failed';
@@ -525,6 +527,165 @@ export type RuntimeVisualViewModel = {
   unmappedEvents: UnmappedTrace[];
 };
 
+export type LatticeSlotState = 'filled' | 'empty' | 'active' | 'inactive' | 'missing' | 'blocked' | 'draftSuggested';
+
+export type LatticeGridRowDefinition = {
+  rowId: string;
+  rowIndex: number;
+  rowLabel: string;
+};
+
+export type LatticeGridSlot = {
+  rowId: string;
+  rowLabel: string;
+  rowIndex: number;
+  columnIndex: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  slotState: LatticeSlotState;
+  nodeId?: string;
+  node?: RuntimeVisualNode;
+  evidence: string[];
+};
+
+export type LatticeGridRow = LatticeGridRowDefinition & {
+  slots: LatticeGridSlot[];
+  capacity: number;
+};
+
+export type LatticeBoardLayout = {
+  rows: LatticeGridRow[];
+  slots: LatticeGridSlot[];
+  cellWidth: number;
+  cellHeight: number;
+  columnGap: number;
+  rowGap: number;
+  labelWidth: number;
+  boardWidth: number;
+  boardHeight: number;
+};
+
+const DEFAULT_LATTICE_ROW_CAPACITY: Record<string, number> = {
+  controller: 2,
+  intent: 4,
+  context_intake: 4,
+  specialization: 6,
+  planning_composition: 6,
+  capability_binding: 6,
+  validation: 5,
+  execution: 3,
+  output: 5,
+  audit_iteration: 4
+};
+
+function overlayStateToSlotState(value: unknown, filled: boolean): LatticeSlotState {
+  if (!filled) return 'empty';
+  const state = String(value ?? '');
+  if (state === 'active' || state === 'inactive' || state === 'missing' || state === 'blocked' || state === 'draftSuggested') return state;
+  return 'filled';
+}
+
+function latticeRowDefinitionsFromManifest(manifest?: UMGGeometryManifest): LatticeGridRowDefinition[] {
+  const inference = isRecord(manifest?.metadata?.overlayInference) ? manifest?.metadata?.overlayInference : undefined;
+  const selected = Array.isArray(inference?.selectedOverlays) ? inference.selectedOverlays.filter(isRecord) : [];
+  const dominant = toText(inference?.dominantOverlayId) ?? toText(selected[0]?.overlayId);
+  const overlay = dominant ? getOverlayById(dominant) : undefined;
+  return (overlay?.rows ?? UNIVERSAL_LATTICE_ROWS).map((row) => ({ rowId: row.rowId, rowIndex: row.rowIndex, rowLabel: row.rowLabel }));
+}
+
+function rowForVisualNode(node: RuntimeVisualNode, rows: LatticeGridRowDefinition[]): LatticeGridRowDefinition {
+  const overlay = isRecord(node.metadata?.overlay) ? node.metadata.overlay : undefined;
+  const overlayRowId = toText(overlay?.rowId);
+  const overlayRow = overlayRowId ? rows.find((row) => row.rowId === overlayRowId) : undefined;
+  if (overlayRow) return overlayRow;
+  const layoutRow = typeof node.layout?.y === 'number' ? Math.round(node.layout.y) : undefined;
+  const byLayout = layoutRow !== undefined ? rows.find((row) => row.rowIndex === layoutRow) : undefined;
+  if (byLayout) return byLayout;
+  const phase = inferRuntimeSemanticPhase(node);
+  const phaseMap: Record<RuntimeSemanticPhase, string> = {
+    intake: 'intent',
+    read_parse_inspect: 'context_intake',
+    retrieve_search: 'context_intake',
+    plan_compose: 'planning_composition',
+    capability_tool_check: 'capability_binding',
+    validate_review: 'validation',
+    execute_export: 'execution',
+    report_artifact: 'output',
+    unknown: 'planning_composition'
+  };
+  return rows.find((row) => row.rowId === phaseMap[phase]) ?? rows[0];
+}
+
+export function buildLatticeBoardLayout(args: {
+  nodes: RuntimeVisualNode[];
+  rows?: LatticeGridRowDefinition[];
+  viewKind?: 'neostack' | 'neoblock' | 'runtime_path';
+  cellWidth?: number;
+  cellHeight?: number;
+  columnGap?: number;
+  rowGap?: number;
+  labelWidth?: number;
+}): LatticeBoardLayout {
+  const rows = (args.rows?.length ? args.rows : UNIVERSAL_LATTICE_ROWS.map((row) => ({ rowId: row.rowId, rowIndex: row.rowIndex, rowLabel: row.rowLabel }))).sort((a, b) => a.rowIndex - b.rowIndex);
+  const cellWidth = args.cellWidth ?? (args.viewKind === 'neostack' ? 260 : 280);
+  const cellHeight = args.cellHeight ?? (args.viewKind === 'neostack' ? 140 : 160);
+  const columnGap = args.columnGap ?? 24;
+  const rowGap = args.rowGap ?? 32;
+  const labelWidth = args.labelWidth ?? 180;
+  const buckets = new Map<string, RuntimeVisualNode[]>();
+  args.nodes.forEach((node) => {
+    const row = rowForVisualNode(node, rows);
+    buckets.set(row.rowId, [...(buckets.get(row.rowId) ?? []), node]);
+  });
+  const gridRows: LatticeGridRow[] = rows.map((row) => {
+    const nodes = [...(buckets.get(row.rowId) ?? [])].sort((a, b) => {
+      const aOverlay = isRecord(a.metadata?.overlay) ? a.metadata.overlay : undefined;
+      const bOverlay = isRecord(b.metadata?.overlay) ? b.metadata.overlay : undefined;
+      const aColumn = Number(aOverlay?.columnIndex ?? a.layout?.evidence.column ?? 999);
+      const bColumn = Number(bOverlay?.columnIndex ?? b.layout?.evidence.column ?? 999);
+      return aColumn - bColumn || a.label.localeCompare(b.label);
+    });
+    const capacity = Math.max(DEFAULT_LATTICE_ROW_CAPACITY[row.rowId] ?? 4, nodes.length, row.rowId === 'controller' ? 1 : 0);
+    const slots: LatticeGridSlot[] = Array.from({ length: capacity }, (_, columnIndex) => {
+      const node = nodes[columnIndex];
+      const overlay = node && isRecord(node.metadata?.overlay) ? node.metadata.overlay : undefined;
+      const x = labelWidth + columnIndex * (cellWidth + columnGap);
+      const y = row.rowIndex * (cellHeight + rowGap);
+      return {
+        rowId: row.rowId,
+        rowLabel: row.rowLabel,
+        rowIndex: row.rowIndex,
+        columnIndex,
+        x,
+        y,
+        width: cellWidth,
+        height: cellHeight,
+        slotState: overlayStateToSlotState(overlay?.activationState, Boolean(node)),
+        nodeId: node?.id,
+        node,
+        evidence: node
+          ? [`Filled by ${node.kind} ${node.id}.`, `Column ${columnIndex} in row ${row.rowLabel}.`, String(overlay?.dependencyType ?? node.layout?.evidence.dependency ?? 'layout-only') === 'explicit' ? 'Explicit dependency metadata present.' : 'Layout slot does not create a hard dependency edge.']
+          : [`Empty ${row.rowLabel} slot.`, 'Available / unfilled; no block bound yet.']
+      };
+    });
+    return { ...row, capacity, slots };
+  });
+  const maxCapacity = Math.max(1, ...gridRows.map((row) => row.capacity));
+  return {
+    rows: gridRows,
+    slots: gridRows.flatMap((row) => row.slots),
+    cellWidth,
+    cellHeight,
+    columnGap,
+    rowGap,
+    labelWidth,
+    boardWidth: labelWidth + maxCapacity * cellWidth + Math.max(0, maxCapacity - 1) * columnGap + 24,
+    boardHeight: rows.length * cellHeight + Math.max(0, rows.length - 1) * rowGap
+  };
+}
+
 const visualStatusFromGeometry = (status: RuntimeGeometryNodeStatus): RuntimeVisualNodeStatus => status;
 
 function visualStatusFromOverlay(metadata?: Record<string, unknown>, fallback: RuntimeVisualNodeStatus = 'idle'): RuntimeVisualNodeStatus {
@@ -984,6 +1145,10 @@ export function RuntimeGeometryObserver({
   };
   const childBlocksForStack = (stackId?: string) => model.neoBlocks.filter((block) => block.parentId === stackId);
   const centeredStackOrder = useMemo(() => buildRuntimeCognitiveTopology(model.neoStacks, model.edges), [model.neoStacks, model.edges]);
+  const overlayRows = useMemo(() => latticeRowDefinitionsFromManifest(geometryManifest ?? buildRuntimeGeometryManifest({ templateSleeve: activeSessionSleeve, compiledRuntimeManifest })), [activeSessionSleeve, compiledRuntimeManifest, geometryManifest]);
+  const sleeveStackBoard = useMemo(() => buildLatticeBoardLayout({ nodes: centeredStackOrder, rows: overlayRows, viewKind: 'neostack' }), [centeredStackOrder, overlayRows]);
+  const neoBlockBoard = useMemo(() => buildLatticeBoardLayout({ nodes: model.neoBlocks, rows: overlayRows, viewKind: 'neoblock' }), [model.neoBlocks, overlayRows]);
+  const runtimePathBoard = useMemo(() => buildLatticeBoardLayout({ nodes: model.pathNodes, rows: overlayRows, viewKind: 'runtime_path' }), [model.pathNodes, overlayRows]);
   const tieredBlocksForStack = (stackId?: string) => childBlocksForStack(stackId).reduce((tiers, block) => {
     tiers[tierScore(`${block.label} ${block.id}`)].push(block);
     return tiers;
@@ -1032,6 +1197,40 @@ export function RuntimeGeometryObserver({
 
   const renderCompactEdge = (edge?: RuntimeVisualEdge, extra = '') => <div className={`runtime-map-edge runtime-map-edge--${edge?.status ?? 'idle'} ${edge?.traceEventIds?.length ? 'runtime-map-edge--glow' : ''} ${extra}`} aria-label="runtime connector" />;
 
+  const renderEmptyLatticeSlot = (slot: LatticeGridSlot) => <div key={`${slot.rowId}-empty-${slot.columnIndex}`} className="runtime-lattice-slot runtime-lattice-slot--empty runtime-map-card" style={{ width: slot.width, height: slot.height }}>
+    <b>Empty slot</b>
+    <small>{slot.rowLabel}</small>
+    <span>available / unfilled</span>
+    <em>no block bound yet</em>
+  </div>;
+
+  const renderLatticeBoard = (board: LatticeBoardLayout, ariaLabel: string, renderSlotNode: (slot: LatticeGridSlot) => ReactNode) => <div className="runtime-lattice-board" aria-label={ariaLabel} style={{ width: board.boardWidth, minHeight: board.boardHeight }}>
+    {board.rows.map((row) => <section key={row.rowId} className="runtime-lattice-row" style={{ minHeight: board.cellHeight }} aria-label={`Row ${row.rowIndex}: ${row.rowLabel}`}>
+      <header className="runtime-overlay-row-label"><b>Row {row.rowIndex}</b><span>{row.rowLabel}</span></header>
+      <div className="runtime-lattice-row-slots" style={{ gridTemplateColumns: `repeat(${row.capacity}, ${board.cellWidth}px)`, gap: `${board.columnGap}px` }}>
+        {row.slots.map((slot) => slot.node ? renderSlotNode(slot) : renderEmptyLatticeSlot(slot))}
+      </div>
+    </section>)}
+  </div>;
+
+  const renderNeoStackSlot = (slot: LatticeGridSlot) => {
+    const stack = slot.node;
+    if (!stack) return renderEmptyLatticeSlot(slot);
+    return <button key={stack.id} type="button" title={stack.label} className={`runtime-node runtime-compact-node runtime-stack-node runtime-node--${stack.status} runtime-stack-title runtime-lattice-slot runtime-lattice-card runtime-lattice-slot--${slot.slotState} ${selectedStack?.id === stack.id ? 'runtime-node--selected' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => selectStack(stack)}>
+      <span className="runtime-node-icon">▦</span><b>{stack.shortLabel ?? shortRuntimeLabel(stack.label)}</b><small>Row: {slot.rowLabel}</small><span className="runtime-node-chip-row"><i>NeoStack</i><i>{childBlocksForStack(stack.id).length} NeoBlocks</i><i>{sourceBoundLayerCountForStack(stack.id)} source-bound</i><i>{stack.status}</i></span>
+    </button>;
+  };
+
+  const renderNeoBlockSlot = (slot: LatticeGridSlot) => {
+    const block = slot.node;
+    if (!block) return renderEmptyLatticeSlot(slot);
+    const parentStack = model.neoStacks.find((stack) => stack.id === block.parentId);
+    const overlay = isRecord(block.metadata?.overlay) ? block.metadata.overlay : undefined;
+    return <button key={block.id} type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} ${overlay ? `runtime-map-card--${String(overlay.activationState)}` : ''} runtime-neoblock-module runtime-lattice-slot runtime-lattice-card runtime-lattice-slot--${slot.slotState} ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} style={{ width: slot.width, height: slot.height }} onClick={() => selectBlock(block)}>
+      <span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {parentStack?.shortLabel ?? parentStack?.label ?? block.parentId ?? 'unknown'}</small><span className="runtime-node-chip-row"><i>NeoBlock</i><i>{layersForBlock(block).length} MOLT Blocks</i><i>{String(overlay?.activationState ?? block.status)}</i><i>{String(block.sourceStatus ?? 'runtime-draft')}</i><i>{String(overlay?.rowLabel ?? slot.rowLabel)}</i></span>
+    </button>;
+  };
+
   const renderSystemSleeveView = () => <div className="runtime-system-sleeve-view" style={graphViewportStyle}>
     <section className="runtime-sleeve-package">
       <div className="runtime-sleeve-banner">
@@ -1039,12 +1238,7 @@ export function RuntimeGeometryObserver({
         <div><h2>Sleeve Overview</h2><b>{activeSessionSleeve.title}</b><small>{model.neoStacks.length} NeoStacks · {model.neoBlocks.length} NeoBlocks · {summary ? `${summary.totalMoltBindings} MOLT Blocks · ${summary.totalGates} Gates · ${summary.totalToolEndpoints} Tool Blocks · ${model.capabilities.length} Capabilities` : 'manifest pending'}</small></div>
       </div>
       <div className="runtime-neostack-clusters runtime-map-centered">
-        {model.neoStacks.map((stack, stackIndex) => <article key={stack.id} className="runtime-neostack-cluster runtime-map-card">
-          {stackIndex > 0 && renderCompactEdge(model.edges.find((edge) => edge.kind === 'routes' && (edge.from === stack.id || edge.to === stack.id)), 'runtime-map-edge--down')}
-          <button type="button" title={stack.label} className={`runtime-node runtime-compact-node runtime-stack-node runtime-node--${stack.status} runtime-stack-title ${selectedStack?.id === stack.id ? 'runtime-node--selected' : ''}`} onClick={() => selectStack(stack)}>
-            <span className="runtime-node-icon">▦</span><b>{stack.shortLabel ?? shortRuntimeLabel(stack.label)}</b><small>{childBlocksForStack(stack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(stack.id)} source-bound · {stack.status}</small>
-          </button>
-        </article>)}
+        {renderLatticeBoard(sleeveStackBoard, 'Sleeve Overview fixed overlay lattice slots', renderNeoStackSlot)}
       </div>
       <small>Sleeve Overview answers what major work stacks are inside the Sleeve. Diagnostics stay in the drawers/rails, not the graph canvas.</small>
     </section>
@@ -1052,50 +1246,24 @@ export function RuntimeGeometryObserver({
 
   const renderNeoStackView = () => <div className="runtime-neostack-view runtime-map-centered" style={graphViewportStyle}>
     <h2>NeoStack Map</h2>
-    <small>NeoStack Map uses deterministic cognitive topology. Inferred placement is layout-only and does not create dependency edges.</small>
-    <div className="runtime-stack-pyramid runtime-cognitive-topology" aria-label="NeoStack-only runtime graph">
-      {topologyRows(centeredStackOrder).map(({ row, nodes }) => <div key={`stack-row-${row}`} className="runtime-cognitive-row" data-row={row}>
-        {row > 0 && <div className="runtime-row-phase-label">{nodes[0]?.layout?.phase ?? 'unknown'}</div>}
-        {nodes.map((stack) => <div key={stack.id} className="runtime-cognitive-node-wrap" data-layout-x={stack.layout?.x ?? 0} data-layout-phase={stack.layout?.phase}>
-          {row > 0 && renderCompactEdge(model.edges.find((edge) => edge.to === stack.id || edge.from === stack.id), 'runtime-map-edge--down')}
-          <button type="button" title={stack.label} className={`runtime-node runtime-compact-node runtime-stack-node runtime-node--${stack.status} ${selectedStack?.id === stack.id ? 'runtime-node--selected' : ''}`} onClick={() => selectStack(stack)}>
-            <span className="runtime-node-icon">▦</span><b>{stack.shortLabel ?? shortRuntimeLabel(stack.label)}</b><small>{childBlocksForStack(stack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(stack.id)} source-bound · {stack.status}</small><span className="runtime-node-chip-row"><i>{stack.layout?.evidence.dependency ?? 'inferred'} layout</i></span>
-          </button>
-        </div>)}
-      </div>)}
-    </div>
+    <small>NeoStack Map uses a fixed overlay lattice board. Inferred placement is layout-only and does not create dependency edges.</small>
+    {renderLatticeBoard(sleeveStackBoard, 'NeoStack-only runtime graph', renderNeoStackSlot)}
     {selectedStack && <div className="runtime-selected-stack-summary"><b>{selectedStack.label}</b><small>{childBlocksForStack(selectedStack.id).length} NeoBlocks · {sourceBoundLayerCountForStack(selectedStack.id)} source-bound MOLT Blocks · status {selectedStack.status}</small></div>}
   </div>;
 
   const renderNeoBlockView = () => <div className="runtime-neoblock-view runtime-map-centered" style={graphViewportStyle}>
     <h2>NeoBlock Map</h2>
     <small>Structural route of all NeoBlocks across all NeoStacks. Runtime trace is not required.</small>
-    <small>NeoBlocks are arranged by semantic phase and parent NeoStack. Layout may be inferred; graph edges remain real only.</small>
-    <div className="runtime-neoblock-module-map runtime-neoblock-all-lanes runtime-cognitive-topology" aria-label="All NeoBlocks by NeoStack">
-      {topologyRows(model.neoBlocks).map(({ row, nodes }) => <section key={`block-row-${row}`} className="runtime-cognitive-row runtime-neoblock-phase-row" aria-label={`NeoBlock phase ${nodes[0]?.layout?.phase ?? 'unknown'}`}>
-        <header className="runtime-row-phase-label"><b>{nodes[0]?.layout?.phase ?? 'unknown'}</b><small>{nodes.length} NeoBlocks</small></header>
-        {nodes.map((block) => {
-          const parentStack = model.neoStacks.find((stack) => stack.id === block.parentId);
-          const edge = model.edges.find((entry) => entry.kind === 'routes' && (entry.from === block.id || entry.to === block.id));
-          const overlay = isRecord(block.metadata?.overlay) ? block.metadata.overlay : undefined;
-          return <div key={block.id} className="runtime-neoblock-lane-step runtime-cognitive-node-wrap" data-layout-x={block.layout?.x ?? 0} data-layout-phase={block.layout?.phase}>{row > 0 && renderCompactEdge(edge, 'runtime-map-edge--tier')}<button type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} ${overlay ? `runtime-map-card--${String(overlay.activationState)}` : ''} runtime-neoblock-module ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} onClick={() => selectBlock(block)}><span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {parentStack?.shortLabel ?? parentStack?.label ?? block.parentId ?? 'unknown'}</small><span className="runtime-node-chip-row"><i>{layersForBlock(block).length} MOLT Blocks</i><i>{sourceBoundLayerCount(block)} source-bound</i><i>{String(overlay?.rowLabel ?? block.layout?.evidence.dependency ?? 'inferred')}</i></span></button></div>;
-        })}
-      </section>)}
-    </div>
+    <small>NeoBlocks are assigned to fixed overlay lattice slots; empty slots stay faint and graph edges remain real only.</small>
+    {renderLatticeBoard(neoBlockBoard, 'All NeoBlocks by fixed overlay lattice slots', renderNeoBlockSlot)}
     <small>MOLT details are intentionally compressed into the right inspector and bottom drawer; they are not graph cards in NeoBlock Map.</small>
   </div>;
 
   const renderRuntimePathView = () => <div className="runtime-path-view runtime-map-centered" style={graphViewportStyle}>
     <h2>Runtime Path View</h2>
     {traceEvents.length === 0 && <div className="runtime-geometry-empty-trace">No runtime trace yet. Send a task to Hermes to activate the route.</div>}
-    {traceEvents.length === 0 && <small>Planned route skeleton is shown idle until a real Hermes trace arrives.</small>}
-    <div className="runtime-path-map" aria-label="Compact active runtime route map">
-      {model.pathNodes.map((node, index) => {
-        const previous = model.pathNodes[index - 1];
-        const edge = previous ? model.edges.find((entry) => (entry.from === previous.id && entry.to === node.id) || entry.to === node.id || entry.from === node.id) : undefined;
-        return <div key={node.id} className="runtime-path-step runtime-path-step--compact">{index > 0 && renderCompactEdge(edge)}{renderVisualNode(node, 'runtime-path-node')}</div>;
-      })}
-    </div>
+    {traceEvents.length === 0 && <small>Planned route in lattice slots / no trace yet.</small>}
+    {renderLatticeBoard(runtimePathBoard, 'Planned runtime route by fixed overlay lattice slots', renderNeoBlockSlot)}
   </div>;
 
   const drawerPayload = selectedVisualNode ? { id: selectedVisualNode.id, kind: selectedVisualNode.kind, label: selectedVisualNode.label, status: selectedVisualNode.status, sourceStatus: selectedVisualNode.sourceStatus, metadata: selectedVisualNode.metadata } : { sleeve: activeSessionSleeve.title };
@@ -1250,6 +1418,8 @@ function RuntimeNodeInspectorCard({ node, layers, onOpenNeoBlock, onSelect }: { 
       <div className="runtime-inspector-rows">
         <span><b>selected overlay</b>{String(overlay.overlayId ?? 'n/a')}</span>
         <span><b>row label</b>{String(overlay.rowLabel ?? 'n/a')}</span>
+        <span><b>column</b>{String(overlay.columnIndex ?? 'n/a')}</span>
+        <span><b>slot state</b>{String(overlay.activationState ?? 'n/a')}</span>
         <span><b>route role</b>{String(overlay.routeRole ?? 'n/a')}</span>
         <span><b>activation state</b>{String(overlay.activationState ?? 'n/a')}</span>
         <span><b>activation reason</b>{String(overlay.activationReason ?? 'n/a')}</span>
