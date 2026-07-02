@@ -2760,6 +2760,7 @@ export default function App() {
         pendingRuntimeApproval={pendingRuntimeApproval}
         toolCapabilityResolutions={toolCapabilityResolutions}
         nativeActionMode={nativeActionMode}
+        onNativeActionModeChange={setNativeActionMode}
         onDraftMissingMoltBlock={draftRuntimeCapabilityMoltBlock}
       />
     </div>;

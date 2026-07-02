@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
-import { RuntimeGeometryObserver, buildRuntimeGeometryObserverGraph, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
+import { RuntimeGeometryObserver, buildRuntimeCognitiveTopology, buildRuntimeGeometryObserverGraph, buildRuntimeVisualViewModel, deriveRuntimeExecutionState } from '../components/RuntimeGeometryObserver';
 import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 import { runNativeHermesAction } from '../lib/umg/hermesRuntimeExecution';
 import { createCompilerRequest } from '../lib/umg/compileCandidateAdapter';
@@ -435,7 +435,7 @@ describe('RuntimeGeometryObserver', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
     await waitFor(() => expect(screen.getByText('Hermes prepared an action but did not return a natural-language response.')).toBeTruthy());
-    expect(screen.getByText(/Action prepared\. Observe mode prepares the route only/)).toBeTruthy();
+    expect(screen.getAllByText(/Action prepared\. Observe mode prepares the route only/).length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Runtime graph surface').textContent).not.toContain('Observe mode prepares the route only');
   });
 
@@ -486,6 +486,73 @@ describe('RuntimeGeometryObserver', () => {
     expect(screen.getByLabelText('Hermes Chat').textContent).toContain('Hermes says hello.');
     expect(screen.getByRole('complementary', { name: 'Runtime trace and artifact rail' }).textContent).toContain('Action request created');
     expect(screen.getByLabelText('Runtime graph surface').textContent).not.toContain('Hermes says hello.');
+  });
+
+
+  it('Hermes Terminal renders split left transcript and right Hermes Response pane with no response placeholder', () => {
+    renderInteractiveObserver({ compiledRuntimeManifest: makeCompiledManifest() });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.getByLabelText('Hermes transcript and prompt')).toBeTruthy();
+    expect(screen.getByLabelText('Hermes Response')).toBeTruthy();
+    expect(screen.getByText('No Hermes response yet.')).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Hermes Work Log / Terminal' })).toBeTruthy();
+    expect(document.querySelector('.runtime-work-log-panel')?.hasAttribute('open')).toBe(false);
+  });
+
+  it('Hermes Response pane shows the latest Hermes/system response after runtime result', async () => {
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      hermesRuntimeResult: { status: 'ok', finalOutput: 'Visible response belongs in the right pane.', trace: [], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    await waitFor(() => expect(screen.getByLabelText('Hermes Response').textContent).toContain('Visible response belongs in the right pane.'));
+  });
+
+  it('renders persistent Action Mode control and selecting mode updates runtime action mode state', () => {
+    const onMode = vi.fn();
+    renderInteractiveObserver({ compiledRuntimeManifest: makeCompiledManifest(), nativeActionMode: 'observe', onNativeActionModeChange: onMode });
+    const control = screen.getByLabelText('Action Mode');
+    expect(control.textContent).toContain('Observe');
+    expect(control.textContent).toContain('Approval');
+    expect(control.textContent).toContain('Direct');
+    fireEvent.click(screen.getByRole('button', { name: 'Approval' }));
+    expect(onMode).toHaveBeenCalledWith('approval');
+    expect(screen.getByText('Graph Mode')).toBeTruthy();
+    expect(screen.getByText('Action Mode')).toBeTruthy();
+  });
+
+  it('Observe mode prepares without external execution artifacts when only an action request is returned', () => {
+    renderInteractiveObserver({
+      compiledRuntimeManifest: makeCompiledManifest(),
+      nativeActionMode: 'observe',
+      hermesRuntimeResult: { status: 'ok', finalOutput: '', nativeActionResult: { status: 'observed', externalActionTaken: false }, trace: [{ traceId: 'trace.action', timestamp: 1, eventType: 'action_request_created', state: 'processing', label: 'Action request created' }], toolCalls: [], blockedCalls: [], approvalRequests: [], errors: [], artifacts: [], nextSuggestedActions: [] }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Hermes Terminal' }));
+    expect(screen.getByLabelText('Hermes Response').textContent).toContain('externalActionTaken remains false');
+    expect(screen.getByLabelText('Hermes Response').textContent).toContain('artifacts0');
+  });
+
+  it('cognitive topology creates multiple x positions for semantic NeoStack and NeoBlock branches without fake dependency edges', () => {
+    const nodes = [
+      { id: 'stack.intake', kind: 'neostack', label: 'Prompt Intake', icon: '▦', status: 'idle' },
+      { id: 'stack.source', kind: 'neostack', label: 'Source Library Read', icon: '▦', status: 'idle' },
+      { id: 'stack.domain', kind: 'neostack', label: 'Domain Model Parse', icon: '▦', status: 'idle' },
+      { id: 'stack.compose', kind: 'neostack', label: 'NeoBlock Composer Plan', icon: '▦', status: 'idle' },
+      { id: 'stack.validate', kind: 'neostack', label: 'Validate Review', icon: '▦', status: 'idle' },
+      { id: 'stack.report', kind: 'neostack', label: 'Artifact Report', icon: '▦', status: 'idle' }
+    ];
+    const positioned = buildRuntimeCognitiveTopology(nodes, []);
+    const multiNodeRow = Array.from(positioned.reduce((rows, node) => rows.set(node.layout.y, [...(rows.get(node.layout.y) ?? []), node.layout.x]), new Map()).values()).find((xs) => new Set(xs).size > 1);
+    expect(multiNodeRow).toBeTruthy();
+    expect(positioned.every((node) => node.metadata.layoutEvidence.inferredOnly)).toBe(true);
+    expect(positioned.every((node) => node.metadata.layoutEvidence.dependency !== 'explicit')).toBe(true);
+  });
+
+  it('NeoStack and NeoBlock view models expose topology evidence metadata for inspector rendering', () => {
+    const model = buildRuntimeVisualViewModel({ activeSessionSleeve: makeSleeve(), compiledRuntimeManifest: makeCompiledManifest(), mode: 'neoblock' });
+    expect(model.neoStacks[0].metadata.layoutEvidence.source).toMatch(/semantic phase|fallback order|explicit dependency/);
+    expect(model.neoBlocks[0].metadata.layoutEvidence.phase).toBeTruthy();
+    expect(model.edges.every((edge) => edge.kind !== 'fallback')).toBe(true);
   });
 
   it('keeps the Runtime bottom drawer collapsed by default', () => {
