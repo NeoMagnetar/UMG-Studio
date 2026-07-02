@@ -2,6 +2,13 @@ import type { CompileCandidate, SleeveAssemblyPlan } from './blockMatchingTypes'
 import { getRuntimeTargetId, getVisualStateForId } from './cognitiveRuntimeState';
 import type { UMGCompiledRuntimeManifest, UMGTraceEvent, UMGRuntimeState, UMGRuntimeVisualState } from './cognitiveRuntimeTypes';
 import { validateNeoBlockComposition } from './neoBlockCompositionValidator';
+import {
+  activateOverlayRoute,
+  inferRoutingOverlaysFromContext,
+  placeNeoBlocksIntoOverlayRows,
+  type NeoBlockLatticePlacement,
+  type MoltRole
+} from './overlayLattice';
 import type { NormalizedTemplateMoltBlock, NormalizedTemplateNeoBlock, NormalizedTemplateNeoStack, NormalizedTemplateSleeve } from './templateSleeveStructures';
 import type {
   GateGeometryNode,
@@ -26,6 +33,10 @@ export type BuildRuntimeGeometryManifestArgs = {
   viewMode?: RuntimeGeometryViewMode;
   runtimeVisualState?: UMGRuntimeVisualState;
   runtimeTraceEvents?: UMGTraceEvent[];
+  runtimePrompt?: string;
+  actionMode?: 'observe' | 'approval' | 'direct';
+  availableCapabilities?: string[];
+  requiredCapabilities?: string[];
   generatedAt?: string;
 };
 
@@ -151,6 +162,142 @@ function roleFromMolt(block: NormalizedTemplateMoltBlock): MoltGeometryBindingNo
     return block.role as MoltGeometryBindingNode['localSlotRole'];
   }
   return 'other';
+}
+
+function overlayRoleFromMolt(role: string): MoltRole | undefined {
+  return ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint', 'gate', 'metaTool', 'unknown'].includes(role)
+    ? role as MoltRole
+    : role === 'meta'
+      ? 'metaTool'
+      : undefined;
+}
+
+function actionModeFromSleeve(sleeve: NormalizedTemplateSleeve): 'observe' | 'approval' | 'direct' {
+  if (sleeve.defaultExecutionMode === 'liveAllowed') return 'direct';
+  if (sleeve.defaultExecutionMode === 'approvalRequired') return 'approval';
+  return 'observe';
+}
+
+function blockOverlaySourceMetadata(block: NormalizedTemplateNeoBlock): Record<string, unknown> {
+  const dynamicMetadata = (block as unknown as { metadata?: Record<string, unknown> }).metadata ?? {};
+  return {
+    ...dynamicMetadata,
+    sourceKind: block.sourceKind,
+    reusedBlockId: block.reusedBlockId,
+    sourcePath: block.sourcePath,
+    matchedCandidateId: block.matchedCandidateId,
+    blockType: block.blockType,
+    jsonSchema: block.jsonSchema,
+    nlCard: block.nlCard,
+    generationReason: block.generationReason,
+    rejectedCandidateIds: block.rejectedCandidateIds
+  };
+}
+
+function projectOverlayLatticeMetadata(args: {
+  sleeve: NormalizedTemplateSleeve;
+  prompt?: string;
+  actionMode?: 'observe' | 'approval' | 'direct';
+  availableCapabilities?: string[];
+  requiredCapabilities?: string[];
+}) {
+  const neoStackTitleById = new Map(args.sleeve.neoStacks.map((stack) => [stack.id, stack.title]));
+  const rolesByNeoBlock = new Map<string, MoltRole[]>();
+  args.sleeve.moltBlocks.forEach((molt) => {
+    const parentId = molt.parentNeoBlockId;
+    const role = overlayRoleFromMolt(molt.role);
+    if (!parentId || !role) return;
+    rolesByNeoBlock.set(parentId, Array.from(new Set([...(rolesByNeoBlock.get(parentId) ?? []), role])));
+  });
+  const uploadedPackage = {
+    detected: args.sleeve.metadata?.importedPackage === true,
+    packageType: asString(args.sleeve.metadata?.packageType) ?? asString(args.sleeve.metadata?.sourceKind),
+    sleeveId: args.sleeve.id,
+    title: args.sleeve.title,
+    fileName: asString(args.sleeve.metadata?.fileName) ?? asString(args.sleeve.metadata?.packageFileName),
+    keywords: Array.isArray(args.sleeve.metadata?.keywords) ? args.sleeve.metadata.keywords.map(String) : args.sleeve.tags,
+    neoStackTitles: args.sleeve.neoStacks.map((stack) => stack.title),
+    neoBlockTitles: args.sleeve.neoBlocks.map((block) => block.title),
+    moltTitles: args.sleeve.moltBlocks.map((block) => block.title)
+  };
+  const prompt = args.prompt ?? asString(args.sleeve.metadata?.sourcePrompt) ?? asString(args.sleeve.metadata?.userPrompt) ?? args.sleeve.description;
+  const overlayInference = inferRoutingOverlaysFromContext({
+    prompt,
+    uploadedText: asString(args.sleeve.metadata?.uploadedText),
+    uploadedPackage,
+    candidateBlocks: args.sleeve.neoBlocks.map((block) => {
+      const metadata = blockOverlaySourceMetadata(block);
+      return {
+        id: block.id,
+        title: block.title,
+        blockType: 'neoblock',
+        tags: block.tags,
+        description: block.description,
+        sourceKind: block.sourceKind,
+        domain: asString(metadata.domain),
+        metadata
+      };
+    })
+  });
+  const placement = placeNeoBlocksIntoOverlayRows({
+    selectedOverlays: overlayInference.selectedOverlays,
+    neoBlocks: args.sleeve.neoBlocks.map((block) => {
+      const metadata = blockOverlaySourceMetadata(block);
+      const explicitDependsOn = Array.isArray(metadata.explicitDependsOn) ? metadata.explicitDependsOn.map(String) : [];
+      return {
+        id: block.id,
+        title: block.title,
+        parentNeoStackId: block.neoStackId,
+        parentNeoStackTitle: neoStackTitleById.get(block.neoStackId),
+        description: block.description,
+        tags: block.tags,
+        roles: rolesByNeoBlock.get(block.id),
+        blockType: 'neoblock',
+        explicitDependsOn,
+        sourceKind: block.sourceKind,
+        metadata
+      };
+    })
+  });
+  const activation = activateOverlayRoute({
+    placements: placement.placements,
+    context: {
+      prompt,
+      selectedOverlayIds: overlayInference.selectedOverlays.map((overlay) => overlay.overlayId),
+      actionMode: args.actionMode ?? actionModeFromSleeve(args.sleeve),
+      availableCapabilities: args.availableCapabilities,
+      requiredCapabilities: args.requiredCapabilities
+    }
+  });
+  const placementsByNeoBlockId = new Map(activation.placements.map((entry) => [entry.neoBlockId, entry]));
+  return { overlayInference, placement, activation, placementsByNeoBlockId };
+}
+
+function geometryStateFromOverlay(placement?: NeoBlockLatticePlacement): RuntimeGeometryState {
+  if (!placement) return 'idle';
+  if (placement.activationState === 'active') return 'active';
+  if (placement.activationState === 'blocked') return 'blocked';
+  if (placement.activationState === 'missing' || placement.activationState === 'draftSuggested') return 'attention';
+  if (placement.activationState === 'available') return 'queued';
+  return 'idle';
+}
+
+function overlayNodeMetadata(placement?: NeoBlockLatticePlacement) {
+  if (!placement) return undefined;
+  return {
+    overlayId: placement.overlayId,
+    rowId: placement.rowId,
+    rowLabel: placement.rowLabel,
+    rowIndex: placement.rowIndex,
+    columnIndex: placement.columnIndex,
+    siblingGroup: placement.siblingGroup,
+    activationState: placement.activationState,
+    activationReason: placement.activationReason,
+    dependencyType: placement.dependencyType,
+    explicitDependsOn: placement.explicitDependsOn,
+    routeRole: placement.routeRole,
+    evidence: placement.evidence
+  };
 }
 
 function bindingNodeId(parentNeoBlockId: string, moltBlockId: string, index: number) {
@@ -424,7 +571,21 @@ export function buildRuntimeGeometryManifest(args: BuildRuntimeGeometryManifestA
   const moltNodes = buildMoltGeometryBindingNodes(source.sleeve);
   const gateNodes = buildGateGeometryNodes(source.sleeve);
   const toolNodes = buildToolEndpointNodes(source);
-  const initialNodes: RuntimeGeometryNode[] = [sleeveNode, ...stackNodes, ...blockNodes, ...moltNodes, ...gateNodes, ...toolNodes];
+  const overlayLattice = projectOverlayLatticeMetadata({
+    sleeve: source.sleeve,
+    prompt: args.runtimePrompt,
+    actionMode: args.actionMode,
+    availableCapabilities: args.availableCapabilities,
+    requiredCapabilities: args.requiredCapabilities
+  });
+  const overlayBlockNodes = blockNodes.map((node) => {
+    const overlayPlacement = overlayLattice.placementsByNeoBlockId.get(node.neoBlockId);
+    const overlayMetadata = overlayNodeMetadata(overlayPlacement);
+    return overlayMetadata
+      ? { ...node, state: geometryStateFromOverlay(overlayPlacement), metadata: { ...(node.metadata ?? {}), overlay: overlayMetadata } }
+      : node;
+  });
+  const initialNodes: RuntimeGeometryNode[] = [sleeveNode, ...stackNodes, ...overlayBlockNodes, ...moltNodes, ...gateNodes, ...toolNodes];
   const connections = buildRuntimeConnections({ sleeve: source.sleeve, nodes: initialNodes, assemblyPlan: source.assemblyPlan });
   const manifest: UMGGeometryManifest = {
     id: `geometry:${source.sleeve.id}:${args.viewMode ?? 'structure'}`,
@@ -439,7 +600,16 @@ export function buildRuntimeGeometryManifest(args: BuildRuntimeGeometryManifestA
       templateKind: source.sleeve.templateKind,
       source: source.sleeve.source,
       compileCandidateId: source.compileCandidate?.id,
-      compiledRuntimeManifest: Boolean(source.compiledRuntimeManifest)
+      compiledRuntimeManifest: Boolean(source.compiledRuntimeManifest),
+      overlayInference: overlayLattice.overlayInference,
+      overlayPlacementSummary: {
+        rowsUsed: overlayLattice.placement.rowsUsed,
+        placedNeoBlockCount: overlayLattice.placement.placements.length,
+        unplacedNeoBlockCount: overlayLattice.placement.unplacedNeoBlocks.length,
+        activeNeoBlockIds: overlayLattice.activation.activeNeoBlockIds,
+        missingCapabilityIds: overlayLattice.activation.missingCapabilityIds,
+        blockedNeoBlockIds: overlayLattice.activation.blockedNeoBlockIds
+      }
     }
   };
 

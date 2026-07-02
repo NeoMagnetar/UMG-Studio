@@ -463,7 +463,7 @@ export function buildRuntimeGeometryObserverGraph(args: {
 
 export type RuntimeVisualViewMode = 'system_sleeve' | 'neostack' | 'neoblock' | 'runtime_path';
 export type RuntimeVisualNodeKind = 'sleeve' | 'neostack' | 'neoblock' | 'merge' | 'gate' | 'tool' | 'capability' | 'resource' | 'artifact' | 'context' | 'molt_layer';
-export type RuntimeVisualNodeStatus = 'idle' | 'available' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error' | 'off';
+export type RuntimeVisualNodeStatus = 'idle' | 'available' | 'active' | 'processing' | 'approval' | 'complete' | 'blocked' | 'error' | 'off' | 'missing' | 'draftSuggested';
 export type RuntimeVisualSourceStatus = 'source-library-reused' | 'reuse-decision' | 'runtime-draft' | 'generated-glue' | 'unresolved';
 
 export type RuntimeVisualNode = {
@@ -526,6 +526,18 @@ export type RuntimeVisualViewModel = {
 };
 
 const visualStatusFromGeometry = (status: RuntimeGeometryNodeStatus): RuntimeVisualNodeStatus => status;
+
+function visualStatusFromOverlay(metadata?: Record<string, unknown>, fallback: RuntimeVisualNodeStatus = 'idle'): RuntimeVisualNodeStatus {
+  const overlay = isRecord(metadata?.overlay) ? metadata.overlay : undefined;
+  const activationState = String(overlay?.activationState ?? '');
+  if (activationState === 'active') return 'active';
+  if (activationState === 'inactive') return 'off';
+  if (activationState === 'available') return 'available';
+  if (activationState === 'missing') return 'missing';
+  if (activationState === 'blocked') return 'blocked';
+  if (activationState === 'draftSuggested') return 'draftSuggested';
+  return fallback;
+}
 
 function compactRuntimeLabel(label: string) {
   return label
@@ -617,7 +629,7 @@ function graphNodeToVisualNode(node: RuntimeGeometryNode): RuntimeVisualNode {
     label: node.label,
     shortLabel: shortRuntimeLabel(node.label, kind === 'capability' ? 26 : 20),
     icon: kind === 'neostack' ? '▦' : kind === 'neoblock' ? '◈' : kind === 'molt_layer' ? '▤' : kind === 'gate' ? '◇' : kind === 'capability' ? '⚙' : kind === 'sleeve' ? '⬢' : kind === 'artifact' ? '✦' : '◆',
-    status: visualStatusFromGeometry(node.status),
+    status: visualStatusFromOverlay(node.metadata, visualStatusFromGeometry(node.status)),
     sourceStatus: sourceStatusFromNode(node),
     parentId: node.parentId,
     neoStackId: node.kind === 'neoblock' ? node.parentId?.replace(/^neostack:/, '') : undefined,
@@ -1008,12 +1020,15 @@ export function RuntimeGeometryObserver({
     return rows;
   }, new Map<number, RuntimeVisualNode[]>()).entries()).sort(([a], [b]) => a - b).map(([row, rowNodes]) => ({ row, nodes: rowNodes.sort((a, b) => (a.layout?.x ?? 0) - (b.layout?.x ?? 0) || a.label.localeCompare(b.label)) }));
 
-  const renderVisualNode = (node: RuntimeVisualNode, extra = '') => <button key={node.id} type="button" title={node.label} className={`runtime-node runtime-compact-node runtime-node--${node.status} runtime-node--${node.kind} ${selectedVisualNode?.id === node.id ? 'runtime-node--selected' : ''} ${extra}`} onClick={() => selectVisualNode(node)}>
+  const renderVisualNode = (node: RuntimeVisualNode, extra = '') => {
+    const overlay = isRecord(node.metadata?.overlay) ? node.metadata.overlay : undefined;
+    return <button key={node.id} type="button" title={node.label} className={`runtime-node runtime-compact-node runtime-node--${node.status} runtime-node--${node.kind} ${overlay ? `runtime-map-card--${String(overlay.activationState)}` : ''} ${selectedVisualNode?.id === node.id ? 'runtime-node--selected' : ''} ${extra}`} onClick={() => selectVisualNode(node)}>
     <span className="runtime-node-icon">{node.icon}</span>
     <b>{node.shortLabel ?? shortRuntimeLabel(node.label)}</b>
     <small>{node.kind.replace('_', ' ')}</small>
-    <span className="runtime-node-chip-row">{(node.traceEventIds?.length ?? 0) > 0 && <i>{node.traceEventIds?.length} trace</i>}{(node.artifactIds?.length ?? 0) > 0 && <i>{node.artifactIds?.length} artifact</i>}</span>
+    <span className="runtime-node-chip-row">{overlay && <i>{String(overlay.rowLabel ?? 'overlay row')}</i>}{(node.traceEventIds?.length ?? 0) > 0 && <i>{node.traceEventIds?.length} trace</i>}{(node.artifactIds?.length ?? 0) > 0 && <i>{node.artifactIds?.length} artifact</i>}</span>
   </button>;
+  };
 
   const renderCompactEdge = (edge?: RuntimeVisualEdge, extra = '') => <div className={`runtime-map-edge runtime-map-edge--${edge?.status ?? 'idle'} ${edge?.traceEventIds?.length ? 'runtime-map-edge--glow' : ''} ${extra}`} aria-label="runtime connector" />;
 
@@ -1062,7 +1077,8 @@ export function RuntimeGeometryObserver({
         {nodes.map((block) => {
           const parentStack = model.neoStacks.find((stack) => stack.id === block.parentId);
           const edge = model.edges.find((entry) => entry.kind === 'routes' && (entry.from === block.id || entry.to === block.id));
-          return <div key={block.id} className="runtime-neoblock-lane-step runtime-cognitive-node-wrap" data-layout-x={block.layout?.x ?? 0} data-layout-phase={block.layout?.phase}>{row > 0 && renderCompactEdge(edge, 'runtime-map-edge--tier')}<button type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} runtime-neoblock-module ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} onClick={() => selectBlock(block)}><span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {parentStack?.shortLabel ?? parentStack?.label ?? block.parentId ?? 'unknown'}</small><span className="runtime-node-chip-row"><i>{layersForBlock(block).length} MOLT Blocks</i><i>{sourceBoundLayerCount(block)} source-bound</i><i>{block.layout?.evidence.dependency ?? 'inferred'} layout</i></span></button></div>;
+          const overlay = isRecord(block.metadata?.overlay) ? block.metadata.overlay : undefined;
+          return <div key={block.id} className="runtime-neoblock-lane-step runtime-cognitive-node-wrap" data-layout-x={block.layout?.x ?? 0} data-layout-phase={block.layout?.phase}>{row > 0 && renderCompactEdge(edge, 'runtime-map-edge--tier')}<button type="button" title={block.label} className={`runtime-node runtime-compact-node runtime-map-card runtime-node--${block.status} ${overlay ? `runtime-map-card--${String(overlay.activationState)}` : ''} runtime-neoblock-module ${selectedBlock?.id === block.id ? 'runtime-node--selected' : ''}`} onClick={() => selectBlock(block)}><span className="runtime-node-icon">◈</span><b>{block.shortLabel ?? shortRuntimeLabel(block.label)}</b><small>Parent NeoStack: {parentStack?.shortLabel ?? parentStack?.label ?? block.parentId ?? 'unknown'}</small><span className="runtime-node-chip-row"><i>{layersForBlock(block).length} MOLT Blocks</i><i>{sourceBoundLayerCount(block)} source-bound</i><i>{String(overlay?.rowLabel ?? block.layout?.evidence.dependency ?? 'inferred')}</i></span></button></div>;
         })}
       </section>)}
     </div>
@@ -1221,12 +1237,27 @@ function RuntimeNodeInspectorCard({ node, layers, onOpenNeoBlock, onSelect }: { 
     : Array.isArray(evidence?.missingRoleWarnings)
       ? evidence.missingRoleWarnings.map(String)
       : [];
+  const overlay = isRecord(node.metadata?.overlay) ? node.metadata.overlay : undefined;
+  const overlayEvidence = Array.isArray(overlay?.evidence) ? overlay.evidence.map(String) : [];
 
   return <aside className="runtime-node-inspector-card" aria-label="Runtime node inspector card">
     <h3>{node.kind === 'neoblock' ? 'NeoBlock inspector' : node.kind === 'neostack' ? 'NeoStack inspector' : 'Selected node summary'}</h3>
     <b>{node.label}</b>
     <p>{String(node.metadata?.description ?? node.rawNode?.subtitle ?? 'Compressed runtime node')}</p>
     <div className="runtime-inspector-rows">{rows.map(([key, value]) => <span key={key}><b>{key}</b>{value}</span>)}{node.layout && <><span><b>layout dependency</b>{node.layout.evidence.dependency}</span><span><b>layout evidence</b>{node.layout.evidence.source}: {node.layout.evidence.reason}</span><span><b>semantic phase</b>{node.layout.phase}</span></>}</div>
+    {overlay && <details className="runtime-inspector-molt-list" open>
+      <summary>Overlay Lattice Evidence</summary>
+      <div className="runtime-inspector-rows">
+        <span><b>selected overlay</b>{String(overlay.overlayId ?? 'n/a')}</span>
+        <span><b>row label</b>{String(overlay.rowLabel ?? 'n/a')}</span>
+        <span><b>route role</b>{String(overlay.routeRole ?? 'n/a')}</span>
+        <span><b>activation state</b>{String(overlay.activationState ?? 'n/a')}</span>
+        <span><b>activation reason</b>{String(overlay.activationReason ?? 'n/a')}</span>
+        <span><b>dependency type</b>{String(overlay.dependencyType ?? 'layout-only')}</span>
+      </div>
+      <small>{String(overlay.dependencyType ?? 'layout-only') === 'explicit' ? 'Explicit dependency appears only because metadata supplied explicitDependsOn.' : 'Layout-only/inferred placement does not create a hard graph dependency.'}</small>
+      {overlayEvidence.length > 0 && <ol>{overlayEvidence.map((entry, index) => <li key={`${node.id}-overlay-evidence-${index}`}>{entry}</li>)}</ol>}
+    </details>}
     {evidence && <details className="runtime-inspector-molt-list" open>
       <summary>{enrichmentEvidence ? 'UO Composition/Enrichment Evidence' : 'Composition Evidence'}</summary>
       <div className="runtime-inspector-rows">

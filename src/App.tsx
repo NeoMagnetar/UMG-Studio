@@ -67,6 +67,7 @@ import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from './lib/u
 import type { UMGCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import { listWorkspaceBlocks, saveWorkspaceBlock } from './lib/umg/umgWorkspaceBlockRegistry';
 import { buildComposerEnhancedSleeve, enrichUoImportedSleeveWithMoltEvidence } from './lib/umg/moltNeoBlockComposer';
+import { inferRoutingOverlaysFromContext } from './lib/umg/overlayLattice';
 
 const demo = 'Build me a customer-intake chatbot for a mobile detailing business. It should answer basic questions, collect customer name, vehicle type, location, service need, and budget, then produce a clean lead summary.';
 const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
@@ -239,6 +240,45 @@ const normalizePublicChipForAnalyzer = (chip?: string) => ({
   'Custom Workflow': 'Custom Workflow'
 } as Record<string, string>)[chip ?? ''] ?? chip;
 const publicPipelineStages = ['Intake', 'Analyze', 'Match Blocks', 'Generate Missing Blocks', 'Assemble Sleeve', 'Compile', 'Run Hermes', 'Trace Runtime'];
+
+function enrichSleeveWithOverlayInference(args: {
+  sleeve: NormalizedTemplateSleeve;
+  prompt?: string;
+  uploadedText?: string;
+  packageFileName?: string;
+  packageType?: string;
+  packageKeywords?: string[];
+}) {
+  const inference = inferRoutingOverlaysFromContext({
+    prompt: args.prompt,
+    uploadedText: args.uploadedText,
+    uploadedPackage: {
+      detected: args.sleeve.metadata?.importedPackage === true,
+      packageType: args.packageType ?? String(args.sleeve.metadata?.packageType ?? args.sleeve.metadata?.sourceKind ?? ''),
+      sleeveId: args.sleeve.id,
+      title: args.sleeve.title,
+      fileName: args.packageFileName ?? String(args.sleeve.metadata?.fileName ?? args.sleeve.metadata?.packageFileName ?? ''),
+      keywords: args.packageKeywords ?? args.sleeve.tags,
+      neoStackTitles: args.sleeve.neoStacks.map((stack) => stack.title),
+      neoBlockTitles: args.sleeve.neoBlocks.map((block) => block.title),
+      moltTitles: args.sleeve.moltBlocks.map((block) => block.title)
+    },
+    candidateBlocks: args.sleeve.neoBlocks.map((block) => {
+      const blockMetadata = (block as unknown as Record<string, unknown>).metadata as Record<string, unknown> | undefined;
+      return { id: block.id, title: block.title, blockType: 'neoblock', tags: block.tags, description: block.description, sourceKind: block.sourceKind, metadata: blockMetadata };
+    })
+  });
+  return {
+    ...args.sleeve,
+    metadata: {
+      ...(args.sleeve.metadata ?? {}),
+      selectedOverlays: inference.selectedOverlays.map((overlay) => ({ overlayId: overlay.overlayId, title: overlay.title, score: overlay.score, confidence: overlay.confidence })),
+      dominantOverlayId: inference.dominantOverlayId,
+      overlayInferenceEvidence: inference.selectedOverlays.map((overlay) => ({ overlayId: overlay.overlayId, evidence: overlay.evidence.slice(0, 12) })),
+      rejectedOverlays: inference.rejectedOverlays.map((overlay) => ({ overlayId: overlay.overlayId, score: overlay.score, confidence: overlay.confidence, rejectedReason: overlay.rejectedReason })).slice(0, 8)
+    }
+  } as NormalizedTemplateSleeve;
+}
 
 const moltBuilderSections = [
   { key: 'directive', label: 'Directive', className: 'moltRoleDirective' },
@@ -1999,6 +2039,9 @@ export default function App() {
         packageDetected: true,
         importReviewReport,
         hermesImportBrief,
+        selectedOverlays: activeSessionSleeve.metadata?.selectedOverlays,
+        dominantOverlayId: activeSessionSleeve.metadata?.dominantOverlayId,
+        overlayInferenceEvidence: activeSessionSleeve.metadata?.overlayInferenceEvidence,
         fallbackUsed: false,
         genericArchitectDraftShown: false,
         sourceLibraryWrite: false
@@ -2151,7 +2194,7 @@ export default function App() {
         }
         const initialRuntimeSleeve = adaptHermesCustomSleevePlanToRuntimeSessionSleeve(generation.plan, generationRequest);
         const composerEnhanced = buildComposerEnhancedSleeve({ sleeve: initialRuntimeSleeve, userPrompt: selectedInput?.text || publicGoal, workspaceBlocks: listWorkspaceBlocks() });
-        const runtimeSleeve = composerEnhanced.sleeve as NormalizedTemplateSleeve;
+        const runtimeSleeve = enrichSleeveWithOverlayInference({ sleeve: composerEnhanced.sleeve as NormalizedTemplateSleeve, prompt: selectedInput?.text || publicGoal, uploadedText: uploadedIntakeContextText });
         if (generationRunId !== sleeveActivationVersionRef.current) {
           return;
         }
@@ -2183,6 +2226,10 @@ export default function App() {
           composerEvidence: composerEnhanced.evidence,
           composerInvoked: true,
           composerTargetDomain: runtimeSleeve.metadata?.composerTargetDomain,
+          selectedOverlays: runtimeSleeve.metadata?.selectedOverlays,
+          dominantOverlayId: runtimeSleeve.metadata?.dominantOverlayId,
+          overlayInferenceEvidence: runtimeSleeve.metadata?.overlayInferenceEvidence,
+          rejectedOverlays: runtimeSleeve.metadata?.rejectedOverlays,
           nlCardCount: [generation.plan.sleeve, ...generation.plan.neoStacks, ...generation.plan.neoBlocks, ...generation.plan.moltBlocks].filter((entry) => Boolean((entry as Record<string, unknown> | undefined)?.nlCard)).length,
           jsonSchemaCount: [generation.plan.sleeve, ...generation.plan.neoStacks, ...generation.plan.neoBlocks, ...generation.plan.moltBlocks].filter((entry) => Boolean((entry as Record<string, unknown> | undefined)?.jsonSchema)).length,
           compositionSource: buildCompositionSourceDiagnostics({ sleeve: runtimeSleeve, request: generationRequest, route: 'live Hermes' })
@@ -2824,6 +2871,7 @@ export default function App() {
               setImportReviewReport(disseminated.report as unknown as Record<string, unknown>);
               setHermesImportBrief(brief as unknown as Record<string, unknown>);
               let uoEnrichmentEvidence: unknown;
+              let importedOverlayMetadata: Record<string, unknown> = {};
               if (disseminated.normalizedSleeveCandidate) {
                 sleeveActivationVersionRef.current += 1;
                 const importedRuntimeSleeve = {
@@ -2839,8 +2887,21 @@ export default function App() {
                   }
                 } as NormalizedTemplateSleeve;
                 const enriched = enrichUoImportedSleeveWithMoltEvidence({ sleeve: importedRuntimeSleeve, userPrompt: publicGoal, workspaceBlocks: listWorkspaceBlocks() });
-                const runtimeSleeve = enriched.sleeve;
+                const runtimeSleeve = enrichSleeveWithOverlayInference({
+                  sleeve: enriched.sleeve,
+                  prompt: publicGoal,
+                  uploadedText: JSON.stringify(brief, null, 2),
+                  packageFileName: file.name,
+                  packageType: disseminated.report.packageDetection.packageType,
+                  packageKeywords: ['umg', 'imported', disseminated.report.packageDetection.packageType, disseminated.report.packageDetection.sleeveId ?? ''].filter(Boolean)
+                });
                 uoEnrichmentEvidence = enriched.evidence;
+                importedOverlayMetadata = {
+                  selectedOverlays: runtimeSleeve.metadata?.selectedOverlays,
+                  dominantOverlayId: runtimeSleeve.metadata?.dominantOverlayId,
+                  overlayInferenceEvidence: runtimeSleeve.metadata?.overlayInferenceEvidence,
+                  rejectedOverlays: runtimeSleeve.metadata?.rejectedOverlays
+                };
                 const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: [], sourceLabel: 'imported_legacy_package' });
                 setActiveSessionSleeve(runtimeSleeve);
                 resetCompileStateForActiveSleeve(runtimeSleeve);
@@ -2851,7 +2912,7 @@ export default function App() {
                 setCompilerRequestPreview(undefined);
               }
               setHermesCustomGenerationStatus('ok: imported UMG package · live Hermes generation skipped');
-              setHermesCustomGenerationDiagnostics({ generationRoute: 'imported_legacy_sleeve_package', importedPackage: true, liveHermesGenerated: false, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
+              setHermesCustomGenerationDiagnostics({ generationRoute: 'imported_legacy_sleeve_package', importedPackage: true, liveHermesGenerated: false, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, ...importedOverlayMetadata, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
               setCompilerResult(undefined);
               setCompileError(null);
               setStatus('Imported legacy UMG Sleeve package ready. Compile next.');

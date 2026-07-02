@@ -5,6 +5,7 @@ import { retrieveRoleTargetedUmgLibraryCandidates, summarizeUmgLibraryCandidates
 import { validateHermesCustomSleevePlanScaffold } from './hermesSleevePlanSchema';
 import { buildExpandedRetrievalQuery, buildIntakeDiagnostics, buildUploadedContextNarrative, type UploadedIntakeContext } from './intakeSemanticExtraction';
 import { getHermesNativeToolBlockByCapability } from './nativeHermesToolBlocks';
+import { getOverlayById, inferRoutingOverlaysFromContext, type OverlayInferenceResult } from './overlayLattice';
 
 export type HermesCustomSleeveGenerationRequest = {
   requestId: string;
@@ -27,6 +28,8 @@ export type HermesCustomSleeveGenerationRequest = {
   missingRoles: UmgLibraryCandidateRoleBucket[];
   rejectedCandidateIds: string[];
   libraryCandidateSummary: ReturnType<typeof summarizeUmgLibraryCandidates>;
+  overlayInference: OverlayInferenceResult;
+  overlayBoostedTags: string[];
   outputContract: string;
 };
 
@@ -133,6 +136,38 @@ export function rankHermesNativeCandidates(candidates: UmgLibraryCandidate[], qu
     .slice(0, limit);
 }
 
+function candidateOverlayBoost(candidate: UmgLibraryCandidate, boostedTags: string[], domainTerms: string[]) {
+  const text = [candidate.id, candidate.title, candidate.description, candidate.domain, candidate.category, candidate.sourcePath, ...(candidate.tags ?? [])].filter(Boolean).join(' ').toLowerCase();
+  let boost = 0;
+  boostedTags.forEach((tag) => {
+    const term = tag.toLowerCase();
+    if (term && (candidate.tags ?? []).map((entry) => entry.toLowerCase()).includes(term)) boost += 6;
+    else if (term && text.includes(term)) boost += 3;
+  });
+  domainTerms.forEach((term) => {
+    const normalized = term.toLowerCase();
+    if (normalized && text.includes(normalized)) boost += normalized.length > 8 ? 8 : 5;
+  });
+  return boost;
+}
+
+function boostCandidatesForOverlays(candidates: UmgLibraryCandidate[], overlayInference: OverlayInferenceResult) {
+  const selectedDefinitions = overlayInference.selectedOverlays.map((overlay) => getOverlayById(overlay.overlayId)).filter(Boolean) as NonNullable<ReturnType<typeof getOverlayById>>[];
+  const boostedTags = Array.from(new Set(selectedDefinitions.flatMap((overlay) => overlay.boostedTags)));
+  const domainTerms = Array.from(new Set(selectedDefinitions.flatMap((overlay) => overlay.triggerTerms))).filter((term) => term.length > 2);
+  return {
+    boostedTags,
+    candidates: [...candidates]
+      .map((candidate) => {
+        const boost = candidateOverlayBoost(candidate, boostedTags, domainTerms);
+        return boost > 0
+          ? { ...candidate, score: candidate.score + boost, matchReasons: Array.from(new Set([...candidate.matchReasons, `overlay boost +${boost}`])) }
+          : candidate;
+      })
+      .sort((a, b) => b.score - a.score)
+  };
+}
+
 export function buildHermesCustomSleeveGenerationRequest(args: {
   userPrompt: string;
   userContext?: string;
@@ -145,7 +180,25 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
   const userContext = [args.userContext ?? '', uploadedNarrative].filter(Boolean).join('\n\n');
   const expandedRetrievalQuery = buildExpandedRetrievalQuery({ prompt: args.userPrompt, pastedContext: args.userContext, uploadedContexts: uploadedIntakeContexts });
   const roleTargetedRetrieval = retrieveRoleTargetedUmgLibraryCandidates(expandedRetrievalQuery, { perRoleLimit: 8, combinedLimit: 48 });
-  const libraryCandidates = rankHermesNativeCandidates(roleTargetedRetrieval.candidates, expandedRetrievalQuery, 48);
+  const overlayInference = inferRoutingOverlaysFromContext({
+    prompt: args.userPrompt,
+    uploadedText: userContext,
+    candidateBlocks: roleTargetedRetrieval.candidates.map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      blockType: candidate.blockType,
+      role: candidate.role,
+      tags: candidate.tags,
+      category: candidate.category,
+      domain: candidate.domain,
+      description: candidate.description,
+      sourcePath: candidate.sourcePath,
+      sourceKind: candidate.sourceKind,
+      content: candidate.content
+    }))
+  });
+  const overlayBoostedRetrieval = boostCandidatesForOverlays(roleTargetedRetrieval.candidates, overlayInference);
+  const libraryCandidates = rankHermesNativeCandidates(overlayBoostedRetrieval.candidates, expandedRetrievalQuery, 48);
   const libraryCandidateSummary = summarizeUmgLibraryCandidates(libraryCandidates, roleTargetedRetrieval.candidatesByRole);
   const intakeDiagnostics = buildIntakeDiagnostics({
     prompt: args.userPrompt,
@@ -176,6 +229,8 @@ export function buildHermesCustomSleeveGenerationRequest(args: {
     missingRoles: roleTargetedRetrieval.missingRoles,
     rejectedCandidateIds: roleTargetedRetrieval.rejectedCandidateIds,
     libraryCandidateSummary,
+    overlayInference,
+    overlayBoostedTags: overlayBoostedRetrieval.boostedTags,
     outputContract: `STRUCTURAL IR COMPOSER CONTRACT: Hermes must generate UMG IR first, not a generic workflow outline that is converted later. Required order: 1 parse prompt/context/uploads; 2 search library candidates; 3 identify domain and action intent; 4 identify major kinds of work; 5 create NeoStacks from kinds of work; 6 create NeoBlocks as reusable modules inside each NeoStack; 7 place MOLT roles inside each NeoBlock; 8 add Merge operations where concepts/layers must fuse; 9 add Gates for validation/routing/approval/policy; 10 add MetaMOLT Tool Blocks for Hermes-native tool actions; 11 define route edges; 12 run audit pass; 13 revise failed geometry; 14 convert final IR into JSON; 15 return JSON only. UMG ontology: NeoStack = kind of work; NeoBlock = module or step inside that work; MOLT = atomic thought role inside the module; Merge = semantic/cognitive fusion operation; Gate = control/routing/approval object; MetaMOLT Tool Block = executable Hermes capability; Capability = runtime binding; Trace = what actually happened. Return a single JSON object with REQUIRED top-level structuralIR, auditResult, and final Sleeve JSON fields matching schemaVersion umg-studio.hermes-custom-sleeve-plan.v0.1. structuralIR must contain sleeve, neoStacks, neoBlocks, moltLayers, mergeOps, gates, toolBlocks, routes. auditResult must contain passed, checks, revisionRequired. Every NeoStack/NeoBlock/MOLT record must include a concise generationReason explaining why that line exists. Every generated MOLT draft must include id, title, role, content, description, tags, sourceKind="runtime-session draft" or "generated glue", stackOrder, optional jsonSchema, nlCard {title, role, category, tags, description, content}, and generationReason. Every NeoBlock must contain meaningful MOLT layers and include id, title, purpose/description, parentNeoStackId or neoStackId, stackOrder/blockOrder, moltBlocks or moltBlockIds, gates, capabilities, sourceKind, nlCard, jsonSchema, and generationReason. Every NeoStack must contain meaningful NeoBlocks and include id, title, purpose/description, stackOrder, neoBlocks or neoBlockIds, sourceKind, nlCard, jsonSchema, kindOfWork, and generationReason. Merge operations must be explicit in structuralIR.mergeOps when semantic/cognitive fusion occurs. Use source-library candidates first from the supplied libraryCandidates array and preserve reusedBlockId/matchedCandidateId/sourcePath/sourceKind="source-library reused" when reused. Gates are control records, not fake MOLT. MetaMOLT Tool Blocks attach to tool-using NeoBlocks. Include runtime trace expectations/routes for app-surface observation: after compile/run, trace events should map to Sleeve/NeoStack/NeoBlock/MOLT/Gate/Tool IDs so the Runtime Graph can light active blocks, grey unused blocks, and show Hermes terminal/cognitive execution as it happens without inventing activation. Do not write files, mutate source libraries, import Website Builder, or claim success without valid UMG structure. CALIBRATION EXAMPLE — GREEK DESKTOP NOTE SLEEVE: User prompt: workflow that creates and saves notes on my desktop in haiku form whenever prompted to generate a written text note, while integrating Greek philosophy into the note context and semantics. Correct structure: S.GREEK_NOTE.01 Greek Philosophy Desktop Note Sleeve. NeoStacks: NS.01 Prompt Intake and Note Triggering kindOfWork intake/request normalization/trigger detection with NB.01 Detect Note Generation Request and NB.02 Normalize Note Intent; NS.02 Greek Philosophical Lens Selection kindOfWork philosophical retrieval/worldview selection with NB.03 Retrieve Greek Philosophy Candidates and NB.04 Select Greek Lens; NS.03 Semantic Merge and Note Composition kindOfWork semantic fusion/meaning transformation/note generation with NB.05 Merge Philosophy into Note Semantics MERGE.GREEK_SEMANTIC_FRAME, NB.06 Merge Requested Form with Enriched Meaning MERGE.FORM_WITH_SEMANTICS, NB.07 Compose Final Note Draft MERGE.DRAFT_SYNTHESIS, NB.08 Validate Greek Integration G.GREEK_INTEGRATION_CHECK; NS.04 Desktop Note Emission and Hermes Native Execution kindOfWork output preparation/native Hermes tool invocation/verification with NB.09 Prepare Desktop Note Action using TOOL.HERMES.NOTE_CREATE.v0.1 and TOOL.HERMES.FILE_WRITE.v0.1 plus G.DESKTOP_WRITE_ACTION, and NB.10 Verify Note Creation with G.OUTPUT_VERIFICATION. Route: NB.01 ==> NB.02 ==> NB.03 ==> NB.04 ==> NB.05 ==> NB.06 ==> NB.07 ==> NB.08 ==> NB.09 ==> NB.10. Audit checklist: neostack_kind_of_work, stack_has_blocks, block_is_reusable_module, block_has_molt, molt_internal_layers, source_candidates_bound_as_molt_children, tool_blocks_attached, gates_are_control_objects, merge_ops_explicit, route_renderable, structure_inside_budget, runtime_graph_renderable_without_invented_geometry. If any audit item fails, revise structuralIR before returning JSON.`
   };
 }
