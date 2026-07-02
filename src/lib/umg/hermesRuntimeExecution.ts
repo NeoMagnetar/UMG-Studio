@@ -194,12 +194,36 @@ function nativeActionEndpointFromRuntime(endpoint: string) {
 
 function inferNativeCapability(prompt: string): { capabilityId: string; risk: UMGNativeHermesActionRequest['risk'] } {
   const text = prompt.toLowerCase();
+  const servuoItemScriptIntent = /(servuo|ultima|\buo\b|shard|c#|csharp|dagger|poison|item script|charges?)/.test(text)
+    && /(make|create|script|item|dagger|poison|charges?)/.test(text);
   if (text.includes('read') && text.includes('file')) return { capabilityId: 'umg.native.hermes.file_read', risk: 'low' };
   if (text.includes('shell') || text.includes('terminal') || text.includes('command')) return { capabilityId: 'umg.native.hermes.shell_command', risk: 'high' };
+  if (servuoItemScriptIntent) return { capabilityId: 'umg.native.hermes.project_edit', risk: 'high' };
   if (text.includes('project') && (text.includes('edit') || text.includes('source'))) return { capabilityId: 'umg.native.hermes.project_edit', risk: 'high' };
   if (text.includes('note')) return { capabilityId: 'umg.native.hermes.note_create', risk: 'low' };
   if (text.includes('file') || text.includes('write')) return { capabilityId: 'umg.native.hermes.file_write', risk: 'medium' };
   return { capabilityId: 'umg.native.hermes.runtime_task', risk: 'medium' };
+}
+
+function sourceBlockText(block: { id?: string; title?: string; role?: string; scopeKind?: string; metadata?: Record<string, unknown>; sourcePath?: string }) {
+  return [block.id, block.title, block.role, block.scopeKind, block.sourcePath, block.metadata?.parentNeoBlockId, block.metadata?.sourceKind].filter(Boolean).join(' ').toLowerCase();
+}
+
+function selectRuntimeSourceBlocks(manifest: UMGCompiledRuntimeManifest, prompt: string) {
+  const text = prompt.toLowerCase();
+  const promptTokens = Array.from(new Set(text.replace(/[^a-z0-9#]+/g, ' ').split(/\s+/).filter((token) => token.length > 2)));
+  const blocks = manifest.sourceBlocks;
+  const score = (block: typeof blocks[number]) => {
+    const haystack = sourceBlockText(block as Parameters<typeof sourceBlockText>[0]);
+    const promptScore = promptTokens.filter((token) => haystack.includes(token)).length;
+    const servuoScore = /servuo|uo|item|script|poison|dagger/.test(haystack) ? 20 : 0;
+    return promptScore + servuoScore;
+  };
+  const selectedBlock = blocks.filter((block) => block.scopeKind === 'neoblock').sort((a, b) => score(b) - score(a))[0];
+  const selectedStack = blocks.filter((block) => block.scopeKind === 'neostack').sort((a, b) => score(b) - score(a))[0];
+  const selectedMolt = blocks.filter((block) => block.scopeKind === 'molt' && (!selectedBlock || (block as { metadata?: Record<string, unknown> }).metadata?.parentNeoBlockId === selectedBlock.id)).sort((a, b) => score(b) - score(a))[0]
+    ?? blocks.filter((block) => block.scopeKind === 'molt').sort((a, b) => score(b) - score(a))[0];
+  return { selectedStack, selectedBlock, selectedMolt };
 }
 
 function getConfiguredDesktopWslPath() {
@@ -223,9 +247,7 @@ export function createNativeHermesActionRequestFromManifest(args: {
   userApproved?: boolean;
 }): UMGNativeHermesActionRequest {
   const inferred = inferNativeCapability(args.prompt);
-  const firstStack = args.compiledRuntimeManifest.sourceBlocks.find((block) => block.scopeKind === 'neostack');
-  const firstBlock = args.compiledRuntimeManifest.sourceBlocks.find((block) => block.scopeKind === 'neoblock');
-  const firstMolt = args.compiledRuntimeManifest.sourceBlocks.find((block) => block.scopeKind === 'molt');
+  const { selectedStack, selectedBlock, selectedMolt } = selectRuntimeSourceBlocks(args.compiledRuntimeManifest, args.prompt);
   const output = guessDesktopNoteOutput(args.prompt);
   return {
     actionId: `native_action_${Date.now()}`,
@@ -234,9 +256,9 @@ export function createNativeHermesActionRequestFromManifest(args: {
     risk: inferred.risk,
     prompt: args.prompt,
     expectedOutputs: output ? [output] : undefined,
-    neoStackId: firstStack?.id,
-    neoBlockId: firstBlock?.id,
-    moltId: firstMolt?.id,
+    neoStackId: selectedStack?.id,
+    neoBlockId: selectedBlock?.id,
+    moltId: selectedMolt?.id,
     gateId: args.compiledRuntimeManifest.gates[0]?.id,
     sleeveId: args.compiledRuntimeManifest.sleeveId,
     traceId: args.traceId ?? makeTraceId(args.compiledRuntimeManifest),

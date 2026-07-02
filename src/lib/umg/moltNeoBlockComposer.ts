@@ -353,7 +353,20 @@ export type ComposerGenerationTargets = {
   intendedNeoStacks: Array<{ id: string; title: string; description: string; tags: string[]; neoBlockPurposes: string[] }>;
 };
 
-export type UoMoltDraftSuggestion = { id: string; title: string; role: NeoBlockCompositionRole; sourceKind: 'workspace-draft-suggestion'; reason: string; reviewRequired: true };
+export type UoMoltDraftSuggestion = { id: string; title: string; role: NeoBlockCompositionRole; sourceKind: 'workspace-draft-suggestion'; reason: string; reviewRequired: true; whySelected?: string[] };
+
+export type ServUoNeoBlockDraftSuggestion = {
+  id: string;
+  title: 'ServUO Item Script Creation';
+  sourceKind: 'workspace-draft-suggestion';
+  reviewRequired: true;
+  selectedMoltBlocks: UoMoltDraftSuggestion[];
+  roleCoverage: Record<NeoBlockCompositionRole, { covered: boolean; candidateIds: string[] }>;
+  missingRoles: NeoBlockCompositionRole[];
+  whySelected: string[];
+  sourceLibraryMutationOccurred: false;
+  workspaceMutationOccurred: false;
+};
 
 export type UoNeoBlockEnrichmentEvidence = {
   neoBlockId: string;
@@ -363,6 +376,7 @@ export type UoNeoBlockEnrichmentEvidence = {
   importedPackageOnlyMoltBlocks: Array<{ id: string; title: string; role?: string; sourceKind?: string }>;
   missingRoles: NeoBlockCompositionRole[];
   suggestedNewMoltBlocks: UoMoltDraftSuggestion[];
+  suggestedNeoBlockDraft?: ServUoNeoBlockDraftSuggestion;
   sourceBoundCount: number;
   workspaceBoundCount: number;
   packageOnlyCount: number;
@@ -387,7 +401,33 @@ const UO_ROLE_DRAFT_TITLES: Record<NeoBlockCompositionRole, string> = {
 };
 
 function suggestionForRole(role: NeoBlockCompositionRole, neoBlockTitle: string): UoMoltDraftSuggestion {
-  return { id: cleanId(`workspace.draft.${role}.${UO_ROLE_DRAFT_TITLES[role]}`).toLowerCase(), title: UO_ROLE_DRAFT_TITLES[role], role, sourceKind: 'workspace-draft-suggestion', reason: `Missing ${role} coverage for ${neoBlockTitle}; review before saving to workspace.`, reviewRequired: true };
+  return {
+    id: cleanId(`workspace.draft.${role}.${UO_ROLE_DRAFT_TITLES[role]}`).toLowerCase(),
+    title: UO_ROLE_DRAFT_TITLES[role],
+    role,
+    sourceKind: 'workspace-draft-suggestion',
+    reason: `Missing ${role} coverage for ${neoBlockTitle}; review before saving to workspace.`,
+    reviewRequired: true,
+    whySelected: [`missing-role:${role}`, 'servuo-domain-pack-suggestion', 'review-required']
+  };
+}
+
+export function buildServUoNeoBlockDraftSuggestion(missingRoles: NeoBlockCompositionRole[] = DEFAULT_NEOBLOCK_COMPOSITION_ROLES): ServUoNeoBlockDraftSuggestion {
+  const selectedMoltBlocks = DEFAULT_NEOBLOCK_COMPOSITION_ROLES.map((role) => suggestionForRole(role, 'ServUO Item Script Creation'));
+  const selectedByRole = new Map(selectedMoltBlocks.map((draft) => [draft.role, draft]));
+  const roleCoverage = Object.fromEntries(DEFAULT_NEOBLOCK_COMPOSITION_ROLES.map((role) => [role, { covered: selectedByRole.has(role), candidateIds: selectedByRole.has(role) ? [selectedByRole.get(role)!.id] : [] }])) as ServUoNeoBlockDraftSuggestion['roleCoverage'];
+  return {
+    id: 'workspace.draft.neoblock.servuo-item-script-creation.v0.1',
+    title: 'ServUO Item Script Creation',
+    sourceKind: 'workspace-draft-suggestion',
+    reviewRequired: true,
+    selectedMoltBlocks,
+    roleCoverage,
+    missingRoles: missingRoles.filter((role) => !selectedByRole.has(role)),
+    whySelected: ['runtime prompt maps to ServUO item scripting', 'required MOLT roles are suggested as review-required workspace drafts', 'source-library remains read-only'],
+    sourceLibraryMutationOccurred: false,
+    workspaceMutationOccurred: false
+  };
 }
 
 export function inferComposerGenerationTargets(prompt: string): ComposerGenerationTargets {
@@ -418,6 +458,7 @@ function evidenceFromComposition(block: NormalizedTemplateNeoBlock, composition:
     importedPackageOnlyMoltBlocks: packageMolts.filter((molt) => !(molt.sourceKind === 'source-library reused' || molt.matchedCandidateId)).map((molt) => ({ id: molt.id, title: molt.title, role: molt.role, sourceKind: molt.sourceKind })),
     missingRoles: composition.missingRoleWarnings,
     suggestedNewMoltBlocks: composition.missingRoleWarnings.map((role) => suggestionForRole(role, block.title)),
+    suggestedNeoBlockDraft: composition.missingRoleWarnings.length ? buildServUoNeoBlockDraftSuggestion(composition.missingRoleWarnings) : undefined,
     sourceBoundCount: composition.evidence.sourceBoundCount,
     workspaceBoundCount: composition.evidence.workspaceDraftCount,
     packageOnlyCount: packageMolts.filter((molt) => !(molt.sourceKind === 'source-library reused' || molt.matchedCandidateId)).length,

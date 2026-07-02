@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { applyRuntimeTraceEvents, createEmptyRuntimeVisualState } from '../lib/umg/cognitiveRuntimeState';
+import { createNativeHermesActionRequestFromManifest } from '../lib/umg/hermesRuntimeExecution';
 
 const getRuntimeBridgeModule = async () => import('../../dev/hermes-runtime-bridge.mjs');
 
@@ -629,6 +630,35 @@ ${JSON.stringify(structuralHermesPlan)}
     expect(response.body.createdFiles).toContain(tmpFile);
     expect(response.body.artifacts[0]).toMatchObject({ kind: 'file', path: tmpFile, externalActionTaken: true });
     expect(response.body.traceEvents.map((event) => event.eventType)).toEqual(expect.arrayContaining(['action_executed', 'file_created', 'artifact_created']));
+  });
+
+  it('maps poison dagger ServUO runtime prompts to project-edit intent in Observe mode without execution', async () => {
+    const request = createNativeHermesActionRequestFromManifest({
+      compiledRuntimeManifest: {
+        ...safeRuntimeRequest.compiledSleeveManifest,
+        sleeveId: 'SLV.UO.SERVER.DEVELOPER.v1.0',
+        sleeveTitle: 'UO Server Developer Sleeve',
+        sourceBlocks: [
+          { id: 'STACK.UO.SERVUO.ITEMS', title: 'ServUO Item Scripting', scopeKind: 'neostack' },
+          { id: 'NB.UO.SERVUO.ITEM_SCRIPT_CREATION', title: 'ServUO Item Script Creation', scopeKind: 'neoblock' },
+          { id: 'MOLT.UO.DEADLY_POISON_SUBJECT', title: 'Deadly Poison Charge Item Subject', scopeKind: 'molt', role: 'subject', metadata: { parentNeoBlockId: 'NB.UO.SERVUO.ITEM_SCRIPT_CREATION' } }
+        ],
+        toolPolicy: { ...safeRuntimeRequest.compiledSleeveManifest.toolPolicy, allowedTools: [] }
+      },
+      prompt: 'Make me a dagger with 1000 deadly poison charges.',
+      mode: 'observe',
+      traceId: 'trace.uo.poison.observe'
+    });
+    expect(request.capabilityId).toBe('umg.native.hermes.project_edit');
+    expect(request.mode).toBe('observe');
+    expect(request.userApproved).toBe(false);
+    expect(request.neoBlockId).toBe('NB.UO.SERVUO.ITEM_SCRIPT_CREATION');
+    const { buildNativeActionBridgeResponse } = await getRuntimeBridgeModule();
+    const response = await buildNativeActionBridgeResponse(request, {}, async () => { throw new Error('observe mode must not invoke external tools'); });
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('observed');
+    expect(response.body.externalActionTaken).toBe(false);
+    expect(response.body.artifacts).toEqual([]);
   });
 
 });

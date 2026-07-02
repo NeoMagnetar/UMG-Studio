@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composeNeoBlockFromMoltBlocks, retrieveNeoBlockMoltCandidates, summarizeSourceLibraryMoltInventory, analyzeImportedSleeveNeoBlockComposition, enrichUoImportedSleeveWithMoltEvidence, buildComposerEnhancedSleeve, inferComposerGenerationTargets } from '../lib/umg/moltNeoBlockComposer';
+import { composeNeoBlockFromMoltBlocks, retrieveNeoBlockMoltCandidates, summarizeSourceLibraryMoltInventory, analyzeImportedSleeveNeoBlockComposition, enrichUoImportedSleeveWithMoltEvidence, buildComposerEnhancedSleeve, inferComposerGenerationTargets, buildServUoNeoBlockDraftSuggestion } from '../lib/umg/moltNeoBlockComposer';
 import { buildRuntimeGeometryManifest } from '../lib/umg/runtimeGeometryProjection';
 
 const sourceIndex = [
@@ -157,6 +157,26 @@ describe('source-library MOLT to NeoBlock composition', () => {
     expect(enriched.sleeve.moltBlocks.find((block) => block.id === 'PKG.MOLT.POISON')?.matchedCandidateId).toBeUndefined();
     expect(enriched.sleeve.metadata.uoEnrichmentEvidence).toBeTruthy();
     expect(enriched.sourceLibraryMutationOccurred).toBe(false);
+  });
+
+  it('builds review-required ServUO MOLT and NeoBlock draft suggestions without saving workspace or source library', () => {
+    const draft = buildServUoNeoBlockDraftSuggestion(['directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint']);
+    expect(draft.title).toBe('ServUO Item Script Creation');
+    expect(draft.reviewRequired).toBe(true);
+    expect(draft.sourceKind).toBe('workspace-draft-suggestion');
+    expect(draft.selectedMoltBlocks.map((entry) => entry.title)).toEqual(expect.arrayContaining([
+      'ServUO Project File Edit Safety Directive',
+      'ServUO C# Item Script Creation Instruction',
+      'Deadly Poison Charge Item Subject',
+      'ServUO Item Script Artifact Primary',
+      'ServUO Item Serialization Blueprint',
+      'ServUO Shard Stability Review Philosophy'
+    ]));
+    expect(draft.selectedMoltBlocks.every((entry) => entry.reviewRequired && entry.sourceKind === 'workspace-draft-suggestion')).toBe(true);
+    expect(draft.roleCoverage.directive.covered).toBe(true);
+    expect(draft.roleCoverage.blueprint.covered).toBe(true);
+    expect(draft.sourceLibraryMutationOccurred).toBe(false);
+    expect(draft.workspaceMutationOccurred).toBe(false);
   });
 
   it('builds a composer-enhanced Sleeve for Generate Sleeve and projects enrichment evidence', () => {
