@@ -56,6 +56,8 @@ import { SleeveArchitectPlan } from './lib/umg/sleeveArchitectTypes';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, StudioMode } from './lib/umg/basicModeScaffolds';
 import { adaptHermesCustomSleevePlanToRuntimeSessionSleeve, buildCompositionSourceDiagnostics, buildHermesCustomSleeveGenerationRequest, isActiveSessionSleeveCompileEligible, requestHermesCustomSleevePlan } from './lib/umg/hermesCustomSleeveGeneration';
 import { buildCalibratedHaikuDesktopNoteSleeve } from './lib/umg/calibratedDemoSleeves';
+import { buildAssistantModelEmulationSleeve } from './lib/umg/assistantModelEmulationSleeve';
+import { parseWorkflowIntent } from './lib/umg/umgWorkflowIntent';
 import type { HermesCustomSleevePlanCapability } from './lib/umg/hermesCustomSleeveGeneration';
 import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './lib/umg/generated/umgLibraryMetadataIndex';
 import { buildUploadedContextText, createMetadataMoltBlock, extractKeywordsFromText, itemMatchesLiveTagQuery, itemMatchesSelectedTags, matchesPrefixFirstBlockSearch, normalizeLibraryText, sortMatchingTags, sortPrefixFirstBlockSearchItems, summarizeUploadedText, UploadedIntakeContext } from './lib/umg/libraryBrowserSemantics';
@@ -2178,6 +2180,59 @@ export default function App() {
           compositionSource: buildCompositionSourceDiagnostics({ request: generationRequest, route: 'intake draft', reasonIfNotEligible: 'Intake draft only. Live Hermes composition has not returned a source-bound ActiveSessionSleeve yet.' })
         };
         setHermesCustomGenerationDiagnostics(preflightDiagnostics);
+        const deterministicIntent = parseWorkflowIntent(generationRequest.userPrompt);
+        if (deterministicIntent.workflowType === 'assistant_model_emulation') {
+          const runtimeSleeve = buildAssistantModelEmulationSleeve({
+            sourcePrompt: generationRequest.userPrompt,
+            retrievedLibraryCandidates: generationRequest.libraryCandidates,
+            candidatesByRole: generationRequest.candidatesByRole,
+            missingRoles: generationRequest.missingRoles,
+            rejectedCandidateIds: generationRequest.rejectedCandidateIds,
+            uploadedContext: generationRequest.userContext,
+            generationFailureReason: 'Deterministic assistant_model_emulation route selected before live Hermes enhancement; no valid live Hermes output is required for compile eligibility.',
+            requestId: generationRequest.requestId
+          });
+          const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: runtimeSleeve.gates.map((gate) => gate.title), sourceLabel: 'deterministic_assistant_model_emulation' });
+          setActiveSessionSleeve(runtimeSleeve);
+          resetCompileStateForActiveSleeve(runtimeSleeve);
+          setBusinessAutomationCoreBuild(undefined);
+          setBlockMatchPlan(artifacts.blockMatchPlan);
+          setDraftReviewState([]);
+          setSleeveAssemblyPlan(artifacts.assemblyPlan);
+          setCompileCandidate(artifacts.compileCandidate);
+          setCompilerRequestPreview(undefined);
+          setCompilerResult({ status: 'ok', errors: [], warnings: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_WARNING', message: 'Deterministic assistant_model_emulation fallback used; live Hermes enhancement is not required for this compile-eligible Sleeve.' }] });
+          setCompiledRuntimeManifest(undefined);
+          setHermesRuntimeResult(undefined);
+          setHermesRuntimeVisualState(undefined);
+          setHermesRuntimeErrors([]);
+          setHermesRuntimeWarnings([]);
+          setPendingRuntimeApproval(undefined);
+          const sourceStatusSummary = runtimeSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined;
+          setHermesCustomGenerationDiagnostics({
+            ...preflightDiagnostics,
+            generationRoute: 'deterministic_assistant_model_emulation',
+            deterministicFallbackUsed: 'assistant_model_emulation',
+            fallbackUsed: true,
+            fallbackReason: runtimeSleeve.metadata.fallbackReason,
+            hermesEnhancementFailed: false,
+            hermesEnhancementFailure: 'not required; deterministic fallback selected first',
+            candidateRetrievalRan: true,
+            candidateCount: generationRequest.libraryCandidates.length,
+            sourceLibraryCandidatesFound: generationRequest.libraryCandidates.length,
+            sourceLibraryCandidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0,
+            candidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0,
+            runtimeWorkspaceDraftBlocksGenerated: sourceStatusSummary?.runtimeWorkspaceDraftBlocksGenerated,
+            generatedDrafts: runtimeSleeve.metadata.generatedDrafts,
+            compileEligibility: 'yes',
+            noFakeHermesOutput: true,
+            noFakeSourceBinding: true,
+            compositionSource: buildCompositionSourceDiagnostics({ sleeve: runtimeSleeve, request: generationRequest, route: 'deterministic_assistant_model_emulation' })
+          });
+          setHermesCustomGenerationStatus(`ok: deterministic fallback used: assistant_model_emulation · candidates ${generationRequest.libraryCandidates.length} · bound 0`);
+          setStatus('Deterministic assistant Sleeve ready. Compile next.');
+          return;
+        }
         const generation = await requestHermesCustomSleevePlan({ endpoint: generationEndpoint || undefined, runtimeEndpoint: hermesConfig.endpoint, request: generationRequest });
         const rawDebug = (generation.raw as Record<string, unknown> | undefined)?.debug as Record<string, unknown> | undefined;
         if (!generation.ok || !generation.plan) {
@@ -2186,6 +2241,66 @@ export default function App() {
             return;
           }
           const errors = generation.validation.errors.join(' ');
+          const fallbackIntent = parseWorkflowIntent(generationRequest.userPrompt);
+          if (fallbackIntent.workflowType === 'assistant_model_emulation') {
+            const runtimeSleeve = buildAssistantModelEmulationSleeve({
+              sourcePrompt: generationRequest.userPrompt,
+              retrievedLibraryCandidates: generationRequest.libraryCandidates,
+              candidatesByRole: generationRequest.candidatesByRole,
+              missingRoles: generationRequest.missingRoles,
+              rejectedCandidateIds: generationRequest.rejectedCandidateIds,
+              uploadedContext: generationRequest.userContext,
+              generationFailureReason: errors || 'Hermes returned empty output.',
+              requestId: generationRequest.requestId
+            });
+            const runtimeCapabilities = Array.isArray(runtimeSleeve.metadata.capabilities) ? runtimeSleeve.metadata.capabilities as HermesCustomSleevePlanCapability[] : [];
+            const requiredTools = runtimeCapabilities.map((capability) => capability.capabilityId).filter(Boolean);
+            const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools, approvalPoints: runtimeSleeve.gates.map((gate) => gate.title), sourceLabel: 'deterministic_assistant_model_emulation' });
+            setActiveSessionSleeve(runtimeSleeve);
+            resetCompileStateForActiveSleeve(runtimeSleeve);
+            setBusinessAutomationCoreBuild(undefined);
+            setBlockMatchPlan(artifacts.blockMatchPlan);
+            setDraftReviewState([]);
+            setSleeveAssemblyPlan(artifacts.assemblyPlan);
+            setCompileCandidate(artifacts.compileCandidate);
+            setCompilerRequestPreview(undefined);
+            setCompilerResult({ status: 'ok', errors: [], warnings: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_WARNING', message: errors || 'Hermes enhancement failed; deterministic assistant_model_emulation fallback used.' }] });
+            setCompiledRuntimeManifest(undefined);
+            setHermesRuntimeResult(undefined);
+            setHermesRuntimeVisualState(undefined);
+            setHermesRuntimeErrors([]);
+            setHermesRuntimeWarnings([]);
+            setPendingRuntimeApproval(undefined);
+            const sourceStatusSummary = runtimeSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined;
+            setHermesCustomGenerationDiagnostics({
+              ...preflightDiagnostics,
+              generationRoute: 'deterministic_assistant_model_emulation',
+              deterministicFallbackUsed: 'assistant_model_emulation',
+              fallbackUsed: true,
+              fallbackReason: runtimeSleeve.metadata.fallbackReason,
+              hermesEnhancementFailed: true,
+              hermesEnhancementFailure: errors || 'empty output',
+              responseRawDebug: rawDebug,
+              failureStage: rawDebug?.failureStage,
+              requestPayloadBytes: rawDebug?.requestPayloadBytes,
+              payloadTransport: rawDebug?.payloadTransport,
+              compactingApplied: rawDebug?.compactingApplied,
+              candidateRetrievalRan: true,
+              candidateCount: generationRequest.libraryCandidates.length,
+              sourceLibraryCandidatesFound: generationRequest.libraryCandidates.length,
+              sourceLibraryCandidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0,
+              candidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0,
+              runtimeWorkspaceDraftBlocksGenerated: sourceStatusSummary?.runtimeWorkspaceDraftBlocksGenerated,
+              generatedDrafts: runtimeSleeve.metadata.generatedDrafts,
+              compileEligibility: 'yes',
+              noFakeHermesOutput: true,
+              noFakeSourceBinding: true,
+              compositionSource: buildCompositionSourceDiagnostics({ sleeve: runtimeSleeve, request: generationRequest, route: 'deterministic_assistant_model_emulation' })
+            });
+            setHermesCustomGenerationStatus(`ok: deterministic fallback used: assistant_model_emulation · Hermes enhancement failed: ${/empty output/i.test(errors) ? 'empty output' : errors || 'empty output'} · candidates ${generationRequest.libraryCandidates.length} · bound 0`);
+            setStatus('Deterministic assistant Sleeve ready. Compile next.');
+            return;
+          }
           setHermesCustomGenerationStatus(`failed: ${errors}`);
           setHermesCustomGenerationDiagnostics({ ...preflightDiagnostics, generationRoute: 'intake draft', fallbackUsed: false, fallbackReason: errors || 'validation failed', responseRawDebug: rawDebug, failureStage: rawDebug?.failureStage, requestPayloadBytes: rawDebug?.requestPayloadBytes, payloadTransport: rawDebug?.payloadTransport, compactingApplied: rawDebug?.compactingApplied, compositionSource: buildCompositionSourceDiagnostics({ request: generationRequest, route: 'intake draft', reasonIfNotEligible: errors || 'Hermes generation unavailable; intake draft is not compileable.' }) });
           setCompilerResult({ status: hermesConfig.endpoint ? 'error' : 'not_configured', errors: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_FAILED', message: errors || 'Hermes custom Sleeve generation failed.' }], warnings: generation.validation.warnings.map((message) => ({ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_WARNING', message })) });
@@ -2250,6 +2365,37 @@ export default function App() {
         }
         const message = error instanceof Error ? error.message : String(error);
         const failureStage = /E2BIG|too large/i.test(message) ? 'spawn_e2big' : 'client_exception';
+        const promptText = selectedInput?.text || publicGoal;
+        if (parseWorkflowIntent(promptText).workflowType === 'assistant_model_emulation') {
+          const generationRequest = buildHermesCustomSleeveGenerationRequest({
+            userPrompt: promptText,
+            userContext: [publicContext, uploadedIntakeContextText ? `Uploaded file intake context:\n${uploadedIntakeContextText}` : '', uploadedIntakeKeywords.length ? `Uploaded file keywords: ${uploadedIntakeKeywords.join(', ')}` : ''].filter(Boolean).join('\n\n'),
+            uploadedContexts: uploadedIntakeContexts,
+            requestId: `assistant_fallback_${Date.now()}`
+          });
+          const runtimeSleeve = buildAssistantModelEmulationSleeve({ sourcePrompt: generationRequest.userPrompt, retrievedLibraryCandidates: generationRequest.libraryCandidates, candidatesByRole: generationRequest.candidatesByRole, missingRoles: generationRequest.missingRoles, rejectedCandidateIds: generationRequest.rejectedCandidateIds, uploadedContext: generationRequest.userContext, generationFailureReason: message, requestId: generationRequest.requestId });
+          const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: runtimeSleeve.gates.map((gate) => gate.title), sourceLabel: 'deterministic_assistant_model_emulation' });
+          setActiveSessionSleeve(runtimeSleeve);
+          resetCompileStateForActiveSleeve(runtimeSleeve);
+          setBusinessAutomationCoreBuild(undefined);
+          setBlockMatchPlan(artifacts.blockMatchPlan);
+          setDraftReviewState([]);
+          setSleeveAssemblyPlan(artifacts.assemblyPlan);
+          setCompileCandidate(artifacts.compileCandidate);
+          setCompilerRequestPreview(undefined);
+          setCompilerResult({ status: 'ok', errors: [], warnings: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_WARNING', message }] });
+          setCompiledRuntimeManifest(undefined);
+          setHermesRuntimeResult(undefined);
+          setHermesRuntimeVisualState(undefined);
+          setHermesRuntimeErrors([]);
+          setHermesRuntimeWarnings([]);
+          setPendingRuntimeApproval(undefined);
+          const sourceStatusSummary = runtimeSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined;
+          setHermesCustomGenerationDiagnostics({ failureStage, fallbackUsed: true, deterministicFallbackUsed: 'assistant_model_emulation', fallbackReason: runtimeSleeve.metadata.fallbackReason, hermesEnhancementFailed: true, hermesEnhancementFailure: message, candidateRetrievalRan: true, candidateCount: generationRequest.libraryCandidates.length, sourceLibraryCandidatesFound: generationRequest.libraryCandidates.length, sourceLibraryCandidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0, candidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0, runtimeWorkspaceDraftBlocksGenerated: sourceStatusSummary?.runtimeWorkspaceDraftBlocksGenerated, generatedDrafts: runtimeSleeve.metadata.generatedDrafts, compileEligibility: 'yes', noFakeHermesOutput: true, noFakeSourceBinding: true, compositionSource: buildCompositionSourceDiagnostics({ sleeve: runtimeSleeve, request: generationRequest, route: 'deterministic_assistant_model_emulation' }) });
+          setHermesCustomGenerationStatus(`ok: deterministic fallback used: assistant_model_emulation · Hermes enhancement failed: ${/empty output/i.test(message) ? 'empty output' : message} · candidates ${generationRequest.libraryCandidates.length} · bound 0`);
+          setStatus('Deterministic assistant Sleeve ready. Compile next.');
+          return;
+        }
         setHermesCustomGenerationStatus(`failed: ${message}`);
         setHermesCustomGenerationDiagnostics({ failureStage, fallbackUsed: false, fallbackReason: message, candidateRetrievalRan: true });
         setCompilerResult({ status: 'error', errors: [{ code: failureStage === 'spawn_e2big' ? 'HERMES_CUSTOM_SLEEVE_GENERATION_E2BIG' : 'HERMES_CUSTOM_SLEEVE_GENERATION_ERROR', message, raw: error }], warnings: [] });
@@ -3583,6 +3729,7 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       {isImportedPackageRoute && <small>Imported legacy UMG Sleeve package</small>}
       <h3>{activeSleeveTitle}</h3>
       <p>{activeSessionSleeve.description}</p>
+      {activeSessionSleeve.metadata?.generationRoute === 'deterministic_assistant_model_emulation' && <div className="compactCandidatePreview"><b>Deterministic fallback used: assistant_model_emulation</b><span>Hermes enhancement failed: {String(hermesCustomGenerationDiagnostics?.hermesEnhancementFailure ?? activeSessionSleeve.metadata?.hermesEnhancementWarning ?? 'not reported')}</span><span>Source-library candidates found: {String(hermesCustomGenerationDiagnostics?.sourceLibraryCandidatesFound ?? hermesCustomGenerationDiagnostics?.candidateCount ?? 0)}</span><span>Source-library candidates bound: {String(hermesCustomGenerationDiagnostics?.sourceLibraryCandidatesBound ?? hermesCustomGenerationDiagnostics?.candidatesBound ?? 0)}</span><span>Runtime/workspace draft blocks generated: {String(hermesCustomGenerationDiagnostics?.runtimeWorkspaceDraftBlocksGenerated ?? (activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.runtimeWorkspaceDraftBlocksGenerated ?? 0)}</span><span>Compile eligibility: yes</span></div>}
       {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT Blocks</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{toolBlockCount}</b><span>Tool Blocks</span></div><div><b>{palette.length}</b><span>Capabilities</span></div>{activeSleeveCounts.unresolved > 0 && <div><b>{activeSleeveCounts.unresolved}</b><span>Needs attention</span></div>}</div></>}
       {isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b><span>NeoStacks imported: {safeActiveNeoStacks.length}</span><span>NeoBlocks imported: {safeActiveNeoBlocks.length}</span><span>MOLT imported/generated: {safeActiveMoltBlocks.length}</span><span>Source-library matches: not resolved yet / optional</span><span>Duplicates merged: {String(((activeSessionSleeve.metadata?.duplicateDiagnostics as Record<string, unknown> | undefined)?.merged ?? (hermesCustomGenerationDiagnostics?.importReviewReport as { duplicates?: { merged?: unknown } } | undefined)?.duplicates?.merged ?? 0))}</span><span>Schema adjustments: {String((hermesCustomGenerationDiagnostics?.importReviewReport as { normalizationAdjustments?: unknown[] } | undefined)?.normalizationAdjustments?.length ?? 0)}</span></div> : <><small>Library candidates bound: {String((activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? safeActiveMoltBlocks.filter((block) => block.sourceKind === 'source-library reused').length)}</small>
       <div className="compactCandidatePreview"><b>Library blocks used: {libraryBlocksUsed.length}</b>{libraryBlockExamples.map((title) => <span key={String(title)}>{String(title)}</span>)}</div></>}

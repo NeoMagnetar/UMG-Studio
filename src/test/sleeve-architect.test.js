@@ -27,6 +27,7 @@ import { deriveCompilerUiStatus, getCompileButtonLabel, getCompileReadiness, get
 import { ActiveSessionSleeveStudioInspector, MoltDetailPanel } from '../components/ActiveSessionSleeveStudioInspector';
 import { summarizeNormalizedTemplateSourceStatus } from '../lib/umg/templateSleeveStructures';
 import { buildCalibratedHaikuDesktopNoteSleeve } from '../lib/umg/calibratedDemoSleeves';
+import { buildAssistantModelEmulationSleeve } from '../lib/umg/assistantModelEmulationSleeve';
 import { buildCompositionSourceDiagnostics, compactCandidateForHermesPrompt, isActiveSessionSleeveCompileEligible } from '../lib/umg/hermesCustomSleeveGeneration';
 import { hydrateUmgLibraryCandidate, retrieveRoleTargetedUmgLibraryCandidates } from '../lib/umg/umgLibraryCandidateRetrieval';
 import { getBlockById } from '../lib/umg/umgLibraryRegistry';
@@ -1202,6 +1203,64 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(composed.sourceBindingSummary.sourceBlocksUsed.map((block) => block.id)).toContain('BP.031');
     expect(JSON.stringify(composed.sourceBindingSummary)).toMatch(/Haiku/i);
     expect(composed.sleeve.neoBlocks.every((block) => block.moltBlockIds.length > 0)).toBe(true);
+  });
+
+  it('resolves GPT-style prompt-only assistant/model-emulation prompts to deterministic intent', () => {
+    const longPrompt = 'Create a UMG Sleeve that behaves like a GPT-4-class general reasoning assistant. It should support natural-language chat, instruction following, coding help, structured reasoning summaries, tool-use planning, safety boundaries, context memory awareness, and JSON/markdown output modes. It should not claim to be GPT-4 or OpenAI; it should emulate a GPT-4-style assistant workflow inside UMG Studio.';
+    expect(parseWorkflowIntent(longPrompt)).toMatchObject({ workflowType: 'assistant_model_emulation', outputStyle: 'assistant_workflow' });
+    expect(parseWorkflowIntent('a sleeve for emulating gpt4.0')).toMatchObject({ workflowType: 'assistant_model_emulation', outputStyle: 'assistant_workflow' });
+    const slots = planWorkflowSlots(parseWorkflowIntent(longPrompt));
+    expect(slots.map((slot) => slot.id)).toEqual(expect.arrayContaining(['assistant_intake_trigger', 'instruction_following_policy', 'reasoning_planning_blueprint', 'assistant_output_primary']));
+    expect(slots.every((slot) => slot.fallbackDraftAllowed)).toBe(true);
+  });
+
+  it('builds compile-eligible deterministic assistant Sleeve when Hermes output is empty and source candidates bind zero', () => {
+    const prompt = 'Create a UMG Sleeve that behaves like a GPT-4-class general reasoning assistant. It should support natural-language chat, instruction following, coding help, structured reasoning summaries, tool-use planning, safety boundaries, context memory awareness, and JSON/markdown output modes. It should not claim to be GPT-4 or OpenAI; it should emulate a GPT-4-style assistant workflow inside UMG Studio.';
+    const sleeve = buildAssistantModelEmulationSleeve({
+      sourcePrompt: prompt,
+      retrievedLibraryCandidates: Array.from({ length: 47 }, (_, index) => ({ id: `CAND.${index + 1}`, title: `Candidate ${index + 1}`, blockType: 'molt', role: 'subject', tags: ['assistant'], description: 'Relevant but intentionally not bound.', sourceKind: 'source-library', sourcePath: `source#${index + 1}`, score: 1, matchReasons: ['prompt keyword'] })),
+      generationFailureReason: 'Hermes output did not contain a valid JSON object after strict JSON retry. Hermes returned empty output.',
+      requestId: 'assistant_empty_output_test'
+    });
+    expect(sleeve.title).toMatch(/GPT-4-Class Assistant Behavior Emulator Sleeve/);
+    expect(sleeve.metadata.workflowIntent).toMatchObject({ workflowType: 'assistant_model_emulation' });
+    expect(sleeve.metadata.compileEligible).toBe(true);
+    expect(sleeve.metadata.compileEligibility).toBe('yes');
+    expect(isActiveSessionSleeveCompileEligible(sleeve)).toBe(true);
+    expect(sleeve.metadata.generatedByHermes).toBe(false);
+    expect(sleeve.metadata.liveHermesGenerated).toBe(false);
+    expect(sleeve.metadata.noFakeHermesOutput).toBe(true);
+    expect(sleeve.metadata.noFakeSourceBinding).toBe(true);
+    expect(sleeve.metadata.sourceLibraryWrite).toBe(false);
+    expect(sleeve.neoStacks).toHaveLength(9);
+    expect(sleeve.neoStacks.every((stack) => stack.neoBlockIds.length > 0)).toBe(true);
+    expect(sleeve.neoBlocks).toHaveLength(17);
+    expect(sleeve.neoBlocks.every((block) => block.moltBlockIds.length > 0)).toBe(true);
+    const roles = new Set(sleeve.moltBlocks.map((block) => block.role));
+    expect([...roles]).toEqual(expect.arrayContaining(['directive', 'instruction', 'subject', 'primary', 'blueprint']));
+    expect(sleeve.moltBlocks.some((block) => block.tags.includes('trigger'))).toBe(true);
+    expect(sleeve.moltBlocks.every((block) => block.sourceKind === 'runtime-session draft')).toBe(true);
+    const sourceStatusSummary = sleeve.metadata.sourceStatusSummary;
+    expect(sourceStatusSummary.candidatesBoundIntoSleeve).toBe(0);
+    expect(sourceStatusSummary.candidateCount).toBe(47);
+    expect(sourceStatusSummary.runtimeWorkspaceDraftBlocksGenerated).toBeGreaterThanOrEqual(sleeve.moltBlocks.length);
+    expect(String(sleeve.metadata.hermesEnhancementWarning)).toMatch(/empty output/i);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve, route: 'deterministic_assistant_model_emulation' });
+    expect(diagnostics).toMatchObject({ compileEligibility: 'yes', candidatesBoundIntoSleeve: 0, generatedRuntimeDrafts: sleeve.moltBlocks.length });
+    expect(JSON.stringify(sleeve)).not.toMatch(/fake Hermes output|generatedByHermes":true|source-library reused/);
+  });
+
+  it('keeps deterministic assistant fallback UI diagnostics separate from terminal Hermes failure', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('Deterministic fallback used: assistant_model_emulation');
+    expect(appSource).toContain('Hermes enhancement failed:');
+    expect(appSource).toContain('Source-library candidates found:');
+    expect(appSource).toContain('Source-library candidates bound:');
+    expect(appSource).toContain('Runtime/workspace draft blocks generated:');
+    expect(appSource).toContain("generationRoute: 'deterministic_assistant_model_emulation'");
+    expect(appSource).toContain('noFakeHermesOutput: true');
+    expect(appSource).toContain('noFakeSourceBinding: true');
+    expect(appSource).not.toContain("setCompilerResult({ status: 'error', errors: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_FAILED'" + ", message: errors || 'Hermes custom Sleeve generation failed.' }], warnings: [] });");
   });
 
   it('keeps calibrated rescue UI and compile guard distinct from fake live Hermes success', () => {
