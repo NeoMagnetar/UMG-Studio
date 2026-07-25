@@ -1056,7 +1056,14 @@ function buildWorkLogRows(args: { endpoint?: string; mode: RuntimeNativeActionMo
   (args.result?.toolCalls ?? []).forEach((call, index) => rows.push({ id: `tool-${index}`, label: 'tool requested', value: `${call.toolName ?? call.toolId}: ${call.status}`, raw: call }));
   (args.result?.approvalRequests ?? []).forEach((approval, index) => rows.push({ id: `approval-${index}`, label: 'approval boundary', value: `${approval.label}: ${approval.status}`, raw: approval }));
   const native = args.result?.nativeActionResult;
-  if (native) rows.push({ id: 'native-result', label: 'native action result', value: `${native.status}; externalActionTaken=${native.externalActionTaken}`, raw: native });
+  if (native) {
+    rows.push({ id: 'native-result', label: 'native action result', value: `${native.status}; externalActionTaken=${native.externalActionTaken}`, raw: native });
+    const nativeRecord = native as Record<string, unknown>;
+    const stdout = toText(nativeRecord.stdout) ?? toText(nativeRecord.commandOutput);
+    const stderr = toText(nativeRecord.stderr);
+    if (stdout) rows.push({ id: 'native-stdout', label: 'stdout snippet', value: stdout.slice(0, 220), raw: { stdout } });
+    if (stderr) rows.push({ id: 'native-stderr', label: 'stderr snippet', value: stderr.slice(0, 220), raw: { stderr } });
+  }
   args.errors.forEach((error, index) => rows.push({ id: `error-row-${index}`, label: 'error', value: error }));
   return rows;
 }
@@ -1473,7 +1480,7 @@ export function RuntimeGeometryObserver({
         </div>
         <small className="runtime-action-mode-copy">Selected action mode: {nativeActionModeLabel}. {nativeActionModeCopy}</small>
         <section className="runtime-hermes-chat-panel" aria-label="Hermes Chat">
-          <header><h3>Conversation history</h3></header>
+          <header><h3>Hermes Chat</h3><small>Visible transcript only: user prompts, Hermes NL output, system notices, tool status, and errors.</small></header>
           {selectedNativeActionMode === 'observe' && runtimeChatMessages.length > 0 && <p className="runtime-observe-explainer">Observe mode prepares the route only. It does not execute external tools. Switch to Approval or Direct mode to cross execution boundaries.</p>}
           <ol className="runtime-chat-transcript">{runtimeChatMessages.length ? runtimeChatMessages.map((message) => <li key={message.id} className={`runtime-chat-message runtime-chat-message--${message.role}`}><b>{message.role === 'hermes' ? 'Hermes' : message.role}</b><span>{message.content}</span><small>{message.createdAt}{message.mode ? ` · ${message.mode}` : ''}</small></li>) : <li className="runtime-chat-message runtime-chat-message--system"><b>system</b><span>No runtime request yet. Send a prompt to Hermes.</span></li>}</ol>
         </section>

@@ -548,11 +548,11 @@ describe('RuntimeGeometryObserver', () => {
     expect(drawer.textContent).toContain('No runtime request yet. Send a prompt to Hermes.');
     expect(screen.queryByLabelText('Missing capability detected')).toBeNull();
     const chatPanel = screen.getByLabelText('Hermes Chat');
+    expect(chatPanel.textContent).toContain('Hermes Chat');
     expect(chatPanel.textContent).not.toContain('thought summary');
     expect(chatPanel.textContent).not.toContain('last NL');
     expect(chatPanel.textContent).not.toContain('last error');
     expect(chatPanel.textContent).not.toContain('tool access');
-    expect(chatPanel.textContent).not.toContain('Visible transcript only');
     expect(screen.getByRole('group', { name: 'Runtime Debug' })).toBeTruthy();
   });
 
