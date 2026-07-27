@@ -42,7 +42,7 @@ export type NormalizedTemplateMoltBlock = {
   id: string;
   sourceId?: string;
   title: string;
-  role: Exclude<MOLTRole, 'trigger'> | 'meta';
+  role: MOLTRole | 'meta';
   content: string;
   tags: string[];
   parentNeoBlockId?: string;

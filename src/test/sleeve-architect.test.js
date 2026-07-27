@@ -22,12 +22,15 @@ import { normalizeCompilerResponseToManifest } from '../lib/umg/umgCompilerAdapt
 import { architectureModeLabels } from '../lib/umg/sleeveArchitectTypes';
 import { normalizeLegacyMoltRole, parseLegacyMarkdownSleeve } from '../lib/umg/legacySleeveImport';
 import { buildBasicCapabilityPalette, classifyBasicContent, evaluateBasicSleeveQuality, redactSensitiveText } from '../lib/umg/basicModeScaffolds';
+import { getTemplateSleeveCatalog } from '../lib/umg/templateSleeveCatalog';
+import { selectTemplateSleeve } from '../lib/umg/templateSelection';
 import { HackathonLandingPage } from '../components/HackathonLandingPage';
 import { deriveCompilerUiStatus, getCompileButtonLabel, getCompileReadiness, getCompilerCardCopy, getCompilerTopCopy } from '../lib/umg/compilerUiStatus';
 import { ActiveSessionSleeveStudioInspector, MoltDetailPanel } from '../components/ActiveSessionSleeveStudioInspector';
 import { summarizeNormalizedTemplateSourceStatus } from '../lib/umg/templateSleeveStructures';
 import { buildCalibratedHaikuDesktopNoteSleeve } from '../lib/umg/calibratedDemoSleeves';
 import { buildAssistantModelEmulationSleeve } from '../lib/umg/assistantModelEmulationSleeve';
+import { buildBusinessSalesAgentSleeve } from '../lib/umg/businessSalesAgentSleeve';
 import { buildCompositionSourceDiagnostics, compactCandidateForHermesPrompt, isActiveSessionSleeveCompileEligible } from '../lib/umg/hermesCustomSleeveGeneration';
 import { hydrateUmgLibraryCandidate, retrieveRoleTargetedUmgLibraryCandidates } from '../lib/umg/umgLibraryCandidateRetrieval';
 import { getBlockById } from '../lib/umg/umgLibraryRegistry';
@@ -1203,6 +1206,67 @@ describe('Phase 13A Sleeve Architect Mode foundation', () => {
     expect(composed.sourceBindingSummary.sourceBlocksUsed.map((block) => block.id)).toContain('BP.031');
     expect(JSON.stringify(composed.sourceBindingSummary)).toMatch(/Haiku/i);
     expect(composed.sleeve.neoBlocks.every((block) => block.moltBlockIds.length > 0)).toBe(true);
+  });
+
+  it('detects automotive dealership sales bot as deterministic business_sales_agent and avoids Project Launcher misroute', () => {
+    const prompt = 'create a sleeve for a car dealership sales bot';
+    const intent = parseWorkflowIntent(prompt);
+    expect(intent).toMatchObject({ workflowType: 'business_sales_agent', subtype: 'automotive_dealership_sales_agent', outputStyle: 'business_agent_workflow' });
+    const input = createBusinessInputFromPublicIntake({ goal: prompt, context: '', selectedChip: 'Custom Workflow' });
+    const map = analyzeBusinessInput(input);
+    expect(map.inferredIndustry).toBe('automotive retail / car dealership');
+    expect(map.coreOperations).toEqual(expect.arrayContaining(['lead intake', 'customer qualification', 'vehicle matching', 'appointment scheduling', 'CRM handoff', 'follow-up messaging']));
+    expect(map.coreOperations).not.toContain('ship');
+    const template = selectTemplateSleeve(input, map, getTemplateSleeveCatalog());
+    expect(template.selectedTemplateTitle).not.toBe('Project Launcher');
+    expect(template.selectedTemplateTitle).toBe('Business Automation Consultant');
+  });
+
+  it('builds compile-eligible deterministic dealership sales bot Sleeve with all MOLT roles, gates, and missing capability warnings', () => {
+    const prompt = 'create a sleeve for a car dealership sales bot';
+    const sleeve = buildBusinessSalesAgentSleeve({
+      sourcePrompt: prompt,
+      retrievedLibraryCandidates: Array.from({ length: 12 }, (_, index) => ({ id: `AUTO.CAND.${index + 1}`, title: `Auto candidate ${index + 1}`, blockType: 'molt', role: 'subject', tags: ['automotive', 'sales'], description: 'Relevant but intentionally not bound.', sourceKind: 'source-library', sourcePath: `auto#${index + 1}`, score: 1, matchReasons: ['prompt keyword'] })),
+      generationFailureReason: 'Failed to fetch',
+      requestId: 'dealership_failed_fetch_test'
+    });
+    expect(sleeve.title).toBe('Automotive Dealership Sales Bot Sleeve');
+    expect(sleeve.metadata.workflowIntent).toMatchObject({ workflowType: 'business_sales_agent', subtype: 'automotive_dealership_sales_agent' });
+    expect(sleeve.metadata.compileEligible).toBe(true);
+    expect(sleeve.metadata.compileEligibility).toBe('yes');
+    expect(isActiveSessionSleeveCompileEligible(sleeve)).toBe(true);
+    expect(sleeve.metadata.generatedByHermes).toBe(false);
+    expect(sleeve.metadata.liveHermesGenerated).toBe(false);
+    expect(sleeve.metadata.noFakeHermesOutput).toBe(true);
+    expect(sleeve.metadata.noFakeSourceBinding).toBe(true);
+    expect(sleeve.metadata.sourceLibraryWrite).toBe(false);
+    expect(sleeve.neoStacks).toHaveLength(10);
+    expect(sleeve.neoBlocks).toHaveLength(17);
+    expect(sleeve.gates.map((gate) => gate.title)).toEqual(expect.arrayContaining(['HUMAN_ESCALATION_GATE', 'COMPLIANCE_APPROVAL_GATE', 'TOOL_AVAILABILITY_GATE']));
+    const roles = new Set(sleeve.moltBlocks.map((block) => block.role));
+    expect([...roles]).toEqual(expect.arrayContaining(['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint']));
+    expect(sleeve.neoBlocks.every((block) => block.moltBlockIds.length >= 7)).toBe(true);
+    expect(sleeve.moltBlocks.every((block) => block.nlCard && block.jsonSchema && block.sourceKind === 'runtime-session draft')).toBe(true);
+    expect(sleeve.metadata.sourceStatusSummary.candidatesBoundIntoSleeve).toBe(0);
+    expect(sleeve.metadata.sourceStatusSummary.candidateCount).toBe(12);
+    expect(sleeve.metadata.noDeclaredToolsStillGenerated).toBe(true);
+    expect(sleeve.metadata.missingCapabilities).toEqual(expect.arrayContaining(['inventory database lookup', 'CRM write', 'appointment calendar', 'SMS/email follow-up']));
+    expect(String(sleeve.metadata.toolAvailabilityMessage)).toMatch(/Generated without external tools/);
+    expect(String(sleeve.metadata.hermesEnhancementWarning)).toMatch(/Failed to fetch/);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve, route: 'deterministic_business_sales_agent' });
+    expect(diagnostics.compileEligibility).toBe('yes');
+    expect(JSON.stringify(sleeve)).not.toMatch(/generatedByHermes":true|source-library reused|fake Hermes output/);
+  });
+
+  it('keeps deterministic business sales fallback UI diagnostics separate from terminal Hermes failure', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('Deterministic fallback used: business_sales_agent / automotive_dealership_sales_agent');
+    expect(appSource).toContain("generationRoute: 'deterministic_business_sales_agent'");
+    expect(appSource).toContain('Detected workflow intent: business_sales_agent / automotive_dealership_sales_agent');
+    expect(appSource).toContain('Generated without external tools. Runtime can plan the workflow, but inventory lookup, CRM updates, scheduling, and messaging need tool blocks/capabilities.');
+    expect(appSource).toContain('noDeclaredToolsStillGenerated: true');
+    expect(appSource).toContain('noFakeHermesOutput: true');
+    expect(appSource).toContain('noFakeSourceBinding: true');
   });
 
   it('resolves GPT-style prompt-only assistant/model-emulation prompts to deterministic intent', () => {

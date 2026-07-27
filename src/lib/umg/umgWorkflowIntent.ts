@@ -1,6 +1,7 @@
 export type UmgWorkflowIntent = {
-  workflowType: 'desktop_note_generation' | 'assistant_model_emulation' | 'unknown';
-  outputStyle: 'haiku' | 'plain_text' | 'assistant_workflow' | 'unknown';
+  workflowType: 'desktop_note_generation' | 'assistant_model_emulation' | 'business_sales_agent' | 'unknown';
+  subtype?: 'automotive_dealership_sales_agent' | string;
+  outputStyle: 'haiku' | 'plain_text' | 'assistant_workflow' | 'business_agent_workflow' | 'unknown';
   domains: string[];
   requiresTools: string[];
   producesArtifacts: string[];
@@ -12,7 +13,20 @@ export function parseWorkflowIntent(prompt: string): UmgWorkflowIntent {
   const text = prompt.toLowerCase();
   const isDesktopNote = /desktop/.test(text) && /note|notes|text|file/.test(text) && /create|creates|write|writes|save|saves/.test(text);
   const isAssistantModelEmulation = /\b(gpt|gpt4|gpt4\.0|gpt-4|gpt-4o|chatgpt|llm)\b|language model|reasoning assistant|general assistant|assistant workflow|model emulator|model emulation|coding help|instruction following|natural-language chat/.test(text);
-  const outputStyle = isAssistantModelEmulation ? 'assistant_workflow' : /haiku|5-7-5|poem|poetry|verse/.test(text) ? 'haiku' : /text|note|write/.test(text) ? 'plain_text' : 'unknown';
+  const isAutomotiveDealershipSalesAgent = /car dealership|auto dealership|automotive sales|car sales|dealership/.test(text) && /sales bot|sales assistant|sales agent|lead qualification|customer intake|appointment booking|financing inquiry|trade-?in|inventory matching|crm handoff|bot|assistant/.test(text);
+  const outputStyle = isAssistantModelEmulation ? 'assistant_workflow' : isAutomotiveDealershipSalesAgent ? 'business_agent_workflow' : /haiku|5-7-5|poem|poetry|verse/.test(text) ? 'haiku' : /text|note|write/.test(text) ? 'plain_text' : 'unknown';
+  if (isAutomotiveDealershipSalesAgent) {
+    return {
+      workflowType: 'business_sales_agent',
+      subtype: 'automotive_dealership_sales_agent',
+      outputStyle: 'business_agent_workflow',
+      domains: ['automotive retail', 'car dealership', 'sales', 'lead intake', 'crm', 'appointment scheduling'],
+      requiresTools: [],
+      producesArtifacts: ['lead_summary', 'vehicle_match_plan', 'appointment_request', 'crm_handoff_summary', 'follow_up_message_draft'],
+      requiresGates: ['human_escalation', 'compliance_approval', 'tool_availability'],
+      sourcePrompt: prompt
+    };
+  }
   if (isAssistantModelEmulation) {
     return {
       workflowType: 'assistant_model_emulation',

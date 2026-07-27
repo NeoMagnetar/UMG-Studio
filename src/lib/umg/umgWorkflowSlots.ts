@@ -42,6 +42,7 @@ function cloneSlots(slots: UmgWorkflowSlot[]) {
 
 export function planWorkflowSlots(intent: UmgWorkflowIntent): UmgWorkflowSlot[] {
   if (intent.workflowType === 'assistant_model_emulation') return cloneSlots(assistantModelEmulationSlots);
+  if (intent.workflowType === 'business_sales_agent') return [];
   if (intent.workflowType === 'desktop_note_generation' && intent.outputStyle === 'haiku') return cloneSlots(desktopHaikuSlots);
   return [];
 }

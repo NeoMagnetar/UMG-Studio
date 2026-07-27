@@ -1,6 +1,6 @@
 import { BusinessInput, BusinessMap, IntakeDocument, RequestedAgentType, ToolDeclaration, WorkflowSummary } from './businessIntakeTypes';
 
-const businessKeywords = ['business', 'customer', 'client', 'invoice', 'payment', 'appointment', 'scheduling', 'calendar', 'social media', 'inventory', 'order', 'follow-up', 'lead', 'report', 'expense', 'bookkeeping', 'etsy', 'shopify', 'hvac', 'plumbing', 'cleaning', 'restaurant', 'food truck', 'coach', 'consultant', 'creator', 'content'];
+const businessKeywords = ['business', 'customer', 'client', 'invoice', 'payment', 'appointment', 'appointment booking', 'scheduling', 'calendar', 'social media', 'inventory', 'order', 'follow-up', 'lead', 'lead qualification', 'customer intake', 'vehicle matching', 'crm handoff', 'sales', 'sales bot', 'sales assistant', 'financing inquiry', 'trade-in', 'report', 'expense', 'bookkeeping', 'etsy', 'shopify', 'hvac', 'plumbing', 'cleaning', 'restaurant', 'food truck', 'coach', 'consultant', 'creator', 'content'];
 const projectKeywords = ['project', 'github', 'git', 'repo', 'commit', 'push', 'code', 'typescript', 'python', 'readme', 'docs', 'package.json', 'dependencies', 'environment', 'deploy', 'organize files', 'build', 'test', 'ship'];
 const websiteKeywords = ['website', 'landing page', 'pages', 'seo', 'portfolio', 'web design', 'homepage', 'contact form', 'ecommerce site'];
 const chatbotKeywords = ['chatbot', 'faq', 'support bot', 'assistant', 'customer support', 'knowledge base', 'live chat'];
@@ -21,7 +21,12 @@ export type PublicIntakeArgs = {
 
 const uniq = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 const includes = (text: string, keyword: string) => text.toLowerCase().includes(keyword.toLowerCase());
-const matches = (text: string, keywords: string[]) => keywords.filter((keyword) => includes(text, keyword));
+const matches = (text: string, keywords: string[]) => keywords.filter((keyword) => {
+  const lowerText = text.toLowerCase();
+  const lowerKeyword = keyword.toLowerCase();
+  if (!/^[a-z0-9 ]+$/.test(lowerKeyword) || lowerKeyword.includes(' ')) return lowerText.includes(lowerKeyword);
+  return new RegExp(`\\b${lowerKeyword.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i').test(text);
+});
 const sentenceFragments = (text: string) => text.split(/[.\n;]+/).map((part) => part.trim()).filter((part) => part.length > 8);
 
 function chipToAgentType(chip?: string): RequestedAgentType | undefined {
@@ -42,6 +47,7 @@ function inferIndustry(text: string, chip?: string): string | undefined {
   if (chip === 'Website Builder') return 'web presence / digital marketing';
   if (chip === 'Chatbot') return 'customer support / conversational automation';
   if (chip === 'Research Agent') return 'research / knowledge work';
+  if (/car dealership|auto dealership|dealership|automotive sales|car sales/.test(lower)) return 'automotive retail / car dealership';
   if (/etsy|shopify|ecommerce|store|orders/.test(lower)) return 'ecommerce';
   if (/hvac|plumbing|cleaning|service business|appointments?/.test(lower)) return 'local service business';
   if (/restaurant|food truck|menu|reservation/.test(lower)) return 'food service';
@@ -138,8 +144,10 @@ export function analyzeBusinessInput(input: BusinessInput): BusinessMap {
   const chatbotSignals = matches(combined, chatbotKeywords);
   const researchSignals = matches(combined, researchKeywords);
   const allSignals = uniq([...businessSignals, ...projectSignals, ...websiteSignals, ...chatbotSignals, ...researchSignals]);
+  const dealershipSalesAgent = /car dealership|auto dealership|dealership|automotive sales|car sales/.test(combined.toLowerCase()) && /sales bot|sales assistant|sales agent|lead|customer|appointment|financing|trade-?in|inventory|crm|bot|assistant/.test(combined.toLowerCase());
   const coreOperations = uniq([
-    ...businessSignals.filter((signal) => ['invoice', 'payment', 'appointment', 'scheduling', 'calendar', 'social media', 'inventory', 'order', 'follow-up', 'lead', 'report', 'expense', 'bookkeeping'].includes(signal)),
+    ...(dealershipSalesAgent ? ['lead intake', 'customer qualification', 'vehicle matching', 'appointment scheduling', 'CRM handoff', 'follow-up messaging'] : []),
+    ...businessSignals.filter((signal) => ['invoice', 'payment', 'appointment', 'appointment booking', 'scheduling', 'calendar', 'social media', 'inventory', 'order', 'follow-up', 'lead', 'lead qualification', 'customer intake', 'vehicle matching', 'crm handoff', 'sales', 'sales bot', 'sales assistant', 'financing inquiry', 'trade-in', 'report', 'expense', 'bookkeeping'].includes(signal)),
     ...projectSignals.filter((signal) => ['github', 'git', 'repo', 'commit', 'code', 'typescript', 'python', 'docs', 'dependencies', 'environment', 'deploy', 'build', 'test', 'ship'].includes(signal)),
     ...websiteSignals,
     ...chatbotSignals,

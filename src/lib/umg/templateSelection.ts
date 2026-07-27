@@ -75,7 +75,10 @@ export function selectTemplateSleeve(input: BusinessInput, businessMap: Business
   const quickPreferredId = input.rawQuickChip ? quickChipTemplateMap[input.rawQuickChip] : undefined;
   const quickPreferred = quickPreferredId ? scored.find((entry) => entry.template.id === quickPreferredId) : undefined;
   const preferredUnavailable = quickPreferred && !quickPreferred.template.available ? quickPreferred : undefined;
-  const selected = quickPreferred?.template.available ? quickPreferred : availableFallback(scored, preferredUnavailable);
+  const isAutomotiveBusinessSalesAgent = normalize(businessMap.inferredIndustry ?? '').includes('automotive retail car dealership')
+    || businessMap.coreOperations.some((operation) => ['lead intake', 'customer qualification', 'vehicle matching', 'appointment scheduling', 'crm handoff', 'follow up messaging'].includes(normalize(operation)));
+  const businessSalesPreferred = isAutomotiveBusinessSalesAgent ? scored.find((entry) => entry.template.id === 'template.business_automation_consultant.v1' && entry.template.available) : undefined;
+  const selected = businessSalesPreferred ?? (quickPreferred?.template.available ? quickPreferred : availableFallback(scored, preferredUnavailable));
   const unavailableButRelevant = scored
     .filter((entry) => !entry.template.available && (entry.score > 2 || entry.template.id === quickPreferredId))
     .map((entry) => entry.template.id);
