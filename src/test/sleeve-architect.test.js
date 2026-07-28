@@ -32,6 +32,7 @@ import { summarizeNormalizedTemplateSourceStatus } from '../lib/umg/templateSlee
 import { buildCalibratedHaikuDesktopNoteSleeve } from '../lib/umg/calibratedDemoSleeves';
 import { buildAssistantModelEmulationSleeve } from '../lib/umg/assistantModelEmulationSleeve';
 import { buildBusinessSalesAgentSleeve } from '../lib/umg/businessSalesAgentSleeve';
+import { buildArchitectureDesignAgentSleeve } from '../lib/umg/architectureDesignAgentSleeve';
 import { buildCompositionSourceDiagnostics, compactCandidateForHermesPrompt, isActiveSessionSleeveCompileEligible } from '../lib/umg/hermesCustomSleeveGeneration';
 import { hydrateUmgLibraryCandidate, retrieveRoleTargetedUmgLibraryCandidates } from '../lib/umg/umgLibraryCandidateRetrieval';
 import { getBlockById } from '../lib/umg/umgLibraryRegistry';
@@ -228,6 +229,74 @@ describe('UMG universal import dissemination engine pass 1', () => {
     expect(appSource).toContain('liveHermesGenerationSkipped: true');
     expect(appSource).toContain('protectedSourceLibraryWrite: false');
     expect(appSource).not.toContain('Fake compiler success');
+  });
+
+  it('Basic Generate awaits selected local UMG package import before any live Hermes generation route', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('uploadedFileImportPromisesRef');
+    expect(appSource).toContain('awaitPendingSelectedUmgPackageImport');
+    expect(appSource).toContain('Reading selected file…');
+    expect(appSource).toMatch(/await awaitPendingSelectedUmgPackageImport\(\)/);
+    expect(appSource.indexOf('await awaitPendingSelectedUmgPackageImport()')).toBeLessThan(appSource.indexOf('await runLiveSourceBoundSleeveGeneration({ businessInput, businessMap, architectPlan })'));
+  });
+
+  it('folder-prefixed current-session package activates from Basic Generate and skips Hermes timeout blockers', async () => {
+    const fixture = buildCurrentActiveSessionSleeveFixture();
+    const entrypoint = 'MODERN_ARCHITECT_SLEEVE_v1_UMG_STUDIO_READY/sleeve/active_session_sleeve.json';
+    const zipBytes = zipSync({ [entrypoint]: strToU8(JSON.stringify(fixture)) });
+    const file = new File([zipBytes], 'MODERN_ARCHITECT_SLEEVE_v1_UMG_STUDIO_READY.zip', { type: 'application/zip' });
+    const disseminated = await disseminateUploadedFile(file);
+    expect(disseminated.report.packageDetection).toMatchObject({ detected: true, packageType: 'current_active_session_sleeve' });
+    expect(disseminated.normalizedSleeveCandidate.metadata).toMatchObject({
+      generationRoute: 'imported_current_active_session_sleeve',
+      entrypointUsed: entrypoint,
+      folderPrefixNormalized: true,
+      liveHermesGenerationSkipped: true,
+      protectedSourceLibraryWrite: false
+    });
+    expect(isActiveSessionSleeveCompileEligible(disseminated.normalizedSleeveCandidate)).toBe(true);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve: disseminated.normalizedSleeveCandidate, route: 'imported_current_active_session_sleeve' });
+    expect(diagnostics.compileEligibility).toBe('yes');
+    expect(diagnostics.reasonIfNotEligible).toBeUndefined();
+  });
+
+  it('detects Architect sleeve intent and builds a compile-eligible deterministic architecture fallback', () => {
+    for (const prompt of ['Architect sleeve', 'modern architect', 'architecture assistant', 'architectural design assistant', 'building design', 'residential design', 'concept design', 'site planning', 'construction documentation planning']) {
+      const intent = parseWorkflowIntent(prompt);
+      expect(intent.workflowType).toBe('architecture_design_agent');
+      expect(intent.subtype).toBe('modern_architect_sleeve');
+    }
+    const sleeve = buildArchitectureDesignAgentSleeve({ sourcePrompt: 'Architect sleeve', generationFailureReason: 'Hermes custom Sleeve generation CLI timed out.', requestId: 'test_architecture' });
+    expect(sleeve.title).toBe('Modern Architect Sleeve');
+    expect(sleeve.neoStacks.map((stack) => stack.title)).toEqual([
+      'CLIENT_INTAKE_STACK',
+      'SITE_CONTEXT_STACK',
+      'PROGRAM_REQUIREMENTS_STACK',
+      'CONCEPT_DESIGN_STACK',
+      'CODE_AND_CONSTRAINTS_STACK',
+      'MATERIAL_SYSTEMS_STACK',
+      'DOCUMENTATION_STACK',
+      'REVIEW_AND_ITERATION_STACK',
+      'RUNTIME_OBSERVER_STACK'
+    ]);
+    expect(sleeve.metadata).toMatchObject({
+      generationRoute: 'deterministic_architecture_design_agent',
+      deterministicFallbackUsed: 'architecture_design_agent',
+      workflowIntentName: 'architecture_design_agent',
+      liveHermesGenerated: false,
+      generatedByHermes: false,
+      noFakeHermesOutput: true,
+      sourceLibraryWrite: false,
+      protectedSourceLibraryWrite: false,
+      compileEligible: true,
+      compileEligibility: 'yes'
+    });
+    expect(sleeve.metadata.missingOptionalTools).toEqual(expect.arrayContaining(['Revit/BIM connector', 'CAD/DWG connector', 'PDF markup connector', 'rendering pipeline connector', 'GIS/site data connector', 'BCF/coordination issue connector']));
+    expect(sleeve.metadata.toolAvailabilityMessage).toMatch(/warnings only/i);
+    expect(isActiveSessionSleeveCompileEligible(sleeve)).toBe(true);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve, route: 'deterministic_architecture_design_agent' });
+    expect(diagnostics.compileEligibility).toBe('yes');
+    expect(diagnostics.reasonIfNotEligible).toBeUndefined();
   });
 
   it('imports current active-session Sleeve entries from either root or package-folder paths', () => {

@@ -58,6 +58,7 @@ import { adaptHermesCustomSleevePlanToRuntimeSessionSleeve, buildCompositionSour
 import { buildCalibratedHaikuDesktopNoteSleeve } from './lib/umg/calibratedDemoSleeves';
 import { buildAssistantModelEmulationSleeve } from './lib/umg/assistantModelEmulationSleeve';
 import { buildBusinessSalesAgentSleeve } from './lib/umg/businessSalesAgentSleeve';
+import { buildArchitectureDesignAgentSleeve } from './lib/umg/architectureDesignAgentSleeve';
 import { parseWorkflowIntent } from './lib/umg/umgWorkflowIntent';
 import type { HermesCustomSleevePlanCapability } from './lib/umg/hermesCustomSleeveGeneration';
 import { UMG_LIBRARY_METADATA_INDEX, UMG_LIBRARY_METADATA_INDEX_INFO } from './lib/umg/generated/umgLibraryMetadataIndex';
@@ -475,6 +476,8 @@ export default function App() {
   const [compileError, setCompileError] = useState<string | null>(null);
   const [compileDiagnostics, setCompileDiagnostics] = useState<CompileClickDiagnostics>({ compileClickCount: 0 });
   const sleeveActivationVersionRef = useRef(0);
+  const uploadedFileImportPromisesRef = useRef<Record<string, Promise<void>>>({});
+  const latestUploadedPackageActivationRef = useRef<{ key: string; report: Record<string, unknown>; sleeve?: NormalizedTemplateSleeve; route: 'imported_legacy_sleeve_package' | 'imported_current_active_session_sleeve'; brief?: Record<string, unknown>; statusText: string; diagnostics: Record<string, unknown> } | undefined>(undefined);
   const [toolCapabilityResolutions, setToolCapabilityResolutions] = useState<ToolCapabilityResolution[]>([]);
   const [pendingRuntimeApproval, setPendingRuntimeApproval] = useState<PendingRuntimeApproval | undefined>();
   const [nativeActionMode, setNativeActionMode] = useState<Exclude<UMGNativeActionMode, 'blocked'>>('observe');
@@ -2013,6 +2016,24 @@ export default function App() {
     }));
   };
 
+  const awaitPendingSelectedUmgPackageImport = async () => {
+    const selectedKeys = publicSelectedFiles.map(publicFileKey);
+    const pendingImports = selectedKeys.map((key) => uploadedFileImportPromisesRef.current[key]).filter(Boolean);
+    if (!pendingImports.length) return latestUploadedPackageActivationRef.current;
+    setStatus('Reading selected file…');
+    setHermesCustomGenerationDiagnostics((current) => ({
+      ...(current ?? {}),
+      localFileParsed: false,
+      fileParsePending: true,
+      liveHermesGenerationSkipped: 'pending selected file import',
+      sourceLibraryWrite: false,
+      protectedSourceLibraryWrite: false
+    }));
+    await Promise.allSettled(pendingImports);
+    const latestActivation = latestUploadedPackageActivationRef.current;
+    return latestActivation && selectedKeys.includes(latestActivation.key) ? latestActivation : undefined;
+  };
+
   const submitPublicIntake = async () => {
     const combinedContext = [
       publicContext,
@@ -2032,12 +2053,45 @@ export default function App() {
     setPublicBusinessMap(businessMap);
     setPublicTemplateSelection(templateSelection);
     setSleeveArchitectPlan(architectPlan);
+    const selectedPackageActivation = publicSelectedFiles.length > 0 ? await awaitPendingSelectedUmgPackageImport() : undefined;
+    if (selectedPackageActivation?.sleeve) {
+      setPublicIntakeSubmitted(true);
+      resetCompileStateForActiveSleeve(selectedPackageActivation.sleeve);
+      setHermesCustomGenerationStatus(`ok: imported UMG package · Basic Generate local file parsed · ${selectedPackageActivation.route} · live Hermes generation skipped`);
+      setHermesCustomGenerationDiagnostics({
+        ...selectedPackageActivation.diagnostics,
+        generationRoute: selectedPackageActivation.route,
+        localFileParsed: true,
+        packageDetected: true,
+        packageType: selectedPackageActivation.report.packageDetection && (selectedPackageActivation.report.packageDetection as Record<string, unknown>).packageType,
+        entrypointUsed: selectedPackageActivation.sleeve.metadata?.entrypointUsed,
+        folderPrefixNormalized: selectedPackageActivation.sleeve.metadata?.folderPrefixNormalized,
+        importedPackage: true,
+        liveHermesGenerated: false,
+        generatedByHermes: false,
+        liveHermesGenerationSkipped: true,
+        compileEligibility: 'yes',
+        missingOptionalToolsWarning: selectedPackageActivation.sleeve.metadata?.missingOptionalTools ?? selectedPackageActivation.sleeve.metadata?.warnings,
+        importReviewReport: selectedPackageActivation.report,
+        hermesImportBrief: selectedPackageActivation.brief,
+        fallbackUsed: false,
+        genericArchitectDraftShown: false,
+        sourceLibraryWrite: false,
+        protectedSourceLibraryWrite: false,
+        noFakeHermesOutput: true
+      });
+      setStatus(selectedPackageActivation.statusText);
+      return;
+    }
     if (importReviewReport && activeSessionSleeve) {
+      const importedRoute = activeSessionSleeve.metadata?.generationRoute === 'imported_current_active_session_sleeve' ? 'imported_current_active_session_sleeve' : 'imported_legacy_sleeve_package';
       setPublicIntakeSubmitted(true);
       setHermesCustomGenerationStatus('ok: imported UMG package · review workspace ready · live Hermes generation skipped');
       setHermesCustomGenerationDiagnostics({
-        generationRoute: 'imported_legacy_sleeve_package',
+        generationRoute: importedRoute,
+        // generationRoute: 'imported_legacy_sleeve_package' remains the legacy import route when activeSessionSleeve is not a current-session package.
         importedPackage: true,
+        legacyGenerationRoute: 'imported_legacy_sleeve_package',
         liveHermesGenerated: false,
         packageDetected: true,
         importReviewReport,
@@ -2182,6 +2236,63 @@ export default function App() {
         };
         setHermesCustomGenerationDiagnostics(preflightDiagnostics);
         const deterministicIntent = parseWorkflowIntent(generationRequest.userPrompt);
+        if (deterministicIntent.workflowType === 'architecture_design_agent') {
+          const runtimeSleeve = buildArchitectureDesignAgentSleeve({
+            sourcePrompt: generationRequest.userPrompt,
+            retrievedLibraryCandidates: generationRequest.libraryCandidates,
+            candidatesByRole: generationRequest.candidatesByRole,
+            missingRoles: generationRequest.missingRoles,
+            rejectedCandidateIds: generationRequest.rejectedCandidateIds,
+            uploadedContext: generationRequest.userContext,
+            generationFailureReason: 'Deterministic architecture_design_agent route selected before live Hermes enhancement; missing architecture tools are warnings only.',
+            requestId: generationRequest.requestId
+          });
+          const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: runtimeSleeve.gates.map((gate) => gate.title), sourceLabel: 'deterministic_architecture_design_agent' });
+          setActiveSessionSleeve(runtimeSleeve);
+          resetCompileStateForActiveSleeve(runtimeSleeve);
+          setBusinessAutomationCoreBuild(undefined);
+          setBlockMatchPlan(artifacts.blockMatchPlan);
+          setDraftReviewState([]);
+          setSleeveAssemblyPlan(artifacts.assemblyPlan);
+          setCompileCandidate(artifacts.compileCandidate);
+          setCompilerRequestPreview(undefined);
+          setCompilerResult({ status: 'ok', errors: [], warnings: [{ code: 'HERMES_CUSTOM_SLEEVE_GENERATION_WARNING', message: 'Deterministic architecture_design_agent fallback used; missing Revit/BIM, CAD/DWG, PDF markup, rendering, GIS/site data, and BCF connectors are warnings only.' }] });
+          setCompiledRuntimeManifest(undefined);
+          setHermesRuntimeResult(undefined);
+          setHermesRuntimeVisualState(undefined);
+          setHermesRuntimeErrors([]);
+          setHermesRuntimeWarnings([]);
+          setPendingRuntimeApproval(undefined);
+          const sourceStatusSummary = runtimeSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined;
+          setHermesCustomGenerationDiagnostics({
+            ...preflightDiagnostics,
+            generationRoute: 'deterministic_architecture_design_agent',
+            detectedWorkflowIntent: 'architecture_design_agent',
+            workflowIntentSubtype: 'modern_architect_sleeve',
+            deterministicFallbackUsed: 'architecture_design_agent',
+            fallbackUsed: true,
+            fallbackReason: runtimeSleeve.metadata.fallbackReason,
+            hermesEnhancementFailed: false,
+            hermesEnhancementFailure: 'not required; deterministic fallback selected first',
+            candidateRetrievalRan: true,
+            candidateCount: generationRequest.libraryCandidates.length,
+            sourceLibraryCandidatesFound: generationRequest.libraryCandidates.length,
+            sourceLibraryCandidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0,
+            candidatesBound: sourceStatusSummary?.candidatesBoundIntoSleeve ?? 0,
+            runtimeWorkspaceDraftBlocksGenerated: sourceStatusSummary?.runtimeWorkspaceDraftBlocksGenerated,
+            missingOptionalTools: runtimeSleeve.metadata.missingOptionalTools,
+            missingOptionalToolsWarning: runtimeSleeve.metadata.toolAvailabilityMessage,
+            generatedDrafts: runtimeSleeve.metadata.generatedDrafts,
+            compileEligibility: 'yes',
+            noDeclaredToolsStillGenerated: true,
+            noFakeHermesOutput: true,
+            noFakeSourceBinding: true,
+            compositionSource: buildCompositionSourceDiagnostics({ sleeve: runtimeSleeve, request: generationRequest, route: 'deterministic_architecture_design_agent' })
+          });
+          setHermesCustomGenerationStatus(`ok: deterministic fallback used: architecture_design_agent / modern_architect_sleeve · candidates ${generationRequest.libraryCandidates.length} · bound 0 · missing tools warning only`);
+          setStatus('Deterministic Modern Architect Sleeve ready. Compile next.');
+          return;
+        }
         if (deterministicIntent.workflowType === 'business_sales_agent') {
           const runtimeSleeve = buildBusinessSalesAgentSleeve({
             sourcePrompt: generationRequest.userPrompt,
@@ -3119,8 +3230,12 @@ export default function App() {
       onContextChange={setPublicContext}
       onChipSelect={setPublicSelectedChip}
       onFilesAdd={(files) => {
-        files.forEach(async (file) => {
+        files.forEach((file) => {
           const base = { name: file.name, size: file.size, lastModified: file.lastModified, type: file.type };
+          const fileKey = publicFileKey(base);
+          setPublicSelectedFiles((current) => current.some((entry) => publicFileKey(entry) === fileKey) ? current : [...current, { ...base, intakeStatus: 'unsupported_type', textPreview: 'Reading selected file…' }]);
+          setStatus('Reading selected file…');
+          const importPromise = (async () => {
           const intakeBase = { fileName: file.name, mimeType: file.type, sizeBytes: file.size, lastModified: file.lastModified };
           try {
             const disseminated = await disseminateUploadedFile(file);
@@ -3144,6 +3259,7 @@ export default function App() {
               setHermesImportBrief(brief as unknown as Record<string, unknown>);
               let uoEnrichmentEvidence: unknown;
               let importedOverlayMetadata: Record<string, unknown> = {};
+              let activatedRuntimeSleeve: NormalizedTemplateSleeve | undefined;
               const isCurrentActiveSessionPackage = disseminated.report.packageDetection.packageType === 'current_active_session_sleeve';
               const importGenerationRoute = isCurrentActiveSessionPackage ? 'imported_current_active_session_sleeve' : 'imported_legacy_sleeve_package';
               if (disseminated.normalizedSleeveCandidate) {
@@ -3180,6 +3296,7 @@ export default function App() {
                   rejectedOverlays: runtimeSleeve.metadata?.rejectedOverlays
                 };
                 const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: [], sourceLabel: importGenerationRoute });
+                activatedRuntimeSleeve = runtimeSleeve;
                 setActiveSessionSleeve(runtimeSleeve);
                 resetCompileStateForActiveSleeve(runtimeSleeve);
                 setBlockMatchPlan(artifacts.blockMatchPlan);
@@ -3189,7 +3306,11 @@ export default function App() {
                 setCompilerRequestPreview(undefined);
               }
               setHermesCustomGenerationStatus(isCurrentActiveSessionPackage ? 'ok: imported active-session UMG package · live Hermes generation skipped' : 'ok: imported UMG package · live Hermes generation skipped');
-              setHermesCustomGenerationDiagnostics({ generationRoute: importGenerationRoute, packageType: disseminated.report.packageDetection.packageType, entrypointUsed: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.entrypointUsed, folderPrefixNormalized: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.folderPrefixNormalized, deterministicImportRoute: importGenerationRoute, importedPackage: true, liveHermesGenerated: false, generatedByHermes: false, liveHermesGenerationSkipped: true, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, ...importedOverlayMetadata, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false, protectedSourceLibraryWrite: false, compileEligibility: disseminated.normalizedSleeveCandidate ? 'yes' : disseminated.report.compileEligibility });
+              const importDiagnostics = { generationRoute: importGenerationRoute, localFileParsed: true, packageType: disseminated.report.packageDetection.packageType, entrypointUsed: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.entrypointUsed, folderPrefixNormalized: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.folderPrefixNormalized, deterministicImportRoute: importGenerationRoute, importedPackage: true, liveHermesGenerated: false, generatedByHermes: false, liveHermesGenerationSkipped: true, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, ...importedOverlayMetadata, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false, protectedSourceLibraryWrite: false, compileEligibility: disseminated.normalizedSleeveCandidate ? 'yes' : disseminated.report.compileEligibility, missingOptionalToolsWarning: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.missingOptionalTools, noFakeHermesOutput: true };
+              setHermesCustomGenerationDiagnostics(importDiagnostics);
+              if (activatedRuntimeSleeve) {
+                latestUploadedPackageActivationRef.current = { key: fileKey, report: disseminated.report as unknown as Record<string, unknown>, sleeve: activatedRuntimeSleeve, route: importGenerationRoute, brief: brief as unknown as Record<string, unknown>, statusText: isCurrentActiveSessionPackage ? 'Imported active-session UMG Sleeve package ready. Compile next.' : 'Imported legacy UMG Sleeve package ready. Compile next.', diagnostics: importDiagnostics };
+              }
               setCompilerResult(undefined);
               setCompileError(null);
               setStatus(isCurrentActiveSessionPackage ? 'Imported active-session UMG Sleeve package ready. Compile next.' : 'Imported legacy UMG Sleeve package ready. Compile next.');
@@ -3233,10 +3354,12 @@ export default function App() {
             setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), failed]);
             setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'read_error', textPreview: failed.summary }]);
           }
+          })();
+          uploadedFileImportPromisesRef.current[fileKey] = importPromise;
         });
       }}
-      onFileRemove={(file) => { setPublicSelectedFiles((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); setUploadedIntakeContexts((current) => current.filter((existing) => publicFileKey(existing) !== publicFileKey(file))); setImportReviewReport(undefined); setHermesImportBrief(undefined); }}
-      onFilesClear={() => { setPublicSelectedFiles([]); setUploadedIntakeContexts([]); setImportReviewReport(undefined); setHermesImportBrief(undefined); }}
+      onFileRemove={(file) => { const key = publicFileKey(file); delete uploadedFileImportPromisesRef.current[key]; if (latestUploadedPackageActivationRef.current?.key === key) latestUploadedPackageActivationRef.current = undefined; setPublicSelectedFiles((current) => current.filter((existing) => publicFileKey(existing) !== key)); setUploadedIntakeContexts((current) => current.filter((existing) => publicFileKey(existing) !== key)); setImportReviewReport(undefined); setHermesImportBrief(undefined); }}
+      onFilesClear={() => { uploadedFileImportPromisesRef.current = {}; latestUploadedPackageActivationRef.current = undefined; setPublicSelectedFiles([]); setUploadedIntakeContexts([]); setImportReviewReport(undefined); setHermesImportBrief(undefined); }}
       onSubmit={submitPublicIntake}
       onCreateBusinessAutomationCore={createBusinessAutomationCoreFromTemplate}
       onRunBlockMatching={runBusinessAutomationBlockMatching}

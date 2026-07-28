@@ -1,7 +1,7 @@
 export type UmgWorkflowIntent = {
-  workflowType: 'desktop_note_generation' | 'assistant_model_emulation' | 'business_sales_agent' | 'unknown';
-  subtype?: 'automotive_dealership_sales_agent' | string;
-  outputStyle: 'haiku' | 'plain_text' | 'assistant_workflow' | 'business_agent_workflow' | 'unknown';
+  workflowType: 'desktop_note_generation' | 'assistant_model_emulation' | 'business_sales_agent' | 'architecture_design_agent' | 'unknown';
+  subtype?: 'automotive_dealership_sales_agent' | 'modern_architect_sleeve' | string;
+  outputStyle: 'haiku' | 'plain_text' | 'assistant_workflow' | 'business_agent_workflow' | 'architecture_design_workflow' | 'unknown';
   domains: string[];
   requiresTools: string[];
   producesArtifacts: string[];
@@ -12,9 +12,22 @@ export type UmgWorkflowIntent = {
 export function parseWorkflowIntent(prompt: string): UmgWorkflowIntent {
   const text = prompt.toLowerCase();
   const isDesktopNote = /desktop/.test(text) && /note|notes|text|file/.test(text) && /create|creates|write|writes|save|saves/.test(text);
+  const isArchitectureDesignAgent = /\b(architect sleeve|modern architect|architecture assistant|architectural design assistant|building design|residential design|concept design|site planning|construction documentation planning)\b/.test(text) || (/\barchitect|architecture|architectural\b/.test(text) && /\bsleeve|assistant|design|building|site|construction|documentation\b/.test(text));
   const isAssistantModelEmulation = /\b(gpt|gpt4|gpt4\.0|gpt-4|gpt-4o|chatgpt|llm)\b|language model|reasoning assistant|general assistant|assistant workflow|model emulator|model emulation|coding help|instruction following|natural-language chat/.test(text);
   const isAutomotiveDealershipSalesAgent = /car dealership|auto dealership|automotive sales|car sales|dealership/.test(text) && /sales bot|sales assistant|sales agent|lead qualification|customer intake|appointment booking|financing inquiry|trade-?in|inventory matching|crm handoff|bot|assistant/.test(text);
-  const outputStyle = isAssistantModelEmulation ? 'assistant_workflow' : isAutomotiveDealershipSalesAgent ? 'business_agent_workflow' : /haiku|5-7-5|poem|poetry|verse/.test(text) ? 'haiku' : /text|note|write/.test(text) ? 'plain_text' : 'unknown';
+  const outputStyle = isArchitectureDesignAgent ? 'architecture_design_workflow' : isAssistantModelEmulation ? 'assistant_workflow' : isAutomotiveDealershipSalesAgent ? 'business_agent_workflow' : /haiku|5-7-5|poem|poetry|verse/.test(text) ? 'haiku' : /text|note|write/.test(text) ? 'plain_text' : 'unknown';
+  if (isArchitectureDesignAgent) {
+    return {
+      workflowType: 'architecture_design_agent',
+      subtype: 'modern_architect_sleeve',
+      outputStyle: 'architecture_design_workflow',
+      domains: ['architecture', 'building design', 'site planning', 'concept design', 'construction documentation'],
+      requiresTools: [],
+      producesArtifacts: ['client_brief', 'site_context_summary', 'program_matrix', 'concept_design_options', 'documentation_plan'],
+      requiresGates: ['client_review', 'code_review', 'coordination_review'],
+      sourcePrompt: prompt
+    };
+  }
   if (isAutomotiveDealershipSalesAgent) {
     return {
       workflowType: 'business_sales_agent',
