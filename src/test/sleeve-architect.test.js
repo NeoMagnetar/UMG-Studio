@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { zipSync, strToU8 } from 'fflate';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
@@ -42,8 +43,8 @@ import { BasicCompileDiagnosticsDisclosure } from '../components/BasicCompileDia
 import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from '../lib/umg/umgBlockAuthoring';
 import { deleteWorkspaceBlock, getWorkspaceBlockById, listWorkspaceBlocks, saveWorkspaceBlock, searchWorkspaceBlocks } from '../lib/umg/umgWorkspaceBlockRegistry';
 import { detectUmgPackage, disseminateUploadedFile } from '../lib/umg/import/umgArchiveDisseminator';
+import { importCurrentActiveSessionSleevePackage, importLegacySleevePackage } from '../lib/umg/import/umgLegacySleevePackageImporter';
 import { parseTextLikeFile } from '../lib/umg/import/umgFileClassifier';
-import { importLegacySleevePackage } from '../lib/umg/import/umgLegacySleevePackageImporter';
 import { buildHermesImportBrief } from '../lib/umg/import/umgHermesImportBrief';
 import { AppErrorBoundary } from '../components/AppErrorBoundary';
 
@@ -57,6 +58,57 @@ function buildLegacyUoStructureFixture() {
   }).join('\n\n');
   const molts = Array.from({ length: 4 }, (_, index) => `### PRIM.UO.${String(index + 1).padStart(3, '0')} - Governance Primary ${index + 1}\n**Content:** Keep UO / ServUO / ModernUO C# server changes reviewed and source-library-safe.`).join('\n\n');
   return `# UO Server Developer Sleeve\nSleeve ID: SLV.UO.SERVER.DEVELOPER.v1.0\nVersion: 1.0.0\n\n## NeoStacks\n${stacks}\n\n## MOLT Governance\n${molts}`;
+}
+
+function buildCurrentActiveSessionSleeveFixture() {
+  const roles = ['trigger', 'directive', 'instruction', 'subject', 'primary', 'philosophy', 'blueprint'];
+  return {
+    id: 'SLV.ARCH.MODERN_ARCHITECT.v1.0.0',
+    title: 'Modern Architect Sleeve',
+    version: '1.0.0',
+    purpose: 'Imported architecture workflow Sleeve.',
+    neoStacks: Array.from({ length: 9 }, (_, index) => ({
+      id: `ARCH.STACK.${index + 1}`,
+      title: `Architecture Stack ${index + 1}`,
+      purpose: `Stack ${index + 1}`,
+      stackOrder: index + 1,
+      neoBlockIds: [`ARCH.BLOCK.${index + 1}`],
+      sourceKind: 'runtime-session draft'
+    })),
+    neoBlocks: Array.from({ length: 13 }, (_, index) => ({
+      id: `ARCH.BLOCK.${index + 1}`,
+      title: `Architecture NeoBlock ${index + 1}`,
+      purpose: `NeoBlock ${index + 1}`,
+      parentNeoStackId: `ARCH.STACK.${(index % 9) + 1}`,
+      blockOrder: index + 1,
+      moltBlockIds: roles.map((role) => `ARCH.MOLT.${index + 1}.${role}`),
+      gateIds: index < 4 ? [`ARCH.GATE.${index + 1}`] : [],
+      sourceKind: 'runtime-session draft'
+    })),
+    moltBlocks: Array.from({ length: 13 }).flatMap((_, blockIndex) => {
+      return roles.map((role, roleIndex) => ({
+        id: `ARCH.MOLT.${blockIndex + 1}.${role}`,
+        title: `${role} MOLT ${blockIndex + 1}`,
+        role,
+        content: `${role} content for architecture block ${blockIndex + 1}.`,
+        parentNeoBlockId: `ARCH.BLOCK.${blockIndex + 1}`,
+        parentNeoStackId: `ARCH.STACK.${(blockIndex % 9) + 1}`,
+        stackOrder: roleIndex + 1,
+        sourceKind: 'runtime-session draft'
+      }));
+    }),
+    gates: Array.from({ length: 4 }, (_, index) => ({ id: `ARCH.GATE.${index + 1}`, title: `Gate ${index + 1}` })),
+    capabilities: Array.from({ length: 14 }, (_, index) => ({ capabilityId: `ARCH.CAP.${index + 1}`, label: `Capability ${index + 1}` })),
+    missingOptionalTools: [{ id: 'TOOL.ARCH.REVIT_CONNECTOR', status: 'missing_optional' }],
+    toolBlocks: [],
+    metadata: {
+      importedPackage: true,
+      protectedSourceLibraryWrite: false,
+      liveHermesGenerated: false,
+      generatedByHermes: false,
+      compileEligible: true
+    }
+  };
 }
 
 describe('UMG universal import dissemination engine pass 1', () => {
@@ -130,6 +182,66 @@ describe('UMG universal import dissemination engine pass 1', () => {
     expect(brief.instruction).toMatch(/Do not invent source-library IDs/);
     expect(brief.normalizedCandidatePreview.sourceLibraryWrite).toBe(false);
     expect(brief.fileSummaries[0].preview).toContain('Duplicate Governance Sleeve');
+  });
+
+  it('detects and activates a folder-prefixed current active-session Sleeve package without live Hermes generation', async () => {
+    const fixture = buildCurrentActiveSessionSleeveFixture();
+    const entrypoint = 'MODERN_ARCHITECT_SLEEVE_v1_UMG_STUDIO_READY/sleeve/active_session_sleeve.json';
+    const zipBytes = zipSync({
+      [entrypoint]: strToU8(JSON.stringify(fixture)),
+      'MODERN_ARCHITECT_SLEEVE_v1_UMG_STUDIO_READY/library/missing_optional_tools.json': strToU8(JSON.stringify(fixture.missingOptionalTools))
+    });
+    const file = new File([zipBytes], 'MODERN_ARCHITECT_SLEEVE_v1_UMG_STUDIO_READY.zip', { type: 'application/zip' });
+    const disseminated = await disseminateUploadedFile(file);
+    expect(disseminated.report.packageDetection).toMatchObject({ detected: true, packageType: 'current_active_session_sleeve' });
+    expect(disseminated.report.compileEligibility).toBe('yes');
+    expect(disseminated.normalizedSleeveCandidate).toBeTruthy();
+    expect(disseminated.normalizedSleeveCandidate.title).toBe('Modern Architect Sleeve');
+    expect(disseminated.normalizedSleeveCandidate.neoStacks).toHaveLength(9);
+    expect(disseminated.normalizedSleeveCandidate.neoBlocks).toHaveLength(13);
+    expect(disseminated.normalizedSleeveCandidate.moltBlocks).toHaveLength(91);
+    expect(disseminated.normalizedSleeveCandidate.gates).toHaveLength(4);
+    expect(disseminated.normalizedSleeveCandidate.metadata?.capabilities).toHaveLength(14);
+    expect(disseminated.normalizedSleeveCandidate.metadata).toMatchObject({
+      generationRoute: 'imported_current_active_session_sleeve',
+      importedPackage: true,
+      packageType: 'CURRENT_ACTIVE_SESSION_SLEEVE',
+      entrypointUsed: entrypoint,
+      folderPrefixNormalized: true,
+      liveHermesGenerated: false,
+      generatedByHermes: false,
+      liveHermesGenerationSkipped: true,
+      compileEligible: true,
+      protectedSourceLibraryWrite: false
+    });
+    expect(isActiveSessionSleeveCompileEligible(disseminated.normalizedSleeveCandidate)).toBe(true);
+    const diagnostics = buildCompositionSourceDiagnostics({ sleeve: disseminated.normalizedSleeveCandidate, route: 'imported_current_active_session_sleeve' });
+    expect(diagnostics).toMatchObject({ generationRoute: 'imported_current_active_session_sleeve', compileEligibility: 'yes', sourceBindingStatus: 'optional_import_not_resolved' });
+    expect(diagnostics.candidateCount).toBe(0);
+    expect(diagnostics.reasonIfNotEligible).toBeUndefined();
+  });
+
+  it('keeps current active-session browser activation copy separate from live Hermes and legacy import routes', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('imported_current_active_session_sleeve');
+    expect(appSource).toContain('Imported active-session UMG Sleeve package ready. Compile next.');
+    expect(appSource).toContain('liveHermesGenerationSkipped: true');
+    expect(appSource).toContain('protectedSourceLibraryWrite: false');
+    expect(appSource).not.toContain('Fake compiler success');
+  });
+
+  it('imports current active-session Sleeve entries from either root or package-folder paths', () => {
+    const fixture = buildCurrentActiveSessionSleeveFixture();
+    const rootFiles = [parseTextLikeFile('sleeve/active_session_sleeve.json', JSON.stringify(fixture))];
+    const prefixedFiles = [parseTextLikeFile('PACKAGE_FOLDER/sleeve/active_session_sleeve.json', JSON.stringify(fixture))];
+    for (const files of [rootFiles, prefixedFiles]) {
+      expect(detectUmgPackage(files).packageType).toBe('current_active_session_sleeve');
+      const imported = importCurrentActiveSessionSleevePackage(files);
+      expect(imported.ok).toBe(true);
+      expect(imported.sleeve.metadata.entrypointUsed).toMatch(/sleeve\/active_session_sleeve\.json$/);
+      expect(imported.sleeve.metadata.protectedSourceLibraryWrite).toBe(false);
+      expect(imported.report.compileEligibility).toBe('yes');
+    }
   });
 
   it('returns a safe failed report for malformed zip uploads instead of throwing', async () => {

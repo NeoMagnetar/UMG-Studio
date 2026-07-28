@@ -1,6 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate';
 import { analyzeSchemaProximity } from './umgSchemaProximity';
-import { importLegacySleevePackage } from './umgLegacySleevePackageImporter';
+import { importCurrentActiveSessionSleevePackage, importLegacySleevePackage } from './umgLegacySleevePackageImporter';
 import { basename, classifyFilePath, extname, guessMime, hashBytes, parseTextLikeFile, textLikeKind } from './umgFileClassifier';
 import type { NormalizedImportedSleeve, UMGDisseminatedFile, UMGImportReport, UMGImportSourceKind, UMGPackageDetection } from './umgFileClassifier';
 
@@ -8,8 +8,29 @@ export function extractSleeveIdFromText(text: string) { return text.match(/Sleev
 export function extractVersionFromText(text: string) { return text.match(/(?:version|v)\s*[:=-]?\s*`?([0-9]+\.[0-9]+(?:\.[0-9]+)?)/i)?.[1]; }
 export function extractLikelyTitle(files: UMGDisseminatedFile[]) { return files.map((f) => f.text?.match(/^#\s+(.+)$/m)?.[1]).find(Boolean) ?? files.find((f) => /sleeve/i.test(f.name))?.name; }
 
+
+export function normalizeArchivePath(path: string) { return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/'); }
+
+export function findCurrentActiveSessionSleeveFile(files: UMGDisseminatedFile[]) {
+  return files.find((file) => {
+    const normalized = normalizeArchivePath(file.path).toLowerCase();
+    return normalized === 'sleeve/active_session_sleeve.json' || normalized.endsWith('/sleeve/active_session_sleeve.json');
+  });
+}
+
+export function getCurrentActiveSessionEntrypointInfo(files: UMGDisseminatedFile[]) {
+  const entry = findCurrentActiveSessionSleeveFile(files);
+  if (!entry) return undefined;
+  const normalized = normalizeArchivePath(entry.path);
+  return {
+    entrypointUsed: entry.path,
+    normalizedEntrypoint: normalized,
+    folderPrefixNormalized: normalized.toLowerCase() !== 'sleeve/active_session_sleeve.json'
+  };
+}
+
 export function detectUmgPackage(files: UMGDisseminatedFile[]): UMGPackageDetection {
-  const paths = files.map((f) => f.path.toLowerCase());
+  const paths = files.map((f) => normalizeArchivePath(f.path).toLowerCase());
   const allText = files.map((f) => f.text ?? '').join('\n');
   const lowerText = allText.toLowerCase();
   const evidence: string[] = [];
@@ -21,7 +42,8 @@ export function detectUmgPackage(files: UMGDisseminatedFile[]): UMGPackageDetect
   if (/neoblocks?/i.test(allText)) evidence.push('NeoBlock marker found');
   if (/\bmolt\b|\b(PRIM|DIR|INST|SUBJ|PHIL|BP)\.UO\./i.test(allText)) evidence.push('MOLT marker found');
   const jsonObjects = files.map((f) => f.json).filter(Boolean) as Record<string, unknown>[];
-  if (jsonObjects.some((j) => Array.isArray(j.neoStacks) && Array.isArray(j.neoBlocks) && Array.isArray(j.moltBlocks))) return { detected: true, packageType: 'current_active_session_sleeve', confidence: 0.95, evidence: [...evidence, 'current active-session sleeve JSON arrays found'], sleeveId: extractSleeveIdFromText(allText), title: extractLikelyTitle(files), version: extractVersionFromText(allText) };
+  const activeSessionEntrypoint = findCurrentActiveSessionSleeveFile(files);
+  if (activeSessionEntrypoint?.json || jsonObjects.some((j) => Array.isArray(j.neoStacks) && Array.isArray(j.neoBlocks) && Array.isArray(j.moltBlocks))) return { detected: true, packageType: 'current_active_session_sleeve', confidence: 0.95, evidence: [...evidence, activeSessionEntrypoint ? `active-session sleeve entrypoint found: ${activeSessionEntrypoint.path}` : 'current active-session sleeve JSON arrays found'], sleeveId: extractSleeveIdFromText(allText) ?? String((activeSessionEntrypoint?.json as Record<string, unknown> | undefined)?.id ?? (activeSessionEntrypoint?.json as Record<string, unknown> | undefined)?.sleeveId ?? ''), title: extractLikelyTitle(files) ?? String((activeSessionEntrypoint?.json as Record<string, unknown> | undefined)?.title ?? (activeSessionEntrypoint?.json as Record<string, unknown> | undefined)?.name ?? ''), version: extractVersionFromText(allText) ?? String((activeSessionEntrypoint?.json as Record<string, unknown> | undefined)?.version ?? '') };
   if (jsonObjects.some((j) => Array.isArray(j.moltBlocks) || Array.isArray(j.blocks))) return { detected: true, packageType: 'molt_block_library', confidence: 0.72, evidence: [...evidence, 'MOLT/library JSON arrays found'] };
   if (jsonObjects.some((j) => Array.isArray(j.neoBlocks))) return { detected: true, packageType: 'neoblock_library', confidence: 0.72, evidence: [...evidence, 'NeoBlock JSON array found'] };
   if (jsonObjects.some((j) => Array.isArray(j.neoStacks))) return { detected: true, packageType: 'neostack_library', confidence: 0.72, evidence: [...evidence, 'NeoStack JSON array found'] };
@@ -103,6 +125,11 @@ export function buildSafeFailedDisseminationResult(file: File, error: unknown, s
 
 export function buildDisseminationResult(files: UMGDisseminatedFile[], sourceKind: UMGImportSourceKind): { files: UMGDisseminatedFile[]; report: UMGImportReport; normalizedSleeveCandidate?: NormalizedImportedSleeve } {
   const detection = detectUmgPackage(files);
+  if (detection.packageType === 'current_active_session_sleeve') {
+    const imported = importCurrentActiveSessionSleevePackage(files);
+    if (imported.ok) return { files, report: { ...imported.report, sourceKind, packageDetection: { ...imported.report.packageDetection, ...detection }, compileEligibility: 'yes', reasonIfNotEligible: undefined }, normalizedSleeveCandidate: imported.sleeve };
+    return { files, report: baseReport(files, sourceKind, detection, [], [], undefined, imported.error) };
+  }
   if (detection.packageType === 'legacy_umg_sleeve_package') {
     const imported = importLegacySleevePackage(files);
     if (imported.ok) return { files, report: { ...imported.report, sourceKind, packageDetection: { ...imported.report.packageDetection, ...detection } }, normalizedSleeveCandidate: imported.sleeve };

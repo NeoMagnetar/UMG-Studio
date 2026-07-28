@@ -506,18 +506,18 @@ function bindPlanMoltChildrenToNeoBlocks(plan: HermesCustomSleevePlanV01, reques
   return Array.from(existing.values()).sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0));
 }
 
-export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTemplateSleeve; request?: HermesCustomSleeveGenerationRequest; route: 'live Hermes' | 'offline template' | 'intake draft' | 'calibrated_library_backed_sleeve' | 'imported_legacy_sleeve_package' | 'deterministic_assistant_model_emulation' | 'deterministic_business_sales_agent'; reasonIfNotEligible?: string }) {
+export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTemplateSleeve; request?: HermesCustomSleeveGenerationRequest; route: 'live Hermes' | 'offline template' | 'intake draft' | 'calibrated_library_backed_sleeve' | 'imported_legacy_sleeve_package' | 'imported_current_active_session_sleeve' | 'deterministic_assistant_model_emulation' | 'deterministic_business_sales_agent'; reasonIfNotEligible?: string }) {
   const sleeve = args.sleeve;
   const moltBlocks = sleeve?.moltBlocks ?? [];
-  const isImportedLegacyPackage = args.route === 'imported_legacy_sleeve_package' || sleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || sleeve?.metadata?.importedPackage === true;
+  const isImportedPackage = args.route === 'imported_legacy_sleeve_package' || args.route === 'imported_current_active_session_sleeve' || sleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || sleeve?.metadata?.generationRoute === 'imported_current_active_session_sleeve' || sleeve?.metadata?.importedPackage === true;
   const isDeterministicAssistantFallback = args.route === 'deterministic_assistant_model_emulation' || sleeve?.metadata?.generationRoute === 'deterministic_assistant_model_emulation' || sleeve?.metadata?.workflowIntentName === 'assistant_model_emulation';
   const isDeterministicBusinessSalesFallback = args.route === 'deterministic_business_sales_agent' || sleeve?.metadata?.generationRoute === 'deterministic_business_sales_agent' || sleeve?.metadata?.workflowIntentName === 'business_sales_agent';
-  const boundMoltCount = isImportedLegacyPackage
+  const boundMoltCount = isImportedPackage
     ? moltBlocks.length
     : moltBlocks.filter((block) => block.sourceKind === 'source-library reused' || block.sourceKind === 'metamolt tool' || block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length;
   const sourceLibraryBoundCount = moltBlocks.filter((block) => block.sourceKind === 'source-library reused').length;
   const unresolvedCount = moltBlocks.filter((block) => block.sourceKind === 'unresolved').length;
-  const structurallyValidImport = isImportedLegacyPackage && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length) && (sleeve?.metadata?.compileEligible === true || sleeve?.metadata?.mode === 'runtime_session_draft' || sleeve?.metadata?.sourceKind === 'imported-legacy-package');
+  const structurallyValidImport = isImportedPackage && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length) && (sleeve?.metadata?.compileEligible === true || sleeve?.metadata?.mode === 'runtime_session_draft' || sleeve?.metadata?.sourceKind === 'imported-legacy-package' || sleeve?.metadata?.sourceKind === 'imported-current-active-session-package');
   const structurallyValidDeterministicAssistantFallback = isDeterministicAssistantFallback && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length) && sleeve?.metadata?.compileEligible === true;
   const structurallyValidDeterministicBusinessSalesFallback = isDeterministicBusinessSalesFallback && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length) && sleeve?.metadata?.compileEligible === true;
   const compileEligible = (args.route === 'live Hermes' && Boolean(sleeve?.metadata?.generatedByHermes) || args.route === 'calibrated_library_backed_sleeve' && sleeve?.metadata?.generationRoute === 'calibrated_library_backed_sleeve' && sleeve?.metadata?.compileEligible === true || structurallyValidImport || structurallyValidDeterministicAssistantFallback || structurallyValidDeterministicBusinessSalesFallback) && Boolean(sleeve?.neoStacks.length && sleeve.neoBlocks.length && sleeve.moltBlocks.length);
@@ -545,14 +545,16 @@ export function buildCompositionSourceDiagnostics(args: { sleeve?: NormalizedTem
     metaMoltToolBlockCount: moltBlocks.filter((block) => block.sourceKind === 'metamolt tool').length,
     generatedDraftCount: moltBlocks.filter((block) => block.sourceKind === 'runtime-session draft' || block.sourceKind === 'generated glue').length,
     unresolvedCount,
-    sourceBindingStatus: !sleeve ? 'missing' : isImportedLegacyPackage ? 'optional_import_not_resolved' : sourceLibraryBoundCount === 0 ? 'missing' : unresolvedCount > 0 ? 'partial' : 'complete',
+    sourceBindingStatus: !sleeve ? 'missing' : isImportedPackage ? 'optional_import_not_resolved' : sourceLibraryBoundCount === 0 ? 'missing' : unresolvedCount > 0 ? 'partial' : 'complete',
     compileEligibility: compileEligible ? 'yes' : 'no',
     reasonIfNotEligible: compileEligible ? undefined : args.reasonIfNotEligible ?? 'ActiveSessionSleeve is only compileable after live Hermes composition binds library/runtime MOLT children.'
   };
 }
 
 export function isActiveSessionSleeveCompileEligible(sleeve?: NormalizedTemplateSleeve) {
-  const route = sleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || sleeve?.metadata?.importedPackage === true
+  const route = sleeve?.metadata?.generationRoute === 'imported_current_active_session_sleeve'
+    ? 'imported_current_active_session_sleeve'
+    : sleeve?.metadata?.generationRoute === 'imported_legacy_sleeve_package' || sleeve?.metadata?.importedPackage === true
     ? 'imported_legacy_sleeve_package'
     : sleeve?.metadata?.generationRoute === 'deterministic_assistant_model_emulation' || sleeve?.metadata?.workflowIntentName === 'assistant_model_emulation'
       ? 'deterministic_assistant_model_emulation'

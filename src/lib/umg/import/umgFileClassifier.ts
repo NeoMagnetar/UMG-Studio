@@ -74,7 +74,7 @@ export type ImportedNeoBlock = {
 };
 
 export type ImportedMoltBlock = {
-  id: string; sourceId?: string; title: string; role: 'primary' | 'directive' | 'instruction' | 'subject' | 'philosophy' | 'blueprint' | 'meta'; content: string; description: string; tags: string[]; sourceKind: 'imported-legacy-package' | 'workspace-draft' | 'normalized-import-glue'; generationReason: string; parentNeoBlockId?: string; parentNeoStackId?: string; stackOrder?: number; sourcePath?: string; nlCard: Record<string, unknown>; jsonSchema: Record<string, unknown>; blockType: 'molt'; references?: Array<{ reusedBlockId?: string; sourcePath?: string; parentNeoBlockId?: string }>; defaultState: 'off' | 'on';
+  id: string; sourceId?: string; title: string; role: 'trigger' | 'primary' | 'directive' | 'instruction' | 'subject' | 'philosophy' | 'blueprint' | 'meta'; content: string; description: string; tags: string[]; sourceKind: 'imported-legacy-package' | 'workspace-draft' | 'normalized-import-glue'; generationReason: string; parentNeoBlockId?: string; parentNeoStackId?: string; stackOrder?: number; sourcePath?: string; nlCard: Record<string, unknown>; jsonSchema: Record<string, unknown>; blockType: 'molt'; references?: Array<{ reusedBlockId?: string; sourcePath?: string; parentNeoBlockId?: string }>; defaultState: 'off' | 'on';
 };
 
 export type NormalizedImportedSleeve = {

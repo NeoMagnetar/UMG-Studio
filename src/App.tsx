@@ -3128,21 +3128,38 @@ export default function App() {
               const brief = buildHermesImportBrief(disseminated.report, disseminated.files, disseminated.normalizedSleeveCandidate);
               const summary = `Package detected: ${disseminated.report.packageDetection.packageType}; Sleeve ID: ${disseminated.report.packageDetection.sleeveId ?? disseminated.normalizedSleeveCandidate?.id ?? 'unknown'}; files parsed: ${disseminated.report.filesParsed}/${disseminated.report.filesTotal}; NeoStacks imported: ${disseminated.report.extractedCounts.neoStacks}; NeoBlocks imported: ${disseminated.report.extractedCounts.neoBlocks}; MOLT imported/generated: ${disseminated.report.extractedCounts.moltBlocks}; duplicates merged: ${disseminated.report.duplicates.merged}; compile eligibility: ${disseminated.report.compileEligibility}.`;
               const parsed: UploadedIntakeContext = createUploadedIntakeContext({ ...intakeBase, text: JSON.stringify(brief, null, 2) });
+              const importedBusinessInput = createBusinessInputFromPublicIntake({
+                goal: publicGoal || disseminated.normalizedSleeveCandidate?.title || file.name,
+                context: JSON.stringify(brief, null, 2),
+                selectedChip: normalizePublicChipForAnalyzer(publicSelectedChip),
+                selectedFileName: file.name
+              });
+              const importedBusinessMap = analyzeBusinessInput(importedBusinessInput);
+              const importedTemplateSelection = selectTemplateSleeve(importedBusinessInput, importedBusinessMap, getTemplateSleeveCatalog());
+              setPublicBusinessInput(importedBusinessInput);
+              setPublicBusinessMap(importedBusinessMap);
+              setPublicTemplateSelection(importedTemplateSelection);
+              setPublicIntakeSubmitted(true);
               setImportReviewReport(disseminated.report as unknown as Record<string, unknown>);
               setHermesImportBrief(brief as unknown as Record<string, unknown>);
               let uoEnrichmentEvidence: unknown;
               let importedOverlayMetadata: Record<string, unknown> = {};
+              const isCurrentActiveSessionPackage = disseminated.report.packageDetection.packageType === 'current_active_session_sleeve';
+              const importGenerationRoute = isCurrentActiveSessionPackage ? 'imported_current_active_session_sleeve' : 'imported_legacy_sleeve_package';
               if (disseminated.normalizedSleeveCandidate) {
                 sleeveActivationVersionRef.current += 1;
                 const importedRuntimeSleeve = {
                   ...(disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve),
                   metadata: {
                     ...((disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve).metadata ?? {}),
-                    generationRoute: 'imported_legacy_sleeve_package',
+                    generationRoute: importGenerationRoute,
                     importedPackage: true,
+                    packageType: isCurrentActiveSessionPackage ? 'CURRENT_ACTIVE_SESSION_SLEEVE' : disseminated.report.packageDetection.packageType,
                     liveHermesGenerated: false,
                     generatedByHermes: false,
+                    liveHermesGenerationSkipped: true,
                     compileEligible: true,
+                    protectedSourceLibraryWrite: false,
                     sourceLibraryBacked: false
                   }
                 } as NormalizedTemplateSleeve;
@@ -3162,7 +3179,7 @@ export default function App() {
                   overlayInferenceEvidence: runtimeSleeve.metadata?.overlayInferenceEvidence,
                   rejectedOverlays: runtimeSleeve.metadata?.rejectedOverlays
                 };
-                const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: [], sourceLabel: 'imported_legacy_package' });
+                const artifacts = buildRuntimeSleeveExecutionArtifacts({ runtimeSleeve, requiredTools: [], approvalPoints: [], sourceLabel: importGenerationRoute });
                 setActiveSessionSleeve(runtimeSleeve);
                 resetCompileStateForActiveSleeve(runtimeSleeve);
                 setBlockMatchPlan(artifacts.blockMatchPlan);
@@ -3171,11 +3188,11 @@ export default function App() {
                 setCompileCandidate(artifacts.compileCandidate);
                 setCompilerRequestPreview(undefined);
               }
-              setHermesCustomGenerationStatus('ok: imported UMG package · live Hermes generation skipped');
-              setHermesCustomGenerationDiagnostics({ generationRoute: 'imported_legacy_sleeve_package', importedPackage: true, liveHermesGenerated: false, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, ...importedOverlayMetadata, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false });
+              setHermesCustomGenerationStatus(isCurrentActiveSessionPackage ? 'ok: imported active-session UMG package · live Hermes generation skipped' : 'ok: imported UMG package · live Hermes generation skipped');
+              setHermesCustomGenerationDiagnostics({ generationRoute: importGenerationRoute, packageType: disseminated.report.packageDetection.packageType, entrypointUsed: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.entrypointUsed, folderPrefixNormalized: (disseminated.normalizedSleeveCandidate as unknown as NormalizedTemplateSleeve | undefined)?.metadata?.folderPrefixNormalized, deterministicImportRoute: importGenerationRoute, importedPackage: true, liveHermesGenerated: false, generatedByHermes: false, liveHermesGenerationSkipped: true, packageDetected: true, importReviewReport: disseminated.report, hermesImportBrief: brief, ...importedOverlayMetadata, uoEnrichmentEvidence, fallbackUsed: false, genericArchitectDraftShown: false, sourceLibraryWrite: false, protectedSourceLibraryWrite: false, compileEligibility: disseminated.normalizedSleeveCandidate ? 'yes' : disseminated.report.compileEligibility });
               setCompilerResult(undefined);
               setCompileError(null);
-              setStatus('Imported legacy UMG Sleeve package ready. Compile next.');
+              setStatus(isCurrentActiveSessionPackage ? 'Imported active-session UMG Sleeve package ready. Compile next.' : 'Imported legacy UMG Sleeve package ready. Compile next.');
               setUploadedIntakeContexts((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...parsed, summary, status: 'parsed_text' }]);
               setPublicSelectedFiles((current) => [...current.filter((entry) => publicFileKey(entry) !== publicFileKey(base)), { ...base, intakeStatus: 'parsed_text', textPreview: summary, keywords: ['umg', 'imported', disseminated.report.packageDetection.packageType], syntaxSignals: ['zip parsed', 'schema proximity analyzed'], semanticSignals: ['package detected', 'import review workspace'], domainSignals: disseminated.report.packageDetection.sleeveId ? [disseminated.report.packageDetection.sleeveId] : [], suggestedMoltRoles: ['primary', 'directive', 'instruction', 'subject'] }]);
               return;
