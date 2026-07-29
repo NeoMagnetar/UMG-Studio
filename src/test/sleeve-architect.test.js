@@ -48,6 +48,7 @@ import { importCurrentActiveSessionSleevePackage, importLegacySleevePackage } fr
 import { parseTextLikeFile } from '../lib/umg/import/umgFileClassifier';
 import { buildHermesImportBrief } from '../lib/umg/import/umgHermesImportBrief';
 import { AppErrorBoundary } from '../components/AppErrorBoundary';
+import { buildActiveSleeveExportPackage, deriveActiveSleevePersistenceStatus, listWorkspaceSleeves, normalizeActiveSleeveForPersistence, saveActiveSleeveToWorkspace, UMG_WORKSPACE_SLEEVES_STORAGE_KEY } from '../lib/umg/activeSleevePersistence';
 
 const ecommercePrompt = 'E-Commerce: Customer Return & Refund Orchestration — automate the customer return and refund workflow for an online retail business. The agent should validate purchase records, check eligibility, draft customer replies, route approvals, and prepare refund actions.';
 
@@ -111,6 +112,111 @@ function buildCurrentActiveSessionSleeveFixture() {
     }
   };
 }
+
+function createSleeveMemoryStorage(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => store.has(key) ? String(store.get(key)) : null,
+    setItem: (key, value) => { store.set(key, String(value)); },
+    removeItem: (key) => { store.delete(key); },
+    dump: () => Object.fromEntries(store.entries())
+  };
+}
+
+describe('active Sleeve workspace save/export UX', () => {
+  it('saves imported current-session Sleeves to local workspace storage without source-library writes', () => {
+    const imported = importCurrentActiveSessionSleevePackage([parseTextLikeFile('sleeve/active_session_sleeve.json', JSON.stringify(buildCurrentActiveSessionSleeveFixture()))]);
+    expect(imported.ok).toBe(true);
+    const storage = createSleeveMemoryStorage();
+    expect(deriveActiveSleevePersistenceStatus(imported.sleeve, storage).runtimeSessionOnly).toBe(true);
+    const saved = saveActiveSleeveToWorkspace(imported.sleeve, storage);
+    expect(saved.ok).toBe(true);
+    expect(saved.sourceLibraryWrite).toBe(false);
+    const listed = listWorkspaceSleeves(storage);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].title).toBe('Modern Architect Sleeve');
+    expect(listed[0].metadata).toMatchObject({ workspaceSaved: true, protectedSourceLibraryWrite: false, sourceLibraryWrite: false });
+    expect(listed[0].neoStacks).toHaveLength(9);
+    expect(listed[0].neoBlocks).toHaveLength(13);
+    expect(listed[0].moltBlocks).toHaveLength(91);
+    expect(listed[0].gates).toHaveLength(4);
+    expect(listed[0].metadata.capabilities).toHaveLength(14);
+    expect(storage.getItem(UMG_WORKSPACE_SLEEVES_STORAGE_KEY)).toContain('Modern Architect Sleeve');
+    expect(deriveActiveSleevePersistenceStatus(imported.sleeve, storage)).toMatchObject({ savedToWorkspace: true, runtimeSessionOnly: false, sourceLibraryState: 'read-only, unchanged' });
+  });
+
+  it('normalizes active Sleeve save data into a JSON-safe object before storage', () => {
+    const imported = importCurrentActiveSessionSleevePackage([parseTextLikeFile('sleeve/active_session_sleeve.json', JSON.stringify(buildCurrentActiveSessionSleeveFixture()))]);
+    expect(imported.ok).toBe(true);
+    const cyclicMetadata = { ...(imported.sleeve.metadata ?? {}), generationRoute: 'imported_current_active_session_sleeve' };
+    cyclicMetadata.self = cyclicMetadata;
+    const rawSleeve = {
+      ...imported.sleeve,
+      tags: undefined,
+      governanceBlockIds: undefined,
+      metadata: cyclicMetadata
+    };
+    const normalized = normalizeActiveSleeveForPersistence(rawSleeve);
+    expect(normalized.tags).toEqual([]);
+    expect(normalized.governanceBlockIds).toEqual([]);
+    expect(normalized.neoStacks).toHaveLength(9);
+    expect(normalized.neoBlocks).toHaveLength(13);
+    expect(normalized.moltBlocks).toHaveLength(91);
+    expect(normalized.gates).toHaveLength(4);
+    expect(normalized.metadata.capabilities).toHaveLength(14);
+    expect(normalized.metadata.self).toBe('[Circular]');
+    expect(JSON.parse(JSON.stringify(normalized)).title).toBe('Modern Architect Sleeve');
+  });
+
+  it('surfaces save storage failures without claiming fake success', () => {
+    const imported = importCurrentActiveSessionSleevePackage([parseTextLikeFile('sleeve/active_session_sleeve.json', JSON.stringify(buildCurrentActiveSessionSleeveFixture()))]);
+    expect(imported.ok).toBe(true);
+    const failingStorage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('quota exceeded'); },
+      removeItem: () => {}
+    };
+    const saved = saveActiveSleeveToWorkspace(imported.sleeve, failingStorage);
+    expect(saved.ok).toBe(false);
+    expect(saved.saved).toBe(false);
+    expect(saved.sourceLibraryWrite).toBe(false);
+    expect(saved.error).toMatch(/localStorage write failed|quota exceeded/);
+  });
+
+  it('builds a real active Sleeve export package with required entries and preserved capabilities', () => {
+    const imported = importCurrentActiveSessionSleevePackage([parseTextLikeFile('modern/sleeve/active_session_sleeve.json', JSON.stringify(buildCurrentActiveSessionSleeveFixture()))]);
+    expect(imported.ok).toBe(true);
+    const exported = buildActiveSleeveExportPackage(imported.sleeve);
+    expect(exported.filename).toBe('MODERN_ARCHITECT_SLEEVE_v1.0.0_UMG_STUDIO_EXPORT.zip');
+    expect(exported.zipBytes.length).toBeGreaterThan(100);
+    expect(Object.keys(exported.entries).sort()).toEqual([
+      'HERMES_IMPORT_BRIEF.md',
+      'UMG_PACKAGE_MANIFEST.json',
+      'VALIDATION_REPORT.json',
+      'library/capabilities.json',
+      'library/gates.json',
+      'library/missing_optional_tools.json',
+      'library/molt_blocks.json',
+      'library/neoblocks.json',
+      'library/neostacks.json',
+      'sleeve/active_session_sleeve.json',
+      'sleeve/normalized_sleeve_candidate.json'
+    ].sort());
+    expect(exported.counts).toMatchObject({ neoStacks: 9, neoBlocks: 13, moltBlocks: 91, gates: 4, capabilities: 14 });
+    expect(exported.entries['library/capabilities.json']).toHaveLength(14);
+    expect(exported.entries['sleeve/active_session_sleeve.json'].metadata).toMatchObject({ protectedSourceLibraryWrite: false, sourceLibraryWrite: false });
+    expect(exported.entries['VALIDATION_REPORT.json']).toMatchObject({ ok: true, noFakeExportSuccess: true, sourceLibraryWrite: false, protectedSourceLibraryWrite: false });
+  });
+
+  it('exposes explicit active Sleeve save/export UI labels instead of relying on hidden export menus', () => {
+    const appSource = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
+    expect(appSource).toContain('Save Active Sleeve to Workspace');
+    expect(appSource).toContain('Export Active Sleeve Package');
+    expect(appSource).toContain('Persistence:');
+    expect(appSource).toContain('Source library: read-only, unchanged');
+    expect(appSource).toContain('No fake export success');
+  });
+});
 
 describe('UMG universal import dissemination engine pass 1', () => {
   it('detects and imports a legacy UO Sleeve package into review-only workspace blocks', () => {

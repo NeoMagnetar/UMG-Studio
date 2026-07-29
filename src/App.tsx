@@ -16,7 +16,7 @@ import { normalizeImportedBlocks, classifyLibraryDisplay, sectionLibraryByDispla
 import { composeBlocks } from './lib/umg/composeBlocks';
 import { applyCompileResultToGraph, applyManualLayout, applyContainmentSnap, buildGraphFromSleeve, focusGraph, gateVisualMetadataForEdge, gateVisualMetadataForNode } from './lib/umg/graphBuilder';
 import { compileWorkspaceToRuntime } from './lib/umg/compilerBridge';
-import { downloadJson, exportHermesPacket } from './lib/umg/exporters';
+import { downloadBlob, downloadJson, exportHermesPacket } from './lib/umg/exporters';
 import { redactKey, testHermesConnection } from './lib/hermes/hermesClient';
 import { generateWithHermesEndpoint, HermesGenerateEndpointMode, inferHermesGenerateEndpointMode, resolveHermesGenerateConfig } from './lib/umg/hermesGenerate';
 import { buildLocalGenerateFallback } from './lib/umg/localGenerate';
@@ -70,6 +70,8 @@ import { buildHermesImportBrief } from './lib/umg/import/umgHermesImportBrief';
 import { inferMoltBlockDraftFromPrompt, validateCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import type { UMGCreatedMoltBlock } from './lib/umg/umgBlockAuthoring';
 import { listWorkspaceBlocks, saveWorkspaceBlock } from './lib/umg/umgWorkspaceBlockRegistry';
+import { buildActiveSleeveExportPackage, deriveActiveSleevePersistenceStatus, getActiveSleeveCapabilities, getActiveSleeveMissingOptionalTools, listWorkspaceSleeves, normalizeActiveSleeveForPersistence, saveActiveSleeveToWorkspace } from './lib/umg/activeSleevePersistence';
+import type { ActiveSleevePersistenceStatus } from './lib/umg/activeSleevePersistence';
 import { buildComposerEnhancedSleeve, enrichUoImportedSleeveWithMoltEvidence } from './lib/umg/moltNeoBlockComposer';
 import { inferRoutingOverlaysFromContext } from './lib/umg/overlayLattice';
 
@@ -295,54 +297,71 @@ const moltBuilderSections = [
 ] as const;
 
 function convertActiveSessionSleeveToWorkspaceSleeve(template: NormalizedTemplateSleeve): Sleeve {
-  const moltById = new Map(template.moltBlocks.map((molt, index) => [molt.id, {
-    id: molt.id,
-    title: molt.title,
-    type: 'molt_block' as const,
-    role: molt.role === 'meta' ? 'primary' : molt.role,
-    displayType: molt.role,
-    content: molt.content,
-    description: molt.content,
-    category: 'runtime-session-active-sleeve',
-    tags: ['runtime-session', 'hermes-generated', ...molt.tags],
-    priorityOrder: index + 1,
-    hierarchy: { orderIndex: index + 1, orderSource: 'source' as const, priorityMeaning: 'hierarchy_order' as const },
-    defaultState: molt.defaultState,
-    visibility: 'visible' as const,
-    activation: { mode: 'gate' as const },
-    sourcePath: `runtime-session://${template.id}/${molt.id}`,
-    sourceLayer: 'AI' as const,
-    status: 'runnable' as const,
-    presentationStatus: 'runnable' as const,
-    source: { origin: 'generated' as const, sourceId: molt.sourceId ?? molt.id, version: template.version },
-    legacy: { original: { parentNeoBlockId: molt.parentNeoBlockId, parentNeoStackId: molt.parentNeoStackId, sourceNotes: molt.sourceNotes }, sourcePath: `runtime-session://${template.id}/${molt.id}` }
-  } as UMGBlock]));
+  const safeTemplate = normalizeActiveSleeveForPersistence(template);
+  const templateTags = Array.isArray(safeTemplate.tags) ? safeTemplate.tags : [];
+  const moltBlocks = Array.isArray(safeTemplate.moltBlocks) ? safeTemplate.moltBlocks : [];
+  const neoStacks = Array.isArray(safeTemplate.neoStacks) ? safeTemplate.neoStacks : [];
+  const neoBlocks = Array.isArray(safeTemplate.neoBlocks) ? safeTemplate.neoBlocks : [];
+  const gates = Array.isArray(safeTemplate.gates) ? safeTemplate.gates : [];
+  const governanceBlockIds = Array.isArray(safeTemplate.governanceBlockIds) ? safeTemplate.governanceBlockIds : [];
+  const moltById = new Map(moltBlocks.map((molt, index) => {
+    const moltTags = Array.isArray(molt.tags) ? molt.tags : [];
+    const workspaceMolt: UMGBlock = {
+      id: molt.id,
+      title: molt.title,
+      type: 'molt_block' as const,
+      role: molt.role === 'meta' ? 'primary' : molt.role,
+      displayType: molt.role,
+      content: molt.content,
+      description: molt.content,
+      category: 'runtime-session-active-sleeve',
+      tags: ['runtime-session', 'hermes-generated', ...moltTags],
+      priorityOrder: index + 1,
+      hierarchy: { orderIndex: index + 1, orderSource: 'source' as const, priorityMeaning: 'hierarchy_order' as const },
+      defaultState: molt.defaultState,
+      visibility: 'visible' as const,
+      activation: { mode: 'gate' as const },
+      sourcePath: `runtime-session://${safeTemplate.id}/${molt.id}`,
+      sourceLayer: 'AI' as const,
+      status: 'runnable' as const,
+      presentationStatus: 'runnable' as const,
+      source: { origin: 'generated' as const, sourceId: molt.sourceId ?? molt.id, version: safeTemplate.version },
+      legacy: { original: { parentNeoBlockId: molt.parentNeoBlockId, parentNeoStackId: molt.parentNeoStackId, sourceNotes: molt.sourceNotes }, sourcePath: `runtime-session://${safeTemplate.id}/${molt.id}` }
+    };
+    return [molt.id, workspaceMolt] as const;
+  }));
 
-  const stacks = template.neoStacks
+  const stacks = neoStacks
     .slice()
-    .sort((a, b) => a.stackOrder - b.stackOrder)
+    .sort((a, b) => (a.stackOrder ?? 0) - (b.stackOrder ?? 0))
     .map((stack) => {
-      const neoblocks = template.neoBlocks
+      const stackTags = Array.isArray(stack.tags) ? stack.tags : [];
+      const neoblocks = neoBlocks
         .filter((block) => block.neoStackId === stack.id)
-        .sort((a, b) => a.blockOrder - b.blockOrder)
-        .map((block) => ({
+        .sort((a, b) => (a.blockOrder ?? 0) - (b.blockOrder ?? 0))
+        .map((block) => {
+          const blockTags = Array.isArray(block.tags) ? block.tags : [];
+          const moltBlockIds = Array.isArray(block.moltBlockIds) ? block.moltBlockIds : [];
+          const gateIds = Array.isArray(block.gateIds) ? block.gateIds : [];
+          return {
           id: block.id,
           title: block.title,
           type: 'neoblock' as const,
           description: block.description,
           category: 'runtime-session-active-sleeve',
-          tags: ['runtime-session', ...block.tags],
-          blocks: block.moltBlockIds.map((id) => moltById.get(id)).filter(Boolean) as UMGBlock[],
+          tags: ['runtime-session', ...blockTags],
+          blocks: moltBlockIds.map((id) => moltById.get(id)).filter(Boolean) as UMGBlock[],
           defaultState: block.defaultState,
           priorityOrder: block.blockOrder,
-          activation: block.gateIds[0] ? { mode: 'gate' as const, gateId: block.gateIds[0] } : { mode: 'manual' as const }
-        } as NeoBlock));
+          activation: gateIds[0] ? { mode: 'gate' as const, gateId: gateIds[0] } : { mode: 'manual' as const }
+        } as NeoBlock;
+        });
       return {
         id: stack.id,
         title: stack.title,
         type: 'neostack' as const,
         description: stack.description,
-        tags: ['runtime-session', ...stack.tags],
+        tags: ['runtime-session', ...stackTags],
         neoblocks,
         role: 'general',
         defaultState: 'off' as const,
@@ -350,26 +369,26 @@ function convertActiveSessionSleeveToWorkspaceSleeve(template: NormalizedTemplat
       } as NeoStack;
     });
 
-  const governanceBlocks = template.governanceBlockIds.map((id) => moltById.get(id)).filter(Boolean) as UMGBlock[];
+  const governanceBlocks = governanceBlockIds.map((id) => moltById.get(id)).filter(Boolean) as UMGBlock[];
   return {
-    id: template.id,
-    title: template.title,
+    id: safeTemplate.id,
+    title: safeTemplate.title,
     type: 'sleeve',
-    version: template.version,
-    description: template.description,
-    tags: ['runtime-session', 'active-session-sleeve', ...template.tags],
+    version: safeTemplate.version,
+    description: safeTemplate.description,
+    tags: ['runtime-session', 'active-session-sleeve', ...templateTags],
     stacks,
     rootController: {
-      id: `${template.id}__runtime_session_controller`,
-      title: `${template.title} Runtime Session Controller`,
+      id: `${safeTemplate.id}__runtime_session_controller`,
+      title: `${safeTemplate.title} Runtime Session Controller`,
       controllerKind: 'sleeve_root',
       ownerScopeKind: 'sleeve',
-      ownerScopeId: template.id,
+      ownerScopeId: safeTemplate.id,
       molts: governanceBlocks,
       metadata: { runtimeSessionOnly: true, sourceLibrarySaved: false, sourceLibraryWrite: false }
     },
     runtimeConfig: { active: false, depth: 'full', hermesEnabled: true, runtimeAdaptation: true, showRuntimeTrace: false },
-    metadata: { ...template.metadata, runtimeSessionOnly: true, sourceLibrarySaved: false, sourceLibraryWrite: false }
+    metadata: { ...safeTemplate.metadata, runtimeSessionOnly: true, sourceLibrarySaved: false, sourceLibraryWrite: false, protectedSourceLibraryWrite: false }
   } as Sleeve;
 }
 
@@ -387,7 +406,7 @@ export default function App() {
   const [blockForgeNotice, setBlockForgeNotice] = useState('Workspace Block Forge saves only to local app state. Source library unchanged.');
   const [sessionNeoBlocks, setSessionNeoBlocks] = useState<NeoBlock[]>([]);
   const [sessionNeoStacks, setSessionNeoStacks] = useState<NeoStack[]>([]);
-  const [sessionSleeves, setSessionSleeves] = useState<Sleeve[]>([]);
+  const [sessionSleeves, setSessionSleeves] = useState<Sleeve[]>(() => listWorkspaceSleeves().map(convertActiveSessionSleeveToWorkspaceSleeve));
   const [request, setRequest] = useState(demo);
   const [depth, setDepth] = useState<'lean' | 'balanced' | 'full'>('balanced');
   const [target, setTarget] = useState('chatbot');
@@ -452,6 +471,8 @@ export default function App() {
   const [publicTemplateSelection, setPublicTemplateSelection] = useState<TemplateSelectionResult | undefined>();
   const [sleeveArchitectPlan, setSleeveArchitectPlan] = useState<SleeveArchitectPlan | undefined>();
   const [activeSessionSleeve, setActiveSessionSleeve] = useState<NormalizedTemplateSleeve | undefined>();
+  const [activeSessionSleeveSaveNotice, setActiveSessionSleeveSaveNotice] = useState('Active Sleeve persistence: runtime session only until saved. Source library unchanged.');
+  const [activeSessionSleeveExportNotice, setActiveSessionSleeveExportNotice] = useState('Export: available after Sleeve generation. No export created yet.');
   const [importReviewReport, setImportReviewReport] = useState<Record<string, unknown> | undefined>();
   const [hermesImportBrief, setHermesImportBrief] = useState<Record<string, unknown> | undefined>();
   const [hermesCustomGenerationStatus, setHermesCustomGenerationStatus] = useState<string | undefined>();
@@ -602,6 +623,15 @@ export default function App() {
     return workspace.sleeves.find((sleeve) => sleeve.id === workspace.activeSleeveId) ?? workspace.sleeves[0];
   }, [workspace]);
   const displaySleeve = useMemo(() => activeSleeve ? normalizeSleeve(activeSleeve) : undefined, [activeSleeve]);
+  const activeSessionSleevePersistence = useMemo(() => deriveActiveSleevePersistenceStatus(activeSessionSleeve), [activeSessionSleeve, activeSessionSleeveSaveNotice]);
+  const activeSessionSleeveCounts = useMemo(() => activeSessionSleeve ? {
+    neoStacks: activeSessionSleeve.neoStacks.length,
+    neoBlocks: activeSessionSleeve.neoBlocks.length,
+    moltBlocks: activeSessionSleeve.moltBlocks.length,
+    gates: activeSessionSleeve.gates.length,
+    capabilities: getActiveSleeveCapabilities(activeSessionSleeve).length,
+    missingOptionalTools: getActiveSleeveMissingOptionalTools(activeSessionSleeve).length
+  } : undefined, [activeSessionSleeve]);
   useEffect(() => {
     if (!activeSleeve) {
       setChosenTargets({});
@@ -1924,6 +1954,51 @@ export default function App() {
   const exportGlyphMatrixJson = () => compiled && fullGlyphMatrix && downloadJson('glyph-matrix.json', fullGlyphMatrix);
   const exportHermesPacketJson = () => compiled && downloadJson('hermes-packet.json', exportHermesPacket(request, compiled, config));
 
+  const saveActiveSessionSleeveToWorkspace = () => {
+    try {
+      if (!activeSessionSleeve) {
+        setActiveSessionSleeveSaveNotice('No active Sleeve to save. Generate or import a Sleeve first.');
+        return;
+      }
+      const result = saveActiveSleeveToWorkspace(activeSessionSleeve);
+      if (!result.ok || !result.sleeve) {
+        setActiveSessionSleeveSaveNotice(`Save Active Sleeve failed: ${result.error}. Source library unchanged.`);
+        setStatus(`Save Active Sleeve failed: ${result.error}. Source library unchanged.`);
+        return;
+      }
+      let workspaceSleeve: Sleeve;
+      try {
+        workspaceSleeve = convertActiveSessionSleeveToWorkspaceSleeve(result.sleeve);
+      } catch (error) {
+        setActiveSessionSleeveSaveNotice(`Saved locally: yes · ${activeSessionSleeve.title}; workspace list update failed: ${error instanceof Error ? error.message : String(error)}. Source library unchanged.`);
+        setStatus(`Saved Active Sleeve to local workspace storage. Workspace list update failed safely; source library unchanged.`);
+        return;
+      }
+      setSessionSleeves((current) => [workspaceSleeve, ...current.filter((entry) => entry.id !== workspaceSleeve.id)]);
+      setActiveSessionSleeveSaveNotice(`Saved locally: yes · ${activeSessionSleeve.title} · workspace Sleeves ${result.count} · source library unchanged.`);
+      setStatus(`Saved Active Sleeve to Workspace: ${activeSessionSleeve.title}. Source library unchanged.`);
+    } catch (error) {
+      setActiveSessionSleeveSaveNotice(`Save Active Sleeve failed: ${error instanceof Error ? error.message : String(error)}. Source library unchanged.`);
+      setStatus('Save Active Sleeve failed safely. Source library unchanged.');
+    }
+  };
+
+  const exportActiveSessionSleevePackage = () => {
+    if (!activeSessionSleeve) {
+      setActiveSessionSleeveExportNotice('No active Sleeve to export. Generate or import a Sleeve first.');
+      return;
+    }
+    try {
+      const exported = buildActiveSleeveExportPackage(activeSessionSleeve);
+      const zipBuffer = exported.zipBytes.buffer.slice(exported.zipBytes.byteOffset, exported.zipBytes.byteOffset + exported.zipBytes.byteLength) as ArrayBuffer;
+      downloadBlob(exported.filename, new Blob([zipBuffer], { type: 'application/zip' }));
+      setActiveSessionSleeveExportNotice(`Exported package: ${exported.filename} · NeoStacks ${exported.counts.neoStacks} · NeoBlocks ${exported.counts.neoBlocks} · MOLT ${exported.counts.moltBlocks} · Gates ${exported.counts.gates} · Capabilities ${exported.counts.capabilities} · source library unchanged.`);
+      setStatus(`Export Active Sleeve Package prepared: ${exported.filename}. Source library unchanged.`);
+    } catch (error) {
+      setActiveSessionSleeveExportNotice(`Export failed: ${error instanceof Error ? error.message : String(error)}. No fake export success. Source library unchanged.`);
+    }
+  };
+
   const openStudioShell = (mode: Exclude<WorkspaceMode, 'debug'> = 'canvas') => {
     setStudioEntryMode('general_canvas');
     setPrimaryWorkspaceMode(mode);
@@ -3226,6 +3301,12 @@ export default function App() {
       nativeActionMode={nativeActionMode}
       lastNativeActionResult={lastNativeActionResult}
       hermesEndpointConfigured={getHermesRuntimeAdapterConfigFromEnv().enabled}
+      activeSleevePersistence={activeSessionSleevePersistence}
+      activeSleevePersistenceCounts={activeSessionSleeveCounts}
+      activeSleeveSaveNotice={activeSessionSleeveSaveNotice}
+      activeSleeveExportNotice={activeSessionSleeveExportNotice}
+      onSaveActiveSleeveToWorkspace={saveActiveSessionSleeveToWorkspace}
+      onExportActiveSleevePackage={exportActiveSessionSleevePackage}
       onGoalChange={setPublicGoal}
       onContextChange={setPublicContext}
       onChipSelect={setPublicSelectedChip}
@@ -3511,6 +3592,15 @@ export default function App() {
           </div>
         </div>
         <ScopeStatusBar graphViewMode={graphViewMode} activeSleeve={activeSleeve} activeNeoStack={currentNeoStack} activeNeoBlock={currentNeoBlock} selectedLayer={selectedNeoStackRow} onOpenMoltBuilder={() => setGraphViewMode('molt_builder')} />
+        {studioEntryMode === 'active_session_sleeve' && activeSessionSleeve && <ActiveSleevePersistencePanel
+          title={activeSessionSleeve.title}
+          persistence={activeSessionSleevePersistence}
+          counts={activeSessionSleeveCounts}
+          saveNotice={activeSessionSleeveSaveNotice}
+          exportNotice={activeSessionSleeveExportNotice}
+          onSave={saveActiveSessionSleeveToWorkspace}
+          onExport={exportActiveSessionSleevePackage}
+        />}
         {studioEntryMode === 'active_session_sleeve' && activeSessionSleeve && <ActiveSessionSleeveStudioInspector
           sleeve={activeSessionSleeve}
           selectedNeoStackId={selectedActiveSessionNeoStackId}
@@ -3675,6 +3765,12 @@ function PublicLandingShell({
   nativeActionMode,
   lastNativeActionResult,
   hermesEndpointConfigured,
+  activeSleevePersistence,
+  activeSleevePersistenceCounts,
+  activeSleeveSaveNotice,
+  activeSleeveExportNotice,
+  onSaveActiveSleeveToWorkspace,
+  onExportActiveSleevePackage,
   onGoalChange,
   onContextChange,
   onChipSelect,
@@ -3739,6 +3835,12 @@ function PublicLandingShell({
   nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>;
   lastNativeActionResult?: UMGNativeHermesActionResult;
   hermesEndpointConfigured: boolean;
+  activeSleevePersistence?: ActiveSleevePersistenceStatus;
+  activeSleevePersistenceCounts?: { neoStacks: number; neoBlocks: number; moltBlocks: number; gates: number; capabilities: number; missingOptionalTools: number };
+  activeSleeveSaveNotice?: string;
+  activeSleeveExportNotice?: string;
+  onSaveActiveSleeveToWorkspace?: () => void;
+  onExportActiveSleevePackage?: () => void;
   onGoalChange: (value: string) => void;
   onContextChange: (value: string) => void;
   onChipSelect: (value: string) => void;
@@ -3820,7 +3922,7 @@ function PublicLandingShell({
         <small>{studioMode === 'basic' ? 'Clean Hermes-first Sleeve Builder + Runtime Observer.' : 'Developer / Architect inspection panels.'}</small>
       </div>
       {studioMode === 'basic'
-        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compilerBridgeAvailable={compilerBridgeAvailable} compileStatus={compileStatus} compileError={compileError} compileDiagnostics={compileDiagnostics} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} actionStatus={status} isHermesRunning={isHermesRunning} isGeneratingSleeve={isGeneratingSleeve} isCompilingSleeve={isCompilingSleeve} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onUseCalibratedHaikuNoteSleeve={onUseCalibratedHaikuNoteSleeve} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} nativeActionMode={nativeActionMode} lastNativeActionResult={lastNativeActionResult} hermesEndpointConfigured={hermesEndpointConfigured} onNativeActionModeChange={onNativeActionModeChange} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} onOpenRuntimeGeometry={onOpenRuntime} />
+        ? <BasicReviewPanels businessInput={businessInput} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compilerBridgeAvailable={compilerBridgeAvailable} compileStatus={compileStatus} compileError={compileError} compileDiagnostics={compileDiagnostics} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} actionStatus={status} isHermesRunning={isHermesRunning} isGeneratingSleeve={isGeneratingSleeve} isCompilingSleeve={isCompilingSleeve} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} runtimeObserverOpen={runtimeObserverOpen} runtimeObserverPrompt={runtimeObserverPrompt} onRunArchitectExecution={onRunArchitectExecution} onUseCalibratedHaikuNoteSleeve={onUseCalibratedHaikuNoteSleeve} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} nativeActionMode={nativeActionMode} lastNativeActionResult={lastNativeActionResult} hermesEndpointConfigured={hermesEndpointConfigured} onNativeActionModeChange={onNativeActionModeChange} onRuntimeObserverOpenChange={onRuntimeObserverOpenChange} onRuntimeObserverPromptChange={onRuntimeObserverPromptChange} onStudioModeChange={onStudioModeChange} activeSleevePersistence={activeSleevePersistence} activeSleevePersistenceCounts={activeSleevePersistenceCounts} activeSleeveSaveNotice={activeSleeveSaveNotice} activeSleeveExportNotice={activeSleeveExportNotice} onSaveActiveSleeveToWorkspace={onSaveActiveSleeveToWorkspace} onExportActiveSleevePackage={onExportActiveSleevePackage} onOpenRuntimeGeometry={onOpenRuntime} />
         : <AnalysisReviewPanels businessInput={businessInput} businessMap={businessMap} templateSelection={templateSelection} sleeveArchitectPlan={sleeveArchitectPlan} activeSessionSleeve={activeSessionSleeve} hermesCustomGenerationStatus={hermesCustomGenerationStatus} hermesCustomGenerationDiagnostics={hermesCustomGenerationDiagnostics} businessAutomationCoreBuild={businessAutomationCoreBuild} blockMatchPlan={blockMatchPlan} draftReviewState={draftReviewState} sleeveAssemblyPlan={sleeveAssemblyPlan} compileCandidate={compileCandidate} compilerRequestPreview={compilerRequestPreview} compilerResult={compilerResult} compiledRuntimeManifest={compiledRuntimeManifest} compileDiagnostics={compileDiagnostics} hermesRequestPreview={hermesRequestPreview} hermesRuntimeResult={hermesRuntimeResult} hermesRuntimeVisualState={hermesRuntimeVisualState} hermesRuntimeWarnings={hermesRuntimeWarnings} hermesRuntimeErrors={hermesRuntimeErrors} isHermesRunning={isHermesRunning} toolCapabilityResolutions={toolCapabilityResolutions} pendingRuntimeApproval={pendingRuntimeApproval} onCreateBusinessAutomationCore={onCreateBusinessAutomationCore} onRunBlockMatching={onRunBlockMatching} onReviewDraft={onReviewDraft} onRunArchitectExecution={onRunArchitectExecution} onCompileWithUMGCompiler={onCompileWithUMGCompiler} onRunHermesRuntime={onRunHermesRuntime} onContinueRuntimeApproval={onContinueRuntimeApproval} onOpenStudio={onOpenStudio} />}
     </>}
   </HackathonLandingPage>;
@@ -3877,7 +3979,7 @@ function PipelinePreview({ intakeSubmitted, businessMapReady, templateSelected, 
   </aside>;
 }
 
-export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, compilerBridgeAvailable = false, compileStatus: compileRunStatus = 'idle', compileError = null, compileDiagnostics, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, actionStatus, isHermesRunning, isGeneratingSleeve, isCompilingSleeve, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, nativeActionMode, lastNativeActionResult, hermesEndpointConfigured, onRunArchitectExecution, onUseCalibratedHaikuNoteSleeve, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onNativeActionModeChange, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; compilerBridgeAvailable?: boolean; compileStatus?: CompileRunStatus; compileError?: string | null; compileDiagnostics?: CompileClickDiagnostics; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; actionStatus: string; isHermesRunning: boolean; isGeneratingSleeve: boolean; isCompilingSleeve: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>; lastNativeActionResult?: UMGNativeHermesActionResult; hermesEndpointConfigured: boolean; onRunArchitectExecution: () => void; onUseCalibratedHaikuNoteSleeve: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onNativeActionModeChange: (mode: Exclude<UMGNativeActionMode, 'blocked'>) => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; onOpenRuntimeGeometry: () => void }) {
+export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, compilerResult, compiledRuntimeManifest, compilerBridgeAvailable = false, compileStatus: compileRunStatus = 'idle', compileError = null, compileDiagnostics, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, actionStatus, isHermesRunning, isGeneratingSleeve, isCompilingSleeve, toolCapabilityResolutions, pendingRuntimeApproval, runtimeObserverOpen, runtimeObserverPrompt, nativeActionMode, lastNativeActionResult, hermesEndpointConfigured, onRunArchitectExecution, onUseCalibratedHaikuNoteSleeve, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onNativeActionModeChange, onRuntimeObserverOpenChange, onRuntimeObserverPromptChange, onStudioModeChange, activeSleevePersistence, activeSleevePersistenceCounts, activeSleeveSaveNotice, activeSleeveExportNotice, onSaveActiveSleeveToWorkspace, onExportActiveSleevePackage, onOpenRuntimeGeometry }: { businessInput: BusinessInput; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; compilerBridgeAvailable?: boolean; compileStatus?: CompileRunStatus; compileError?: string | null; compileDiagnostics?: CompileClickDiagnostics; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; actionStatus: string; isHermesRunning: boolean; isGeneratingSleeve: boolean; isCompilingSleeve: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; runtimeObserverOpen: boolean; runtimeObserverPrompt: string; nativeActionMode: Exclude<UMGNativeActionMode, 'blocked'>; lastNativeActionResult?: UMGNativeHermesActionResult; hermesEndpointConfigured: boolean; onRunArchitectExecution: () => void; onUseCalibratedHaikuNoteSleeve: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onNativeActionModeChange: (mode: Exclude<UMGNativeActionMode, 'blocked'>) => void; onRuntimeObserverOpenChange: (open: boolean) => void; onRuntimeObserverPromptChange: (value: string) => void; onStudioModeChange: (mode: StudioMode) => void; activeSleevePersistence?: ActiveSleevePersistenceStatus; activeSleevePersistenceCounts?: { neoStacks: number; neoBlocks: number; moltBlocks: number; gates: number; capabilities: number; missingOptionalTools: number }; activeSleeveSaveNotice?: string; activeSleeveExportNotice?: string; onSaveActiveSleeveToWorkspace?: () => void; onExportActiveSleevePackage?: () => void; onOpenRuntimeGeometry: () => void }) {
   const classifications = classifyBasicContent({ text: [businessInput.text, ...businessInput.documents.map((doc) => doc.text)].join('\n'), filenames: businessInput.documents.map((doc) => doc.filename ?? '').filter(Boolean) });
   const palette = isActiveSessionSleeveCompileEligible(activeSessionSleeve) ? buildBasicCapabilityPalette({ activeSessionSleeve: activeSessionSleeve!, resolutions: toolCapabilityResolutions, content: classifications }) : [];
   const geometryManifest = useMemo(() => {
@@ -3986,6 +4088,15 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       {activeSessionSleeve.metadata?.generationRoute === 'deterministic_assistant_model_emulation' && <div className="compactCandidatePreview"><b>Deterministic fallback used: assistant_model_emulation</b><span>Hermes enhancement failed: {String(hermesCustomGenerationDiagnostics?.hermesEnhancementFailure ?? activeSessionSleeve.metadata?.hermesEnhancementWarning ?? 'not reported')}</span><span>Source-library candidates found: {String(hermesCustomGenerationDiagnostics?.sourceLibraryCandidatesFound ?? hermesCustomGenerationDiagnostics?.candidateCount ?? 0)}</span><span>Source-library candidates bound: {String(hermesCustomGenerationDiagnostics?.sourceLibraryCandidatesBound ?? hermesCustomGenerationDiagnostics?.candidatesBound ?? 0)}</span><span>Runtime/workspace draft blocks generated: {String(hermesCustomGenerationDiagnostics?.runtimeWorkspaceDraftBlocksGenerated ?? (activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.runtimeWorkspaceDraftBlocksGenerated ?? 0)}</span><span>Compile eligibility: yes</span></div>}
       {activeSessionSleeve.metadata?.generationRoute === 'deterministic_business_sales_agent' && <div className="compactCandidatePreview"><b>Deterministic fallback used: business_sales_agent / automotive_dealership_sales_agent</b><span>Detected workflow intent: business_sales_agent / automotive_dealership_sales_agent</span><span>Inferred industry: automotive retail / car dealership</span><span>Core operations: lead intake, customer qualification, vehicle matching, appointment scheduling, CRM handoff, follow-up messaging</span><span>Source-library candidates found: {String(hermesCustomGenerationDiagnostics?.sourceLibraryCandidatesFound ?? hermesCustomGenerationDiagnostics?.candidateCount ?? 0)}</span><span>Source-library candidates bound: {String(hermesCustomGenerationDiagnostics?.sourceLibraryCandidatesBound ?? hermesCustomGenerationDiagnostics?.candidatesBound ?? 0)}</span><span>Compile eligibility: yes</span><span>{String(activeSessionSleeve.metadata?.toolAvailabilityMessage ?? 'Generated without external tools. Runtime can plan the workflow, but inventory lookup, CRM updates, scheduling, and messaging need tool blocks/capabilities.')}</span></div>}
       {activeSleeveCounts && <><div className="templateCountGrid"><div><b>{activeSleeveCounts.neoStacks}</b><span>NeoStacks</span></div><div><b>{activeSleeveCounts.neoBlocks}</b><span>NeoBlocks</span></div><div><b>{activeSleeveCounts.moltBlocks}</b><span>MOLT Blocks</span></div><div><b>{activeSleeveCounts.gates}</b><span>Gates</span></div><div><b>{toolBlockCount}</b><span>Tool Blocks</span></div><div><b>{palette.length}</b><span>Capabilities</span></div>{activeSleeveCounts.unresolved > 0 && <div><b>{activeSleeveCounts.unresolved}</b><span>Needs attention</span></div>}</div></>}
+      <ActiveSleevePersistencePanel
+        title={activeSleeveTitle ?? 'Active Sleeve'}
+        persistence={activeSleevePersistence}
+        counts={activeSleevePersistenceCounts}
+        saveNotice={activeSleeveSaveNotice}
+        exportNotice={activeSleeveExportNotice}
+        onSave={onSaveActiveSleeveToWorkspace}
+        onExport={onExportActiveSleevePackage}
+      />
       {isImportedPackageRoute ? <div className="compactCandidatePreview"><b>Imported package</b><span>NeoStacks imported: {safeActiveNeoStacks.length}</span><span>NeoBlocks imported: {safeActiveNeoBlocks.length}</span><span>MOLT imported/generated: {safeActiveMoltBlocks.length}</span><span>Source-library matches: not resolved yet / optional</span><span>Duplicates merged: {String(((activeSessionSleeve.metadata?.duplicateDiagnostics as Record<string, unknown> | undefined)?.merged ?? (hermesCustomGenerationDiagnostics?.importReviewReport as { duplicates?: { merged?: unknown } } | undefined)?.duplicates?.merged ?? 0))}</span><span>Schema adjustments: {String((hermesCustomGenerationDiagnostics?.importReviewReport as { normalizationAdjustments?: unknown[] } | undefined)?.normalizationAdjustments?.length ?? 0)}</span></div> : <><small>Library candidates bound: {String((activeSessionSleeve.metadata?.sourceStatusSummary as Record<string, unknown> | undefined)?.candidatesBoundIntoSleeve ?? safeActiveMoltBlocks.filter((block) => block.sourceKind === 'source-library reused').length)}</small>
       <div className="compactCandidatePreview"><b>Library blocks used: {libraryBlocksUsed.length}</b>{libraryBlockExamples.map((title) => <span key={String(title)}>{String(title)}</span>)}</div></>}
       <div className="neoStackSummaryList">{activeStackPreview.slice(0, 8).map((stack) => <details key={stack.id} className="neoStackSummaryItem"><summary><b>{stack.title}</b><small>{stack.reason}</small></summary>{activeSessionSleeve && <ol>{safeActiveNeoBlocks.filter((block) => block.neoStackId === stack.id).map((block) => { const moltBlockIds = Array.isArray(block.moltBlockIds) ? block.moltBlockIds : []; const gateIds = Array.isArray(block.gateIds) ? block.gateIds : Array.isArray((block as unknown as { gates?: unknown[] }).gates) ? (block as unknown as { gates: unknown[] }).gates : []; const enrichment = ((block.nlCard as Record<string, unknown> | undefined)?.enrichmentEvidence ?? (block.nlCard as Record<string, unknown> | undefined)?.evidence) as Record<string, unknown> | undefined; const missingRoles = Array.isArray(enrichment?.missingRoles) ? enrichment.missingRoles.map(String) : Array.isArray(enrichment?.missingRoleWarnings) ? enrichment.missingRoleWarnings.map(String) : []; return <li key={block.id}><b>{block.title}</b><small>{block.description} · MOLT {moltBlockIds.length} · Gates {gateIds.length}</small>{enrichment && <small>Composition/enrichment evidence · source-bound {String(enrichment.sourceBoundCount ?? 0)} · workspace-bound {String(enrichment.workspaceBoundCount ?? enrichment.workspaceDraftCount ?? 0)} · package-only {String(enrichment.packageOnlyCount ?? enrichment.importedPackageCount ?? 0)} · missing roles {missingRoles.join(', ') || 'none'}</small>}<div className="compactCandidatePreview">{moltBlockIds.slice(0, 6).map((moltId) => safeActiveMoltBlocks.find((molt) => molt.id === moltId)).filter(Boolean).map((molt) => <span key={molt!.id}>{molt!.role} · {molt!.title} · {molt!.sourceKind ?? 'runtime draft'}{molt!.matchedCandidateId ? ` · ${molt!.matchedCandidateId}` : ''}</span>)}</div></li>; })}</ol>}</details>)}</div>
@@ -4009,6 +4120,25 @@ export function BasicReviewPanels({ businessInput, sleeveArchitectPlan, activeSe
       {hermesRuntimeErrors.length > 0 && <div className="analysisWarnings"><b>Runtime error</b><span>Hermes runtime error. Open Runtime Graph for execution details.</span></div>}
     </div>}
   </section>;
+}
+
+function ActiveSleevePersistencePanel({ title, persistence, counts, saveNotice, exportNotice, onSave, onExport }: { title: string; persistence?: ActiveSleevePersistenceStatus; counts?: { neoStacks: number; neoBlocks: number; moltBlocks: number; gates: number; capabilities: number; missingOptionalTools: number }; saveNotice?: string; exportNotice?: string; onSave?: () => void; onExport?: () => void }) {
+  const persistenceLabel = persistence?.savedToWorkspace ? 'Saved to workspace' : persistence?.runtimeSessionOnly ? 'Runtime session only' : 'No active Sleeve';
+  const exportLabel = persistence?.exportAvailable ? 'available' : 'not yet available';
+  return <div className="compactCandidatePreview activeSleevePersistencePanel" aria-label="Active Sleeve persistence and export">
+    <b>Active Sleeve: {title}</b>
+    <span>Persistence: {persistenceLabel}</span>
+    <span>Source library: read-only, unchanged</span>
+    <span>Export: {exportLabel}</span>
+    {counts && <span>Package contents: NeoStacks {counts.neoStacks} · NeoBlocks {counts.neoBlocks} · MOLT Blocks {counts.moltBlocks} · Gates {counts.gates} · Capabilities {counts.capabilities} · Missing optional tools {counts.missingOptionalTools}</span>}
+    <div className="templateActionRow">
+      <button type="button" className="publicSecondaryCta action-success" onClick={onSave} disabled={!onSave}>Save Active Sleeve to Workspace</button>
+      <button type="button" className="publicSecondaryCta" onClick={onExport} disabled={!onExport}>Export Active Sleeve Package</button>
+    </div>
+    <span>{saveNotice ?? 'Saved locally: no · source library unchanged.'}</span>
+    <span>{exportNotice ?? 'No export created yet.'}</span>
+    <span>Create Library Proposal: optional later; no automatic source-library writes.</span>
+  </div>;
 }
 
 function AnalysisReviewPanels({ businessInput, businessMap, templateSelection, sleeveArchitectPlan, activeSessionSleeve, hermesCustomGenerationStatus, hermesCustomGenerationDiagnostics, businessAutomationCoreBuild, blockMatchPlan, draftReviewState, sleeveAssemblyPlan, compileCandidate, compilerRequestPreview, compilerResult, compiledRuntimeManifest, compileDiagnostics, hermesRequestPreview, hermesRuntimeResult, hermesRuntimeVisualState, hermesRuntimeWarnings, hermesRuntimeErrors, isHermesRunning, toolCapabilityResolutions, pendingRuntimeApproval, onCreateBusinessAutomationCore, onRunBlockMatching, onReviewDraft, onRunArchitectExecution, onCompileWithUMGCompiler, onRunHermesRuntime, onContinueRuntimeApproval, onOpenStudio }: { businessInput: BusinessInput; businessMap: BusinessMap; templateSelection: TemplateSelectionResult; sleeveArchitectPlan?: SleeveArchitectPlan; activeSessionSleeve?: NormalizedTemplateSleeve; hermesCustomGenerationStatus?: string; hermesCustomGenerationDiagnostics?: Record<string, unknown>; businessAutomationCoreBuild?: InstantiatedTemplateSleeve; blockMatchPlan?: BlockMatchPlan; draftReviewState: GeneratedBlockDraft[]; sleeveAssemblyPlan?: SleeveAssemblyPlan; compileCandidate?: CompileCandidate; compilerRequestPreview?: UMGCompilerRequest; compilerResult?: UMGCompilerResult; compiledRuntimeManifest?: UMGCompiledRuntimeManifest; compileDiagnostics?: CompileClickDiagnostics; hermesRequestPreview?: HermesCognitiveRuntimeRequest; hermesRuntimeResult?: HermesCognitiveRuntimeResult; hermesRuntimeVisualState?: UMGRuntimeVisualState; hermesRuntimeWarnings: string[]; hermesRuntimeErrors: string[]; isHermesRunning: boolean; toolCapabilityResolutions: ToolCapabilityResolution[]; pendingRuntimeApproval?: PendingRuntimeApproval; onCreateBusinessAutomationCore: () => void; onRunBlockMatching: () => void; onReviewDraft: (draftId: string, decision: 'accepted' | 'discarded') => void; onRunArchitectExecution: () => void; onCompileWithUMGCompiler: () => void; onRunHermesRuntime: () => void; onContinueRuntimeApproval: (decision: 'approve' | 'deny' | 'skip') => void; onOpenStudio: () => void }) {
