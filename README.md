@@ -1,5 +1,7 @@
 # UMG Studio v0.1
 
+> **Status — legacy but working:** This public v0.1 product uses the compiler-v0 bridge described below. It is not H4-qualified and is separate from the private modern Studio Lab source. Current public H4 architecture starts with [compiler-vNext](https://github.com/NeoMagnetar/umg-compiler-vnext) and the [UMG Block Library](https://github.com/NeoMagnetar/UMG-Block-Library). Any future Studio H4 reconciliation is planned/deferred work, not an active migration.
+
 UMG Studio is a local-first modular cognition studio for composing, inspecting, compiling, tracing, and exporting UMG block architectures through a visual graph interface.
 
 The v0.1 build is a React + TypeScript workbench around existing UMG assets. It imports and normalizes UMG block data, lets you compose a Sleeve from a plain-language request, inspect the Sleeve / NeoStack / NeoBlock / MOLT hierarchy, compile through the local UMG compiler bridge, review RuntimeSpec / Trace / IR Matrix output, and export a Hermes-ready packet without exporting secrets.
